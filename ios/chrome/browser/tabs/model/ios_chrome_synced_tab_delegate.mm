@@ -8,6 +8,7 @@
 #import "components/prefs/pref_service.h"
 #import "components/sessions/ios/ios_serialized_navigation_builder.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
+#import "components/signin/public/identity_manager/tribool.h"
 #import "components/sync/base/features.h"
 #import "components/sync_sessions/sync_sessions_client.h"
 #import "components/sync_sessions/synced_window_delegates_getter.h"
@@ -74,9 +75,9 @@ bool ProfileHasPrimaryIdentityManaged(ProfileIOS* profile) {
   }
 
   return identity_manager
-      ->FindExtendedAccountInfo(identity_manager->GetPrimaryAccountInfo(
-          signin::ConsentLevel::kSignin))
-      .IsManaged();
+             ->FindExtendedAccountInfo(identity_manager->GetPrimaryAccountInfo(
+                 signin::ConsentLevel::kSignin))
+             .IsManaged() == signin::Tribool::kTrue;
 }
 
 }  // namespace
@@ -97,7 +98,7 @@ SessionID IOSChromeSyncedTabDelegate::GetWindowId() const {
 }
 
 SessionID IOSChromeSyncedTabDelegate::GetSessionId() const {
-  return IOSChromeSessionTabHelper::FromWebState(web_state_)->session_id();
+  return web_state_->GetUniqueIdentifier().ToSessionID();
 }
 
 bool IOSChromeSyncedTabDelegate::IsBeingDestroyed() const {

@@ -16,6 +16,10 @@
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tabs/public/supports_handles.h"
 
+namespace ui {
+class UnownedUserDataHost;
+}
+
 namespace content {
 class WebContents;
 }  // namespace content
@@ -42,6 +46,8 @@ class ScopedTabModalUI {
   virtual ~ScopedTabModalUI() = default;
 };
 
+DECLARE_HANDLE_FACTORY(TabInterface);
+
 // TODO(crbug.com/404889112): This interface will be reused for Android as part
 // of the effort to share tab collections between desktop and Android. Some
 // features of TabInterface are unsupported on Android. A buildflag is used to
@@ -53,7 +59,7 @@ class ScopedTabModalUI {
 // Ping erikchen for assistance if this class does not have the functionality
 // your feature needs. This comment will be deleted after there are 10+ features
 // in TabFeatures.
-class TabInterface : public SupportsHandles<TabInterface> {
+class TabInterface : public SupportsHandles<TabInterfaceHandleFactory> {
  public:
   // This method exists to ease the transition from WebContents to TabInterface.
   // This method should only be called on instances of WebContents that are
@@ -255,6 +261,12 @@ class TabInterface : public SupportsHandles<TabInterface> {
 
   // Must be called whenever any of this tab's ancestor collections change.
   virtual void OnAncestorChanged(base::PassKey<TabCollection>) = 0;
+
+  // Returns the UnownedUserDataHost associated with this tab. This is used to
+  // retrieve arbitrary features from the tab without requiring TabModel to have
+  // knowledge of them.
+  virtual ui::UnownedUserDataHost& GetUnownedUserDataHost() = 0;
+  virtual const ui::UnownedUserDataHost& GetUnownedUserDataHost() const = 0;
 };
 
 using TabHandle = TabInterface::Handle;

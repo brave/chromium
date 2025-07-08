@@ -106,11 +106,6 @@ partition_alloc::PartitionOptions PartitionOptionsFromFeatures() {
   PartitionOptions opts;
   opts.backup_ref_ptr = brp_setting;
   opts.memory_tagging = {.enabled = memory_tagging};
-  opts.use_small_single_slot_spans =
-      base::FeatureList::IsEnabled(
-          base::features::kPartitionAllocUseSmallSingleSlotSpans)
-          ? partition_alloc::PartitionOptions::kEnabled
-          : partition_alloc::PartitionOptions::kDisabled;
   return opts;
 }
 
@@ -198,7 +193,7 @@ void Partitions::InitializeArrayBufferPartition() {
 // static
 void Partitions::StartMemoryReclaimer(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  CHECK(IsMainThread());
+  CHECK(blink::IsMainThread());
   DCHECK(initialized_);
 
   base::allocator::StartMemoryReclaimer(task_runner);
@@ -210,7 +205,7 @@ void Partitions::DumpMemoryStats(
     partition_alloc::PartitionStatsDumper* partition_stats_dumper) {
   // Object model and rendering partitions are not thread safe and can be
   // accessed only on the main thread.
-  DCHECK(IsMainThread());
+  DCHECK(blink::IsMainThread());
 
   if (auto* fast_malloc_partition = FastMallocPartition()) {
     fast_malloc_partition->DumpStats("fast_malloc", is_light_dump,

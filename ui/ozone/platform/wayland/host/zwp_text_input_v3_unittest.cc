@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "base/strings/utf_offset_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/surrounding_text_tracker.h"
@@ -730,6 +731,17 @@ TEST_F(ZwpTextInputV3Test, OnDoneWithCommitAndPreedit) {
     zwp_text_input_v3_send_commit_string(text_input->resource(),
                                          kCommitString.c_str());
     zwp_text_input_v3_send_done(text_input->resource(), 0);
+  });
+  VerifyAndClearExpectations();
+
+  // Sending done again should report empty preedit.
+  EXPECT_CALL(test_client_, OnDeleteSurroundingText(_, _)).Times(0);
+  EXPECT_CALL(test_client_, OnCommitString(_)).Times(0);
+  EXPECT_CALL(test_client_,
+              OnPreeditString("", std::vector<SpanStyle>{}, gfx::Range()));
+  PostToServerAndWait([](wl::TestWaylandServerThread* server) {
+    auto* text_input = server->text_input_manager_v3()->text_input();
+    zwp_text_input_v3_send_done(text_input->resource(), 1);
   });
   VerifyAndClearExpectations();
 }

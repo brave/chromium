@@ -7,7 +7,9 @@
 #include <memory>
 
 #include "base/run_loop.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/cloud_binary_upload_service.h"
@@ -142,16 +144,16 @@ class PagePrintRequestHandlerTest : public testing::Test {
   std::unique_ptr<test::EventReportValidatorHelper> helper_;
   safe_browsing::TestBinaryUploadService binary_upload_service_;
   base::test::ScopedFeatureList scoped_feature_list_;
+  base::HistogramTester histogram_tester_;
+  TestContentAnalysisInfo info_ = TestContentAnalysisInfo(cloud_settings());
 };
 
 }  // namespace
-
 TEST_F(PagePrintRequestHandlerTest, Test) {
-  TestContentAnalysisInfo info(cloud_settings());
-
   auto page = CreatePageRegion(kMaxSize);
+  size_t page_size_bytes = page.mapping.size();
   auto handler = PagePrintRequestHandler::Create(
-      &info, &binary_upload_service_, profile_.get(), GURL(kUrl),
+      &info_, &binary_upload_service_, profile_.get(), GURL(kUrl),
       "printer_name", "page_content_type", std::move(page.region),
       base::BindOnce([](RequestHandlerResult result) {
         EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
@@ -191,6 +193,96 @@ TEST_F(PagePrintRequestHandlerTest, Test) {
 
   EXPECT_TRUE(handler->UploadData());
   run_loop.Run();
+
+  // Verify that the UMA metric was recorded.
+  histogram_tester_.ExpectUniqueSample(
+      "Enterprise.FileAnalysisRequest.PrintedPageSize", page_size_bytes / 1024,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "Enterprise.FileAnalysisRequest.PrintedPageSize", 1);
+
+  validator.ExpectSensitiveDataEvent(
+      /*url*/
+      kUrl,
+      /*tab_url*/ kTabUrl,
+      /*source*/ "",
+      /*destination*/ "printer_name",
+      /*filename*/ "tab_title",
+      /*sha*/ "",
+      /*trigger*/ "PAGE_PRINT",
+      /*dlp_verdict*/
+      CreateResult(ContentAnalysisResponse::Result::TriggeredRule::BLOCK),
+      /*mimetype*/
+      []() {
+        static std::set<std::string> set = {""};
+        return &set;
+      }(),
+      /*size*/ std::nullopt,
+      /*result*/ EventResultToString(EventResult::BYPASSED),
+      /*username*/ "test-user@chromium.org",
+      /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+      /*scan_id*/ "",
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ kJustification);
+  handler->ReportWarningBypass(kJustification);
+}
+
+TEST_F(PagePrintRequestHandlerTest, TestNewLimit) {
+  scoped_feature_list_.Reset();
+  scoped_feature_list_.InitAndEnableFeatureWithParameters(
+      enterprise_connectors::kEnableNewUploadSizeLimit,
+      {{"max_file_size_mb", "100"}});
+
+  auto page = CreatePageRegion(kMaxSize);
+  size_t page_size_bytes = page.mapping.size();
+  auto handler = PagePrintRequestHandler::Create(
+      &info_, &binary_upload_service_, profile_.get(), GURL(kUrl),
+      "printer_name", "page_content_type", std::move(page.region),
+      base::BindOnce([](RequestHandlerResult result) {
+        EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
+        EXPECT_EQ(result.complies, false);
+        EXPECT_EQ(result.custom_rule_message.message_segments_size(), 1);
+        EXPECT_EQ(result.custom_rule_message.message_segments(0).text(),
+                  kMessage);
+        EXPECT_EQ(result.tag, "dlp");
+      }));
+
+  base::RunLoop run_loop;
+  auto validator = helper_->CreateValidator();
+  validator.SetDoneClosure(run_loop.QuitClosure());
+  validator.ExpectSensitiveDataEvent(
+      /*url*/
+      kUrl,
+      /*tab_url*/ kTabUrl,
+      /*source*/ "",
+      /*destination*/ "printer_name",
+      /*filename*/ "tab_title",
+      /*sha*/ "",
+      /*trigger*/ "PAGE_PRINT",
+      /*dlp_verdict*/
+      CreateResult(ContentAnalysisResponse::Result::TriggeredRule::BLOCK),
+      /*mimetype*/
+      []() {
+        static std::set<std::string> set = {""};
+        return &set;
+      }(),
+      /*size*/ std::nullopt,
+      /*result*/ EventResultToString(EventResult::BLOCKED),
+      /*username*/ "test-user@chromium.org",
+      /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+      /*scan_id*/ "",
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
+
+  EXPECT_TRUE(handler->UploadData());
+  run_loop.Run();
+
+  // Verify that the UMA metric was recorded.
+  histogram_tester_.ExpectUniqueSample(
+      "Enterprise.FileAnalysisRequest.PrintedPageSize", page_size_bytes / 1024,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "Enterprise.FileAnalysisRequest.PrintedPageSize", 1);
 
   validator.ExpectSensitiveDataEvent(
       /*url*/

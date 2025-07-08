@@ -16,9 +16,9 @@
 #include "components/permissions/origin_keyed_permission_action_service.h"
 #include "components/permissions/permission_hats_trigger_helper.h"
 #include "components/permissions/permission_prompt.h"
-#include "components/permissions/permission_ui_selector.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permission_util.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "components/permissions/request_type.h"
 #include "content/public/browser/browser_context.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -43,11 +43,6 @@ class CookieSettings;
 namespace privacy_sandbox {
 class TrackingProtectionSettings;
 }  // namespace privacy_sandbox
-
-namespace infobars {
-class InfoBar;
-class InfoBarManager;
-}  // namespace infobars
 
 namespace permissions {
 class ObjectPermissionContextBase;
@@ -253,20 +248,6 @@ class PermissionsClient {
   // engine (DSE) origin.
   virtual bool IsDseOrigin(content::BrowserContext* browser_context,
                            const url::Origin& origin);
-
-  // Retrieves the InfoBarManager for the web contents. The returned
-  // pointer has the same lifetime as |web_contents|.
-  virtual infobars::InfoBarManager* GetInfoBarManager(
-      content::WebContents* web_contents);
-
-  // Allows the embedder to create an info bar to use as the
-  // permission prompt. Might return null based on internal logic
-  // (e.g. |type| does not support infobar permission prompts). The
-  // returned infobar is owned by the info bar manager.
-  virtual infobars::InfoBar* MaybeCreateInfoBar(
-      content::WebContents* web_contents,
-      ContentSettingsType type,
-      base::WeakPtr<PermissionPromptAndroid> prompt);
 
   // Allows the embedder to create a message UI to use as the
   // permission prompt. Returns the pointer to the message UI if the

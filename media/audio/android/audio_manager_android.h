@@ -12,10 +12,12 @@
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "media/audio/android/aaudio_bluetooth_output.h"
 #include "media/audio/android/aaudio_input.h"
 #include "media/audio/android/audio_device.h"
 #include "media/audio/android/audio_device_id.h"
 #include "media/audio/audio_manager_base.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -44,13 +46,17 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
    public:
     virtual ~JniDelegate() = default;
 
+    // Returns metadata about the available audio devices as reported by the
+    // Android framework, filtered to input devices if `inputs` is true, and to
+    // output devices otherwise.
     virtual std::vector<JniAudioDevice> GetDevices(bool inputs) = 0;
 
+    // Returns metadata about the available "synthetic" communication devices,
+    // which abstractly represent an input/output audio device pair. If the
+    // process lacks `MODIFY_AUDIO_SETTINGS` or `RECORD_AUDIO` permissions,
+    // returns `std::nullopt` instead.
     virtual std::optional<std::vector<JniAudioDevice>>
     GetCommunicationDevices() = 0;
-
-    // Returns whether the currently connected device is an audio sink.
-    virtual bool IsAudioSinkConnected() = 0;
 
     virtual int GetMinInputFrameSize(int sample_rate, int channels) = 0;
 
@@ -77,9 +83,9 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
 
     virtual int GetMinOutputFrameSize(int sample_rate, int channels) = 0;
 
-    // Returns a bit mask of AudioParameters::Format enum values sink device
-    // supports.
-    virtual int GetSinkAudioEncodingFormats() = 0;
+    // Returns a bitmask of audio encoding formats supported by all connected
+    // HDMI output devices.
+    virtual AudioParameters::Format GetHdmiOutputEncodingFormats() = 0;
 
     virtual int GetLayoutWithMaxChannels() = 0;
   };
@@ -136,11 +142,11 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       const LogCallback& log_callback) override;
 
   void SetMute(JNIEnv* env,
-               const base::android::JavaParamRef<jobject>& obj,
                jboolean muted);
 
   // Sets a volume that applies to all this manager's output audio streams.
   // This overrides other SetVolume calls (e.g. through AudioHostMsg_SetVolume).
+  // TODO(https://crbug.com/422733084): this functionality is likely unused.
   void SetOutputVolumeOverride(double volume);
   bool HasOutputVolumeOverride(double* out_volume) const;
 
@@ -151,7 +157,9 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
   // otherwise accounting for.
   base::TimeDelta GetOutputLatency();
 
-  static int GetSinkAudioEncodingFormats();
+  // Returns a bitmask of audio encoding formats supported by all connected HDMI
+  // output devices.
+  static AudioParameters::Format GetHdmiOutputEncodingFormats();
 
   // Called by an `AAudioInputStream` when it is started, i.e. it begins
   // providing audio data.
@@ -172,10 +180,20 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       const AudioParameters& input_params) override;
 
  private:
+  using DeviceCache =
+      base::flat_map<android::AudioDeviceId, android::AudioDevice>;
+  using OutputStreams =
+      base::flat_set<raw_ptr<MuteableAudioOutputStream, CtnExperimental>>;
+  REQUIRES_ANDROID_API(AAUDIO_MIN_API)
+  typedef base::flat_set<raw_ptr<AAudioBluetoothOutputStream, CtnExperimental>>
+      BluetoothOutputStreams;  // `REQUIRES_ANDROID_API` appears to be
+                               // incompatible with using-declarations.
+  using InputStreams =
+      base::flat_set<raw_ptr<AudioInputStream, CtnExperimental>>;
+
   enum class AudioDeviceDirection {
-    kInput,         // Audio source
-    kOutput,        // Audio sink
-    kCommunication  // Communication device, i.e. an input/output pair.
+    kInput,   // Audio source
+    kOutput,  // Audio sink
   };
 
   JniDelegate& GetJniDelegate();
@@ -183,6 +201,12 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
   bool HasNoAudioInputStreams();
   void GetDeviceNames(AudioDeviceNames* device_names,
                       AudioDeviceDirection direction);
+  void GetCommunicationDeviceNames(AudioDeviceNames* device_names);
+
+  // Retrieve a mapping from device IDs to devices for the specified `direction`
+  // which exclusively contains information about devices present during the
+  // most recent call to `GetDeviceNames()` for the respective direction.
+  const DeviceCache& GetDeviceCache(AudioDeviceDirection direction) const;
 
   // Utility for `Make(...)Stream` methods which retrieves an appropriate
   // `android::AudioDevice` based on the provided device ID string. Returns
@@ -193,33 +217,21 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       AudioDeviceDirection direction);
 
   int GetOptimalOutputFrameSize(int sample_rate, int channels);
-  AudioParameters GetAudioFormatsSupportedBySinkDevice(
-      const std::string& output_device_id,
-      const ChannelLayoutConfig& channel_layout_config,
-      int sample_rate,
-      int buffer_size);
-  ChannelLayoutConfig GetLayoutWithMaxChannels(
-      ChannelLayoutConfig layout_configuration);
+  ChannelLayoutConfig GetLayoutWithMaxChannels();
 
   void DoSetMuteOnAudioThread(bool muted);
   void DoSetVolumeOnAudioThread(double volume);
 
   std::unique_ptr<JniDelegate> jni_delegate_;
 
-  // Mappings from device IDs to devices. Exclusively contain information about
-  // devices which were present during the most recent call to
-  // `GetDeviceNames()` for the respective direction (input or output). Only
-  // updated when `UseAAudioPerStreamDeviceSelection()` is `true`.
-  using Devices = base::flat_map<android::AudioDeviceId, android::AudioDevice>;
-  Devices input_devices_;
-  Devices output_devices_;
+  // Most recently fetched device data. See `GetDeviceCache` for more details.
+  DeviceCache input_device_cache_;
+  DeviceCache output_device_cache_;
 
-  using OutputStreams =
-      base::flat_set<raw_ptr<MuteableAudioOutputStream, CtnExperimental>>;
   OutputStreams output_streams_;
+  REQUIRES_ANDROID_API(AAUDIO_MIN_API)
+  BluetoothOutputStreams bluetooth_output_streams_;
 
-  using InputStreams =
-      base::flat_set<raw_ptr<AudioInputStream, CtnExperimental>>;
   InputStreams input_streams_requiring_sco_;
 
   // Enabled when first input stream is created and set to false when last

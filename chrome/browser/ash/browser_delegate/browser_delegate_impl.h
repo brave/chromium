@@ -28,7 +28,9 @@ class BrowserDelegateImpl : public BrowserDelegate {
   content::WebContents* GetWebContentsAt(size_t index) const override;
   aura::Window* GetNativeWindow() const override;
   bool IsClosing() const override;
+  bool IsActive() const override;
   void Show() override;
+  void Activate() override;
   void Minimize() override;
   void Close() override;
   void AddTab(const GURL& url,
@@ -36,6 +38,7 @@ class BrowserDelegateImpl : public BrowserDelegate {
               TabDisposition disposition) override;
   content::WebContents* NavigateWebApp(const GURL& url,
                                        TabPinning pin_tab) override;
+  void CreateTabGroup(const tab_groups::TabGroupInfo& tab_group) override;
 
  private:
   const raw_ref<Browser> browser_;

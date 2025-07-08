@@ -24,7 +24,7 @@ class WebLocalFrame;
 
 namespace content {
 
-class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
+class WebAXObjectProxy : public gin::DeprecatedWrappable<WebAXObjectProxy> {
  public:
   class Factory {
    public:
@@ -34,7 +34,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
     virtual blink::WebAXContext* GetAXContext() = 0;
   };
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   WebAXObjectProxy(const blink::WebAXObject& object, Factory* factory);
 
@@ -249,14 +249,6 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   raw_ptr<Factory> factory_;
 
   v8::Global<v8::Function> notification_callback_;
-};
-
-class RootWebAXObjectProxy : public WebAXObjectProxy {
- public:
-  RootWebAXObjectProxy(const blink::WebAXObject&, Factory*);
-
-  v8::Local<v8::Object> GetChildAtIndex(unsigned index) override;
-  bool IsRoot() const override;
 };
 
 class WebAXObjectProxyList : public WebAXObjectProxy::Factory {

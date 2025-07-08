@@ -6,6 +6,7 @@
 
 #import "base/memory/raw_ptr.h"
 #import "base/test/metrics/user_action_tester.h"
+#import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_node.h"
@@ -14,6 +15,7 @@
 #import "components/policy/core/common/policy_pref_names.h"
 #import "components/sync_preferences/testing_pref_service_syncable.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
+#import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
 #import "ios/chrome/browser/find_in_page/model/find_tab_helper.h"
 #import "ios/chrome/browser/find_in_page/model/java_script_find_tab_helper.h"
 #import "ios/chrome/browser/find_in_page/model/util.h"
@@ -23,7 +25,10 @@
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper_delegate.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
 #import "ios/chrome/browser/sessions/model/fake_tab_restore_service.h"
+#import "ios/chrome/browser/sessions/model/ios_chrome_tab_restore_browser_agent.h"
 #import "ios/chrome/browser/sessions/model/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
@@ -41,7 +46,6 @@
 #import "ios/chrome/browser/shared/public/commands/reading_list_add_command.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/ui/util/url_with_title.h"
-#import "ios/chrome/browser/tabs/model/closing_web_state_observer_browser_agent.h"
 #import "ios/chrome/browser/web/model/web_navigation_browser_agent.h"
 #import "ios/chrome/browser/web/model/web_navigation_util.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -474,7 +478,7 @@ TEST_F(KeyCommandsProviderTest, CanPerform_BackForwardWithMultipleEntries) {
 // Checks whether KeyCommandsProvider can perform the actions that are only
 // available when there are at least one closed tab.
 TEST_F(KeyCommandsProviderTest, CanPerform_ReopenLastClosedTab) {
-  ClosingWebStateObserverBrowserAgent::CreateForBrowser(browser_.get());
+  IOSChromeTabRestoreBrowserAgent::CreateForBrowser(browser_.get());
   // No tabs.
   ASSERT_EQ(web_state_list_->count(), 0);
   EXPECT_FALSE(CanPerform(@"keyCommand_reopenLastClosedTab"));
@@ -921,7 +925,8 @@ TEST_F(KeyCommandsProviderTest, BackForward) {
       web_state->GetNavigationManager();
   int initial_index = navigation_manager->GetLastCommittedItemIndex();
 
-  if (IsLensOverlayAvailable(profile_->GetPrefs())) {
+  if (IsLensOverlayAvailable(profile_->GetPrefs()) &&
+      IsLensOverlaySameTabNavigationEnabled(profile_->GetPrefs())) {
     OCMExpect([mock_page_side_swipe_commands_handler_
         navigateBackWithSideSwipeAnimationIfNeeded]);
   }
@@ -929,7 +934,8 @@ TEST_F(KeyCommandsProviderTest, BackForward) {
   [provider_ keyCommand_back];
   EXPECT_EQ(navigation_manager->GetLastCommittedItemIndex(), initial_index - 1);
 
-  if (IsLensOverlayAvailable(profile_->GetPrefs())) {
+  if (IsLensOverlayAvailable(profile_->GetPrefs()) &&
+      IsLensOverlaySameTabNavigationEnabled(profile_->GetPrefs())) {
     OCMExpect([mock_page_side_swipe_commands_handler_
         navigateBackWithSideSwipeAnimationIfNeeded]);
   }
@@ -943,7 +949,8 @@ TEST_F(KeyCommandsProviderTest, BackForward) {
   [provider_ keyCommand_forward];
   EXPECT_EQ(navigation_manager->GetLastCommittedItemIndex(), initial_index);
 
-  if (IsLensOverlayAvailable(profile_->GetPrefs())) {
+  if (IsLensOverlayAvailable(profile_->GetPrefs()) &&
+      IsLensOverlaySameTabNavigationEnabled(profile_->GetPrefs())) {
     EXPECT_OCMOCK_VERIFY(mock_page_side_swipe_commands_handler_);
   }
 }
@@ -1039,4 +1046,30 @@ TEST_F(KeyCommandsProviderTest, ClearingBrowserDoesntCrash) {
   browser_.reset();
 
   EXPECT_FALSE(CanPerform(@"keyCommand_showNextTab"));
+}
+
+// Checks that some commands are not available in ReadingMode.
+TEST_F(KeyCommandsProviderTest, TestReadingMode) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(kEnableReaderMode);
+  // Open a tab with a URL.
+  GURL url = GURL("https://test/url");
+  auto web_state_unique = CreateFakeWebStateWithURL(url);
+  auto web_state = web_state_unique.get();
+  browser_->GetWebStateList()->InsertWebState(
+      std::move(web_state_unique),
+      WebStateList::InsertionParams::Automatic().Activate());
+  web_state->SetWebFramesManager(web::ContentWorld::kIsolatedWorld,
+                                 std::make_unique<web::FakeWebFramesManager>());
+
+  ReaderModeTabHelper::CreateForWebState(
+      web_state, DistillerServiceFactory::GetForProfile(profile_.get()));
+  ReaderModeTabHelper* tab_helper =
+      ReaderModeTabHelper::FromWebState(web_state);
+  EXPECT_TRUE(CanPerform(@"keyCommand_addToReadingList"));
+  EXPECT_TRUE(CanPerform(@"keyCommand_addToBookmarks"));
+
+  tab_helper->SetActive(true);
+  EXPECT_FALSE(CanPerform(@"keyCommand_addToReadingList"));
+  EXPECT_FALSE(CanPerform(@"keyCommand_addToBookmarks"));
 }

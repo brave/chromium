@@ -55,10 +55,6 @@ inline constexpr int kProductSpecMaxEntryPointTriggeringInterval = 64;
 // OAuth name used for network request.
 inline constexpr char kOAuthName[] = "chromememex_svc";
 
-// OAuth scope used for network request.
-inline constexpr char kOAuthScope[] =
-    "https://www.googleapis.com/auth/chromememex";
-
 // Open graph keys.
 inline constexpr char kOgImage[] = "image";
 inline constexpr char kOgPriceAmount[] = "price:amount";
@@ -86,6 +82,11 @@ inline constexpr char kProductSpecificationsUrlKey[] =
 // The conversion multiplier to go from standard currency units to
 // micro-currency units.
 inline constexpr long kToMicroCurrency = 1e6;
+
+// Header name for using alternate shopping server.
+inline constexpr char kAlternateServerHeaderName[] = "x-use-alt-service";
+inline constexpr char kAlternateServerHeaderTrueValue[] = "true";
+
 }  // namespace commerce
 
 #endif  // COMPONENTS_COMMERCE_CORE_COMMERCE_CONSTANTS_H_

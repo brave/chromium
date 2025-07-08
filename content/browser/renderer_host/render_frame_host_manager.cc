@@ -24,9 +24,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/timer/elapsed_timer.h"
-#include "base/trace_event/base_tracing.h"
 #include "base/trace_event/named_trigger.h"
-#include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "base/types/expected.h"
@@ -34,6 +32,7 @@
 #include "build/build_config.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
+#include "content/browser/fenced_frame/fenced_frame_viewport_observer.h"
 #include "content/browser/preloading/prefetch/prefetch_features.h"
 #include "content/browser/process_lock.h"
 #include "content/browser/process_reuse_policy.h"
@@ -91,6 +90,7 @@
 #include "third_party/blink/public/mojom/frame/fullscreen.mojom.h"
 #include "third_party/blink/public/mojom/frame/user_activation_update_types.mojom.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom.h"
+#include "url/gurl_debug.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "ui/gfx/mac/scoped_cocoa_disable_screen_updates.h"
@@ -1270,6 +1270,17 @@ void RenderFrameHostManager::UnloadOldFrame(
                                     ->GetRelatedActiveContentsCount());
         SCOPED_CRASH_KEY_BOOL("rvh-double", "is_same_process", is_same_process);
         base::debug::DumpWithoutCrashing();
+      }
+
+      // If the outermost main frame is about to enter bfcache, log UMA metrics
+      // about how many same-site fenced frames are in the viewport.
+      if (old_render_frame_host->IsOutermostMainFrame()) {
+        auto* monitor =
+            PageUserData<FencedFrameViewportMonitor>::GetOrCreateForPage(
+                old_render_frame_host->GetPage());
+        if (monitor) {
+          monitor->OnPrimaryPageEnteringBFCache();
+        }
       }
 
       auto stored_page = CollectPage(std::move(old_render_frame_host));

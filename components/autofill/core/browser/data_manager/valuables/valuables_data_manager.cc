@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/metrics/histogram_macros.h"
 #include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
 #include "components/autofill/core/browser/ui/autofill_image_fetcher_base.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
@@ -49,6 +50,16 @@ std::vector<LoyaltyCard> ValuablesDataManager::GetLoyaltyCardsToSuggest()
   std::vector<LoyaltyCard> loyalty_cards = GetLoyaltyCards();
   std::ranges::sort(loyalty_cards, CompareByMerchantName);
   return loyalty_cards;
+}
+
+std::optional<LoyaltyCard> ValuablesDataManager::GetLoyaltyCardById(
+    const ValuableId& id) const {
+  auto it = std::ranges::find(
+      loyalty_cards_, id, [](const LoyaltyCard& card) { return card.id(); });
+  if (it != loyalty_cards_.end()) {
+    return *it;
+  }
+  return std::nullopt;
 }
 
 const gfx::Image* ValuablesDataManager::GetCachedValuableImageForUrl(
@@ -95,6 +106,10 @@ void ValuablesDataManager::OnLoyaltyCardsLoaded(
   // for caching loyalty card icons.
   ProcessLoyaltyCardIconUrlChanges();
   NotifyObservers();
+
+  // Log the overall counts.
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.LoyaltyCard.StoredCardsCount",
+                            loyalty_cards_.size());
 }
 
 void ValuablesDataManager::ProcessLoyaltyCardIconUrlChanges() {

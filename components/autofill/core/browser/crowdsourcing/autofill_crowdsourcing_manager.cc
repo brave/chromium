@@ -136,6 +136,7 @@ enum class RequestType {
 enum class UploadType {
   kVote,
   kMetadata,
+  kSecondaryFormSignature,
 };
 
 // Returns the base URL for the autofill server.
@@ -357,12 +358,8 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
     out << Tr{}
         << "submission_event:" << static_cast<int>(upload.submission_event());
   }
-  if (upload.action_signature())
-    out << Tr{} << "action_signature:" << upload.action_signature();
   if (upload.login_form_signature())
     out << Tr{} << "login_form_signature:" << upload.login_form_signature();
-  if (!upload.form_name().empty())
-    out << Tr{} << "form_name:" << upload.form_name();
   if (upload.has_passwords_revealed())
     out << Tr{} << "passwords_revealed:" << upload.passwords_revealed();
   if (upload.has_has_form_tag())
@@ -376,6 +373,10 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
   if (upload.has_last_address_form_submitted()) {
     out << Tr{} << "last_address_form_submitted:"
         << upload.last_address_form_submitted();
+  }
+  if (upload.has_secondary_form_signature()) {
+    out << Tr{}
+        << "secondary_form_signature:" << upload.secondary_form_signature();
   }
   if (upload.has_last_credit_card_form_submitted()) {
     out << Tr{} << "last_credit_card_form_submitted:"
@@ -392,12 +393,6 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
     }
     out << Tr{} << "autofill_type:" << types_as_strings;
 
-    if (!field.name().empty())
-      out << Tr{} << "name:" << field.name();
-    if (!field.autocomplete().empty())
-      out << Tr{} << "autocomplete:" << field.autocomplete();
-    if (!field.type().empty())
-      out << Tr{} << "type:" << field.type();
     if (field.generation_type()) {
       out << Tr{}
           << "generation_type:" << static_cast<int>(field.generation_type());
@@ -412,6 +407,19 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
   return out;
 }
 
+// Get the preference name for the upload event based on the `upload_type`.
+std::string_view GetUploadEventPreferenceName(UploadType upload_type) {
+  switch (upload_type) {
+    case UploadType::kVote:
+      return prefs::kAutofillVoteUploadEvents;
+    case UploadType::kMetadata:
+      return prefs::kAutofillMetadataUploadEvents;
+    case UploadType::kSecondaryFormSignature:
+      return prefs::kAutofillVoteSecondaryFormSignatureUploadEvents;
+  }
+  NOTREACHED();
+}
+
 // Returns true if part of upload of a form with `form_signature`, triggered by
 // `form_submission_source` should be throttled/suppressed. This is true if
 // `pref_service` indicates that this upload has already happened within the
@@ -423,6 +431,8 @@ LogBuffer& operator<<(LogBuffer& out, const AutofillUploadContents& upload) {
 // metadata part of the upload. Metadata throttling is shared by Autofill and
 // the Password Manager, ensuring that together they don't upload metadata more
 // frequently than desired.
+// If `upload_type` equals `UploadType::kSecondaryFormSignature`,
+// `form_signature` is assumed to be the secondary (alternative) form signature.
 bool ShouldThrottleUpload(FormSignature form_signature,
                           UploadType upload_type,
                           base::TimeDelta throttle_reset_period,
@@ -441,9 +451,7 @@ bool ShouldThrottleUpload(FormSignature form_signature,
     AutofillCrowdsourcingManager::ClearUploadHistory(pref_service);
   }
 
-  std::string_view preference = upload_type == UploadType::kVote
-                                    ? prefs::kAutofillVoteUploadEvents
-                                    : prefs::kAutofillMetadataUploadEvents;
+  std::string_view preference = GetUploadEventPreferenceName(upload_type);
 
   // Get the key for the upload bucket and extract the current bitfield value.
   static constexpr size_t kNumUploadBuckets = 1021;
@@ -461,6 +469,8 @@ bool ShouldThrottleUpload(FormSignature form_signature,
       mask = (1 << bit);
       break;
     }
+    // The secondary form signature should be uploaded only once (go/bnxhp).
+    case UploadType::kSecondaryFormSignature:
     case UploadType::kMetadata:
       mask = 1;
       break;
@@ -784,6 +794,8 @@ bool AutofillCrowdsourcingManager::StartUploadRequest(
 
   PrefService* prefs = client_->GetPrefs();
   const FormSignature form_signature(upload_contents[0].form_signature());
+  const FormSignature secondary_form_signature(
+      upload_contents[0].secondary_form_signature());
   // Autofill vote uploads are limited via throttling so that only one vote is
   // uploaded per form_submission_source and form signature in a given period of
   // time.
@@ -798,6 +810,17 @@ bool AutofillCrowdsourcingManager::StartUploadRequest(
       !base::FeatureList::IsEnabled(features::test::kAutofillUploadThrottling);
 
   AutofillMetrics::LogUploadEvent(form_submission_source, allow_upload);
+
+  // Secondary form signature throttling does not cancel the upload, but only
+  // clears the secondary form signature.
+  if (secondary_form_signature &&
+      ShouldThrottleUpload(
+          secondary_form_signature, UploadType::kSecondaryFormSignature,
+          throttle_reset_period_, prefs, form_submission_source)) {
+    for (AutofillUploadContents& upload : upload_contents) {
+      upload.clear_secondary_form_signature();
+    }
+  }
 
   // Metadata throttling does not cancel the upload, but only clears all
   // metadata related entries.

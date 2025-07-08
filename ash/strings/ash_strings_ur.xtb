@@ -606,7 +606,6 @@
 <translation id="3033545621352269033">آن</translation>
 <translation id="3033912566804961911"><ph name="DESK_NAME" /> کے ساتھ یکجا کریں</translation>
 <translation id="3036649622769666520">فائلیں کھولیں</translation>
-<translation id="3038571455154067151">‏سائن ان کرنے کے لیے، اپنی Family Link کا والدین کا رسائی کوڈ درج کریں</translation>
 <translation id="3039939407102840004">اسٹائلس بیٹری <ph name="PERCENTAGE" /> فیصد پر ہے۔</translation>
 <translation id="304097922505898963">اہم شارٹ کٹس ایپ کھولیں</translation>
 <translation id="304417730895741346">آپ کی پن کردہ اور کھلی ایپس شیلف پر ہیں۔ کسی ایپ کو شیلف میں پن کرنے کے لیے، کسی ایپ پر دائیں کلک کریں یا اپنے ٹچ پیڈ کو دو انگلیوں سے تھپتھپائیں۔</translation>
@@ -1014,6 +1013,7 @@
 <translation id="4305817255990598646">سوئچ کریں</translation>
 <translation id="4307713728991152670">اپنے فون کی حالیہ تصاویر، میڈیا اور ایپس دیکھنے کو سیٹ اپ کریں</translation>
 <translation id="4312840429157639164">کیمرا اوپری دائیں کونے میں اسنیپ کیا گیا ہے۔ سسٹم کی سطح سے متصادم ہے۔</translation>
+<translation id="4312935606722154789">پہلو بہ پہلو دو ونڈوز کی گروپ بندی کریں یا گروپ بندی ختم کریں</translation>
 <translation id="4316910396681052118">سبھی ایپس</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">‏‫Chrome براؤزر کی تمام تجاویز چھپائیں</translation>
@@ -1582,7 +1582,6 @@
 <translation id="6095425951508823973"><ph name="PROVIDER" /> کے ساتھ کنکشن شامل کریں</translation>
 <translation id="6099678161144790572">گزشتہ مہینے میں ترمیم کی</translation>
 <translation id="6103838137565245112">سسٹم</translation>
-<translation id="610395411842312282">سائیڈ و سائیڈ دو ونڈوز کو گروپ کریں</translation>
 <translation id="6108952804512516814">‏AI کے ذریعے تخلیق کریں</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" /> کی اسپیچ فائلز ڈاؤن لوڈ ہو گئی</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />۔ <ph name="BATTERY_SAVER_STATE" /></translation>

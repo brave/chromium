@@ -26,6 +26,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
@@ -106,8 +107,6 @@ using BoolFuture = base::test::TestFuture<bool>;
 
 namespace {
 
-constexpr int32_t kSecretVersion = 417;
-
 constexpr std::array<uint8_t, 32> kTestKey = {
     0xc4, 0xdf, 0xa4, 0xed, 0xfc, 0xf9, 0x7c, 0xc0, 0x3a, 0xb1, 0xcb,
     0x3c, 0x03, 0x02, 0x9b, 0x5a, 0x05, 0xec, 0x88, 0x48, 0x54, 0x42,
@@ -166,7 +165,6 @@ webauthn_pb::EnclaveLocalState::WrappedPIN GetTestWrappedPIN() {
   webauthn_pb::EnclaveLocalState::WrappedPIN wrapped_pin;
   wrapped_pin.set_wrapped_pin(StringOfZeros(30));
   wrapped_pin.set_claim_key(StringOfZeros(32));
-  wrapped_pin.set_generation(0);
   wrapped_pin.set_form(wrapped_pin.FORM_SIX_DIGITS);
   wrapped_pin.set_hash(wrapped_pin.HASH_SCRYPT);
   wrapped_pin.set_hash_difficulty(1 << 12);

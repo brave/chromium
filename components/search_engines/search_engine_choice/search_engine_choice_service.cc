@@ -13,14 +13,11 @@
 #include "base/check_deref.h"
 #include "base/check_is_test.h"
 #include "base/command_line.h"
-#include "base/debug/dump_without_crashing.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
@@ -28,7 +25,6 @@
 #include "base/version.h"
 #include "base/version_info/version_info.h"
 #include "components/country_codes/country_codes.h"
-#include "components/crash/core/common/crash_key.h"
 #include "components/policy/core/common/policy_service.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -232,9 +228,27 @@ void RecordChoiceScreenCompletionDate(PrefService& profile_prefs) {
   base::Time::Exploded exploded;
   timestamp->LocalExplode(&exploded);
 
+  // For reporting purposes, we want to keep the date in the range [2022-01,
+  // 2050-12]. Dates that are before 2022 are reported as `1000-01`, and dates
+  // after 2050 are reported as `3000-01`.
+  int year = exploded.year;
+  int month = exploded.month;
+  if (exploded.year < 2022) {
+    year = 1000;
+    month = 1;
+  } else if (exploded.year > 2050) {
+    year = 3000;
+    month = 1;
+  }
+
   // Expected value space is 12 samples / year.
   base::UmaHistogramSparse(kSearchEngineChoiceCompletedOnMonthHistogram,
-                           exploded.year * 100 + exploded.month);
+                           year * 100 + month);
+}
+
+void RecordWipeOnMissingDse(bool will_wipe) {
+  base::UmaHistogramBoolean("Search.ChoicePrefsCheck.WipeOnMissingDse",
+                            will_wipe);
 }
 
 }  // namespace
@@ -271,7 +285,10 @@ SearchEngineChoiceService::SearchEngineChoiceService(
       regional_capabilities_service_(regional_capabilities),
       prepopulate_data_resolver_(prepopulate_data_resolver) {
   ProcessPendingChoiceScreenDisplayState();
-  PreprocessPrefsForReprompt();
+  if (auto maybe_wipe_reason = CheckPrefsForWipeReason();
+      maybe_wipe_reason.has_value()) {
+    WipeSearchEngineChoicePrefs(profile_prefs, maybe_wipe_reason.value());
+  }
   RecordChoiceScreenCompletionDate(profile_prefs);
 }
 
@@ -280,20 +297,12 @@ SearchEngineChoiceService::~SearchEngineChoiceService() = default;
 SearchEngineChoiceScreenConditions
 SearchEngineChoiceService::GetStaticChoiceScreenConditions(
     const policy::PolicyService& policy_service,
-    bool is_regular_profile,
     const TemplateURLService& template_url_service) {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
     BUILDFLAG(CHROME_FOR_TESTING)
   // TODO(b/319050536): Remove the function declaration on these platforms.
   return SearchEngineChoiceScreenConditions::kUnsupportedBrowserType;
 #else
-  if (!is_regular_profile) {
-    // Naming not exactly accurate, but still reflect the fact that incognito,
-    // kiosk, etc. are not supported and belongs in this bucked more than in
-    // `kProfileOutOfScope` for example.
-    return SearchEngineChoiceScreenConditions::kUnsupportedBrowserType;
-  }
-
   base::CommandLine* const command_line =
       base::CommandLine::ForCurrentProcess();
   // A command line argument with the option for disabling the choice screen for
@@ -390,6 +399,18 @@ SearchEngineChoiceService::GetDynamicChoiceScreenConditions(
 #endif
 }
 
+void SearchEngineChoiceService::RecordStaticEligibility(
+    SearchEngineChoiceScreenConditions condition) {
+  base::UmaHistogramEnumeration(
+      kSearchEngineChoiceScreenProfileInitConditionsHistogram, condition);
+}
+
+void SearchEngineChoiceService::RecordDynamicEligibility(
+    SearchEngineChoiceScreenConditions condition) {
+  base::UmaHistogramEnumeration(
+      kSearchEngineChoiceScreenNavigationConditionsHistogram, condition);
+}
+
 std::unique_ptr<search_engines::ChoiceScreenData>
 SearchEngineChoiceService::GetChoiceScreenData(
     const SearchTermsData& search_terms_data) {
@@ -448,52 +469,24 @@ void SearchEngineChoiceService::MaybeRecordChoiceScreenDisplayState(
     return;
   }
 
-  // This block adds some debugging data for b/344899110, where the method
-  // is called from the choice moment while a display state is already cached.
-  // TODO(b/344899110): Clean up the debugging info when the bug is fixed.
+  // This block monitors the prevalence of some hard to reproduce case where
+  // this method is called more than once per profile session with
+  // `is_from_cached_state == true`, which seems to indicate a choice being made
+  // more than once per profile during the same session. If this had been
+  // actually triggered by a user flow, it could imply that they had to complete
+  // the choice screen more than once, which is bad UX.
+  // See crbug.com/390272573 for context and past debugging attempts.
   if (!is_from_cached_state) {
-    if (!display_state_record_caller_) {
+    if (!has_recorded_display_state_) {
       CHECK(!profile_prefs_->HasPrefPath(
           prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState));
-      display_state_record_caller_ =
-          std::make_unique<base::debug::StackTrace>();
+      has_recorded_display_state_ = true;
     } else {
-      // Recording a stack trace to crash keys, based on
-      // https://crsrc.org/c/docs/debugging_with_crash_keys.md
-      static crash_reporter::CrashKeyString<1024> caller_trace_key(
-          "ChoiceService-og_caller_trace");
-      crash_reporter::SetCrashKeyStringToStackTrace(
-          &caller_trace_key, *display_state_record_caller_.get());
-
-      SCOPED_CRASH_KEY_BOOL(
-          "ChoiceService", "ds_pref_has_value",
-          profile_prefs_->HasPrefPath(
-              prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState));
-
-      std::optional<ChoiceScreenDisplayState> already_cached_display_state =
-          ChoiceScreenDisplayState::FromDict(profile_prefs_->GetDict(
-              prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState));
-      std::optional<base::Time> completion_time =
-          GetChoiceScreenCompletionTimestamp(profile_prefs_.get());
-
-      SCOPED_CRASH_KEY_STRING64(
-          "ChoiceService", "choice_time_delta",
-          completion_time.has_value()
-              ? base::StringPrintf("%" PRId64 "ms",
-                                   (base::Time::Now() - completion_time.value())
-                                       .InMilliseconds())
-              : "<null>");
-      SCOPED_CRASH_KEY_STRING32(
-          "ChoiceService", "screen_items_equal",
-          already_cached_display_state.has_value()
-              ? (already_cached_display_state.value().search_engines ==
-                         display_state.search_engines
-                     ? "yes"
-                     : "no")
-              : "no value");
-
-      NOTREACHED(base::NotFatalUntil::M138);
-      caller_trace_key.Clear();
+      // Re-entry, we just record a histogram and let the code otherwise
+      // proceed.
+      base::UmaHistogramBoolean(
+          "Search.ChoiceDebug.UnexpectedRecordDisplayStateReentryHasCompletion",
+          GetChoiceCompletionMetadata(profile_prefs_.get()).has_value());
     }
   }
 
@@ -526,29 +519,33 @@ void SearchEngineChoiceService::MaybeRecordChoiceScreenDisplayState(
   }
 }
 
-void SearchEngineChoiceService::PreprocessPrefsForReprompt() {
+std::optional<SearchEngineChoiceWipeReason>
+SearchEngineChoiceService::CheckPrefsForWipeReason() {
   base::expected<ChoiceCompletionMetadata, ChoiceCompletionMetadata::ParseError>
       completion_metadata = GetChoiceCompletionMetadata(profile_prefs_.get());
   if (!completion_metadata.has_value()) {
     switch (completion_metadata.error()) {
       case ChoiceCompletionMetadata::ParseError::kAbsent:
         // No choice has been made at all, so there is nothing to reset.
-        return;
+        return std::nullopt;
       case ChoiceCompletionMetadata::ParseError::kMissingVersion:
-        WipeSearchEngineChoicePrefs(
-            profile_prefs_.get(),
-            SearchEngineChoiceWipeReason::kMissingMetadataVersion);
-        return;
+        return SearchEngineChoiceWipeReason::kMissingMetadataVersion;
       case ChoiceCompletionMetadata::ParseError::kInvalidVersion:
-        WipeSearchEngineChoicePrefs(
-            profile_prefs_.get(),
-            SearchEngineChoiceWipeReason::kInvalidMetadataVersion);
-        return;
-      case ChoiceCompletionMetadata::ParseError::kOther:
-        WipeSearchEngineChoicePrefs(
-            profile_prefs_.get(),
-            SearchEngineChoiceWipeReason::kInvalidMetadata);
-        return;
+        return SearchEngineChoiceWipeReason::kInvalidMetadataVersion;
+      case ChoiceCompletionMetadata::ParseError::kMissingTimestamp:
+      case ChoiceCompletionMetadata::ParseError::kNullTimestamp:
+        return SearchEngineChoiceWipeReason::kInvalidMetadata;
+    }
+  }
+
+  if (!profile_prefs_->HasPrefPath(
+          DefaultSearchManager::kDefaultSearchProviderDataPrefName)) {
+    if (base::FeatureList::IsEnabled(
+            switches::kWipeChoicePrefsOnMissingDefaultSearchEngine)) {
+      RecordWipeOnMissingDse(true);
+      return SearchEngineChoiceWipeReason::kMissingDefaultSearchEngine;
+    } else {
+      RecordWipeOnMissingDse(false);
     }
   }
 
@@ -560,9 +557,7 @@ void SearchEngineChoiceService::PreprocessPrefsForReprompt() {
   // change if we want to re-enable the triggering.
   auto* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kForceSearchEngineChoiceScreen)) {
-    WipeSearchEngineChoicePrefs(profile_prefs_.get(),
-                                SearchEngineChoiceWipeReason::kCommandLineFlag);
-    return;
+    return SearchEngineChoiceWipeReason::kCommandLineFlag;
   }
 
   if (base::FeatureList::IsEnabled(
@@ -570,9 +565,7 @@ void SearchEngineChoiceService::PreprocessPrefsForReprompt() {
       client_->DoesChoicePredateDeviceRestore(completion_metadata.value())) {
     if (switches::kInvalidateChoiceOnRestoreIsRetroactive.Get() ||
         client_->IsDeviceRestoreDetectedInCurrentSession()) {
-      WipeSearchEngineChoicePrefs(
-          profile_prefs_.get(), SearchEngineChoiceWipeReason::kDeviceRestored);
-      return;
+      return SearchEngineChoiceWipeReason::kDeviceRestored;
     }
   }
 
@@ -582,10 +575,9 @@ void SearchEngineChoiceService::PreprocessPrefsForReprompt() {
               regional_capabilities::CountryAccessKey(
                   regional_capabilities::CountryAccessReason::
                       kSearchEngineChoiceServiceReprompting)))) {
-    WipeSearchEngineChoicePrefs(
-        profile_prefs_.get(),
-        SearchEngineChoiceWipeReason::kFinchBasedReprompt);
+    return SearchEngineChoiceWipeReason::kFinchBasedReprompt;
   }
+  return std::nullopt;
 }
 
 void SearchEngineChoiceService::ProcessPendingChoiceScreenDisplayState() {
@@ -633,7 +625,7 @@ void SearchEngineChoiceService::ProcessPendingChoiceScreenDisplayState() {
 }
 
 void SearchEngineChoiceService::ResetState() {
-  display_state_record_caller_.reset();
+  has_recorded_display_state_ = false;
 }
 
 // static

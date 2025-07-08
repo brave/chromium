@@ -17,6 +17,7 @@
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -3871,6 +3872,16 @@ INSTANTIATE_TEST_SUITE_P(
         ProfilePickerSetup{/*expected_to_show=*/true,
                            /*switch_name=*/switches::kProfileEmail,
                            /*switch_value_ascii=*/"unknown@gmail.com"},
+        // Show the create new profile dialog if the profile is not found even
+        // when a URL is provided.
+        ProfilePickerSetup{
+            /*expected_to_show=*/true,
+            /*switch_name=*/switches::kProfileEmail,
+            /*switch_value_ascii=*/"unknown@gmail.com",
+            /*url_arg=*/GURL("https://www.foo.com/"),
+            /*shutdown_type=*/ProfilePickerSetup::ShutdownType::kNormal,
+            /*extra_switch_name=*/
+            switches::kCreateProfileEmailIfNotExists},
         // Skip the picker when a URL is provided on command-line (used by the
         // OS when Chrome is the default web browser) and use the last used
         // profile, instead.

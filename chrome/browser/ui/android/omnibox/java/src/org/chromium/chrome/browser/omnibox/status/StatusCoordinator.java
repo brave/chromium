@@ -19,6 +19,7 @@ import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
@@ -91,7 +92,7 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
             UrlBarEditingTextStateProvider urlBarEditingTextStateProvider,
             LocationBarDataProvider locationBarDataProvider,
             OneshotSupplier<TemplateUrlService> templateUrlServiceSupplier,
-            Supplier<Profile> profileSupplier,
+            ObservableSupplier<Profile> profileSupplier,
             WindowAndroid windowAndroid,
             PageInfoAction pageInfoAction,
             @Nullable Supplier<MerchantTrustSignalsCoordinator>
@@ -192,13 +193,6 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     }
 
     /**
-     * @param show Whether the status icon background should be VISIBLE, otherwise INVISIBLE.
-     */
-    public void setStatusIconBackgroundVisibility(boolean show) {
-        mMediator.setStatusIconBackgroundVisibility(show);
-    }
-
-    /**
      * Set the url focus change percent.
      *
      * @param percent The current focus percent.
@@ -233,10 +227,9 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         updateSecurityIcon();
     }
 
-    // LocationBarData.Observer implementation.
+    // LocationBarDataProvider.Observer implementation.
     // Using the default empty onPrimaryColorChanged.
     // Using the default empty onTitleChanged.
-    // Using the default empty onUrlChanged.
 
     @Override
     public void onNtpStartedLoading() {
@@ -255,8 +248,8 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     }
 
     @Override
-    public void onUrlChanged() {
-        mMediator.onUrlChanged();
+    public void onUrlChanged(boolean isTabChanging) {
+        mMediator.onUrlChanged(isTabChanging);
     }
 
     @Override
@@ -303,7 +296,7 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     public @DrawableRes int getSecurityIconResourceIdForTesting() {
         return mModel.get(StatusProperties.STATUS_ICON_RESOURCE) == null
                 ? 0
-                : mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting();
+                : mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes();
     }
 
     /**

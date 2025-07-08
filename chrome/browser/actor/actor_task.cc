@@ -4,17 +4,28 @@
 
 #include "chrome/browser/actor/actor_task.h"
 
-#include "chrome/browser/actor/actor_coordinator.h"
+#include <ostream>
+
+#include "base/no_destructor.h"
+#include "base/state_transitions.h"
+#include "chrome/browser/actor/execution_engine.h"
+#include "components/tabs/public/tab_interface.h"
 
 namespace actor {
 
 ActorTask::ActorTask() = default;
-ActorTask::ActorTask(std::unique_ptr<ActorCoordinator> actor_coordinator)
-    : actor_coordinator_(std::move(actor_coordinator)) {}
+ActorTask::ActorTask(std::unique_ptr<ExecutionEngine> execution_engine)
+    : execution_engine_(std::move(execution_engine)) {
+  execution_engine_->SetOwner(this);
+}
 ActorTask::~ActorTask() = default;
 
-ActorCoordinator* ActorTask::GetActorCoordinator() const {
-  return actor_coordinator_.get();
+void ActorTask::SetId(base::PassKey<ActorKeyedService>, TaskId id) {
+  id_ = id;
+}
+
+ExecutionEngine* ActorTask::GetExecutionEngine() const {
+  return execution_engine_.get();
 }
 
 ActorTask::State ActorTask::GetState() const {
@@ -22,7 +33,103 @@ ActorTask::State ActorTask::GetState() const {
 }
 
 void ActorTask::SetState(State state) {
+  using enum State;
+#if DCHECK_IS_ON()
+  static const base::NoDestructor<base::StateTransitions<State>>
+      allowed_transitions(base::StateTransitions<State>({
+          {kCreated, {kActing, kReflecting, kPausedByClient, kFinished}},
+          {kActing, {kReflecting, kPausedByClient, kFinished}},
+          {kReflecting, {kActing, kPausedByClient, kFinished}},
+          {kPausedByClient, {kActing, kReflecting, kFinished}},
+          {kFinished, {}},
+      }));
+  if (state != state_) {
+    DCHECK_STATE_TRANSITION(allowed_transitions,
+                            /*old_state=*/state_,
+                            /*new_state=*/state);
+  }
+#endif  // DCHECK_IS_ON()
+
   state_ = state;
+  task_state_change_callback_list_.Notify(id_, state_);
+}
+
+void ActorTask::Stop() {
+  if (execution_engine_) {
+    execution_engine_->CancelOngoingActions(
+        mojom::ActionResultCode::kTaskWentAway);
+  }
+  SetState(State::kFinished);
+  end_time_ = base::Time::Now();
+}
+
+void ActorTask::Pause() {
+  if (GetState() == State::kFinished) {
+    return;
+  }
+  if (execution_engine_) {
+    execution_engine_->CancelOngoingActions(
+        mojom::ActionResultCode::kTaskPaused);
+  }
+  SetState(State::kPausedByClient);
+}
+
+void ActorTask::Resume() {
+  if (GetState() != State::kFinished) {
+    SetState(State::kReflecting);
+  }
+}
+
+bool ActorTask::IsPaused() const {
+  return GetState() == State::kPausedByClient;
+}
+
+base::Time ActorTask::GetEndTime() const {
+  return end_time_;
+}
+
+base::CallbackListSubscription ActorTask::RegisterTaskStateChange(
+    TaskStateChangeCallback callback) {
+  return task_state_change_callback_list_.Add(std::move(callback));
+}
+
+void ActorTask::AddToTabSet(tabs::TabHandle tab_handle) {
+  tab_handles_.insert(tab_handle);
+}
+
+bool ActorTask::HasActedOnTab(tabs::TabHandle tab) const {
+  return tab_handles_.contains(tab);
+}
+
+tabs::TabInterface* ActorTask::GetTabForObservation() const {
+  CHECK_EQ(tab_handles_.size(), 1ul);
+  for (const tabs::TabHandle& handle : tab_handles_) {
+    if (tabs::TabInterface* tab = handle.Get()) {
+      return tab;
+    }
+  }
+
+  return nullptr;
+}
+
+std::string ToString(const ActorTask::State& state) {
+  using enum ActorTask::State;
+  switch (state) {
+    case kCreated:
+      return "Created";
+    case kActing:
+      return "Acting";
+    case kReflecting:
+      return "Reflecting";
+    case kPausedByClient:
+      return "PausedByClient";
+    case kFinished:
+      return "Finished";
+  }
+}
+
+std::ostream& operator<<(std::ostream& os, const ActorTask::State& state) {
+  return os << ToString(state);
 }
 
 }  // namespace actor

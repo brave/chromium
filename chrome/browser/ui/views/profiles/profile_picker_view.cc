@@ -146,6 +146,7 @@ bool IsClassicProfilePickerFlow(const ProfilePicker::Params& params) {
     case ProfilePicker::EntryPoint::kProfileIdle:
     case ProfilePicker::EntryPoint::kOnStartupNoProfile:
     case ProfilePicker::EntryPoint::kNewSessionOnExistingProcessNoProfile:
+    case ProfilePicker::EntryPoint::kOnStartupCreateProfileWithEmail:
       return true;
     case ProfilePicker::EntryPoint::kFirstRun:
     case ProfilePicker::EntryPoint::kGlicManager:
@@ -217,11 +218,9 @@ void ProfilePicker::SwitchToReauth(
 
 // static
 void ProfilePicker::SwitchToSignedOutPostIdentityFlow(
-    std::optional<SkColor> profile_color,
-    base::OnceCallback<void(bool)> switch_finished_callback) {
+    std::optional<SkColor> profile_color) {
   if (g_profile_picker_view) {
-    g_profile_picker_view->SwitchToSignedOutPostIdentityFlow(
-        profile_color, std::move(switch_finished_callback));
+    g_profile_picker_view->SwitchToSignedOutPostIdentityFlow(profile_color);
   }
 }
 
@@ -360,8 +359,10 @@ void ProfilePickerView::ShowScreen(
   }
 
   if (url.is_empty()) {
-    DCHECK(!navigation_finished_closure);
     ShowScreenFinished(contents);
+    if (navigation_finished_closure) {
+      std::move(navigation_finished_closure).Run();
+    }
     return;
   }
 
@@ -443,21 +444,18 @@ void ProfilePickerView::Reset(StepSwitchFinishedCallback callback) {
 }
 
 void ProfilePickerView::SwitchToSignedOutPostIdentityFlow(
-    std::optional<SkColor> profile_color,
-    base::OnceCallback<void(bool)> switch_finished_callback) {
+    std::optional<SkColor> profile_color) {
   ProfileManager::CreateMultiProfileAsync(
       g_browser_process->profile_manager()
           ->GetProfileAttributesStorage()
           .ChooseNameForNewProfile(),
       profiles::GetPlaceholderAvatarIndex(), /*is_hidden=*/true,
       base::BindOnce(&ProfilePickerView::OnLocalProfileInitialized,
-                     weak_ptr_factory_.GetWeakPtr(), profile_color,
-                     std::move(switch_finished_callback)));
+                     weak_ptr_factory_.GetWeakPtr(), profile_color));
 }
 
 void ProfilePickerView::OnLocalProfileInitialized(
     std::optional<SkColor> profile_color,
-    base::OnceCallback<void(bool)> switch_finished_callback,
     Profile* profile) {
   if (!profile) {
     NOTREACHED() << "Local fail in creating new profile";
@@ -475,8 +473,7 @@ void ProfilePickerView::OnLocalProfileInitialized(
     theme_service->UseDefaultTheme();
   }
 
-  GetProfilePickerFlowController()->SwitchToSignedOutPostIdentityFlow(
-      profile, std::move(switch_finished_callback));
+  GetProfilePickerFlowController()->SwitchToSignedOutPostIdentityFlow(profile);
 }
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -709,7 +706,7 @@ ProfilePickerView::CreateFlowController(Profile* picker_profile,
   DCHECK(IsClassicProfilePickerFlow(params_));
   return std::make_unique<ProfilePickerFlowController>(
       /*host=*/this, std::move(clear_host_callback), params_.entry_point(),
-      params_.on_select_profile_target_url());
+      params_.on_select_profile_target_url(), params_.initial_email());
 }
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -717,7 +714,8 @@ void ProfilePickerView::SwitchToDiceSignIn(
     ProfilePicker::ProfileInfo profile_info,
     base::OnceCallback<void(bool)> switch_finished_callback) {
   GetProfilePickerFlowController()->SwitchToDiceSignIn(
-      std::move(profile_info), std::move(switch_finished_callback));
+      std::move(profile_info),
+      StepSwitchFinishedCallback(std::move(switch_finished_callback)));
 }
 
 void ProfilePickerView::SwitchToReauth(

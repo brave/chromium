@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 
+#include "base/check_is_test.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
@@ -14,6 +15,7 @@
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/named_trigger.h"
@@ -28,6 +30,8 @@
 #include "content/browser/preloading/prerender/prerender_final_status.h"
 #include "content/browser/preloading/prerender/prerender_host_registry.h"
 #include "content/browser/preloading/prerender/prerender_metrics.h"
+#include "content/browser/preloading/prerender/prerender_navigation_utils.h"
+#include "content/browser/preloading/speculation_rules/speculation_rules_util.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/navigation_controller_impl.h"
@@ -54,10 +58,32 @@ namespace content {
 
 namespace {
 
-base::OnceCallback<void(FrameTreeNodeId)>& GetHostCreationCallbackForTesting() {
+base::OnceCallback<void(FrameTreeNodeId)>& GetHostCreationCallback() {
   static base::NoDestructor<base::OnceCallback<void(FrameTreeNodeId)>>
-      host_creation_callback_for_testing;
-  return *host_creation_callback_for_testing;
+      host_creation_callback;
+  return *host_creation_callback;
+}
+
+void CheckPrerenderAttributes(const PrerenderAttributes& attributes) {
+  // If the prerendering is browser-initiated, it is expected to have no
+  // initiator. All initiator related information should be null or invalid. On
+  // the other hand, renderer-initiated prerendering should have valid initiator
+  // information.
+  if (attributes.IsBrowserInitiated()) {
+    CHECK(!attributes.initiator_origin.has_value());
+    CHECK(!attributes.initiator_frame_token.has_value());
+    CHECK_EQ(attributes.initiator_process_id,
+             ChildProcessHost::kInvalidUniqueID);
+    CHECK_EQ(attributes.initiator_ukm_id, ukm::kInvalidSourceId);
+    CHECK(attributes.initiator_frame_tree_node_id.is_null());
+  } else {
+    CHECK(attributes.initiator_origin.has_value());
+    CHECK(attributes.initiator_frame_token.has_value());
+    CHECK_NE(attributes.initiator_process_id,
+             ChildProcessHost::kInvalidUniqueID);
+    CHECK_NE(attributes.initiator_ukm_id, ukm::kInvalidSourceId);
+    CHECK(attributes.initiator_frame_tree_node_id);
+  }
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -80,6 +106,135 @@ std::string SerializeHttpRequestHeaders(
 
 }  // namespace
 
+PrerenderHost::PrerenderFrameTreeDelegate::PrerenderFrameTreeDelegate(
+    BrowserContext* browser_context,
+    WebContentsImpl& web_contents,
+    PrerenderHost& prerender_host)
+    : prerender_host_(prerender_host),
+      frame_tree_(
+          std::make_unique<FrameTree>(browser_context,
+                                      /*delegate=*/this,
+                                      /*navigation_controller_delegate=*/this,
+                                      /*navigator_delegate=*/&web_contents,
+                                      /*render_frame_delegate=*/&web_contents,
+                                      /*render_view_delegate=*/&web_contents,
+                                      /*render_widget_delegate=*/&web_contents,
+                                      /*manager_delegate=*/&web_contents,
+                                      /*page_delegate=*/&web_contents,
+                                      FrameTree::Type::kPrerender)) {}
+
+void PrerenderHost::PrerenderFrameTreeDelegate::DidStopLoading() {
+  if (on_wait_loading_finished_) {
+    std::move(on_wait_loading_finished_).Run(LoadingOutcome::kLoadingCompleted);
+  }
+}
+
+bool PrerenderHost::PrerenderFrameTreeDelegate::IsHidden() {
+  return true;
+}
+
+FrameTree* PrerenderHost::PrerenderFrameTreeDelegate::LoadingTree() {
+  // For prerendering loading tree is the same as its frame tree as loading is
+  // done at a frame tree level in the background, unlike the loading visible
+  // to the user where we account for nested frame tree loading state.
+  return frame_tree_.get();
+}
+
+FrameTreeNodeId
+PrerenderHost::PrerenderFrameTreeDelegate::GetOuterDelegateFrameTreeNodeId() {
+  // A prerendered FrameTree is not "inner to" or "nested inside" another
+  // FrameTree; it exists in parallel to the primary FrameTree of the current
+  // WebContents. Therefore, it must not attempt to access the primary
+  // FrameTree in the sense of an "outer delegate" relationship, so we return
+  // the invalid ID here.
+  return FrameTreeNodeId();
+}
+
+RenderFrameHostImpl*
+PrerenderHost::PrerenderFrameTreeDelegate::GetProspectiveOuterDocument() {
+  // A prerendered FrameTree never has an outer document.
+  return nullptr;
+}
+
+void PrerenderHost::PrerenderFrameTreeDelegate::SetFocusedFrame(
+    FrameTreeNode* node,
+    SiteInstanceGroup* source) {
+  // `node` can only become focused when `node`'s current RenderFrameHost is
+  // active.
+  NOTREACHED();
+}
+
+FrameTree*
+PrerenderHost::PrerenderFrameTreeDelegate::GetOwnedPictureInPictureFrameTree() {
+  return nullptr;
+}
+
+FrameTree* PrerenderHost::PrerenderFrameTreeDelegate::
+    GetPictureInPictureOpenerFrameTree() {
+  return nullptr;
+}
+
+bool PrerenderHost::PrerenderFrameTreeDelegate::
+    OnRenderFrameProxyVisibilityChanged(
+        RenderFrameProxyHost* render_frame_proxy_host,
+        blink::mojom::FrameVisibility visibility) {
+  return false;
+}
+
+void PrerenderHost::PrerenderFrameTreeDelegate::
+    ActivateAndShowRepostFormWarningDialog() {
+  // Not supported, cancel pending reload.
+  frame_tree_->controller().CancelPendingReload();
+}
+
+bool PrerenderHost::PrerenderFrameTreeDelegate::ShouldPreserveAbortedURLs() {
+  return false;
+}
+
+PrerenderHost::LoadingOutcome
+PrerenderHost::PrerenderFrameTreeDelegate::WaitForLoadStopForTesting() {
+  LoadingOutcome status = LoadingOutcome::kLoadingCompleted;
+
+  if (!frame_tree_->IsLoadingIncludingInnerFrameTrees() &&
+      prerender_host_->GetInitialNavigationId().has_value()) {
+    return status;
+  }
+
+  base::RunLoop loop;
+  on_wait_loading_finished_ = base::BindOnce(
+      [](base::OnceClosure on_close, LoadingOutcome* result,
+         LoadingOutcome status) {
+        *result = status;
+        std::move(on_close).Run();
+      },
+      loop.QuitClosure(), &status);
+  loop.Run();
+  // Reset callback to null in case if loop is quit by timeout.
+  //
+  // This `if` body causes SEGV for `kPrerenderingCancelled` case because the
+  // callback is called in dtor and `this` is already destructed here.
+  //
+  // TODO(crbug.com/372691377): Split setup and wait parts and make the wait
+  // part `static`.
+  if (status != PrerenderHost::LoadingOutcome::kPrerenderingCancelled) {
+    on_wait_loading_finished_.Reset();
+  }
+  return status;
+}
+
+PrerenderHost::PrerenderFrameTreeDelegate::~PrerenderFrameTreeDelegate() {
+  if (frame_tree_) {
+    frame_tree_->Shutdown();
+  }
+  // If we are still waiting on test loop, we can assume the page loading step
+  // has been cancelled and the PrerenderHost is being discarded without
+  // completing loading the page.
+  if (on_wait_loading_finished_) {
+    std::move(on_wait_loading_finished_)
+        .Run(PrerenderHost::LoadingOutcome::kPrerenderingCancelled);
+  }
+}
+
 // static
 PrerenderHost* PrerenderHost::GetFromFrameTreeNodeIfPrerendering(
     FrameTreeNode& frame_tree_node) {
@@ -92,8 +247,16 @@ PrerenderHost* PrerenderHost::GetFromFrameTreeNodeIfPrerendering(
 // static
 PrerenderHost& PrerenderHost::GetFromFrameTreeNode(
     FrameTreeNode& frame_tree_node) {
-  CHECK(frame_tree_node.frame_tree().is_prerendering());
-  return *static_cast<PrerenderHost*>(frame_tree_node.frame_tree().delegate());
+  return GetFromFrameTree(&frame_tree_node.frame_tree());
+}
+
+// static
+PrerenderHost& PrerenderHost::GetFromFrameTree(FrameTree* frame_tree) {
+  CHECK(frame_tree);
+  CHECK(frame_tree->is_prerendering());
+  return *(static_cast<PrerenderHost::PrerenderFrameTreeDelegate*>(
+               frame_tree->delegate())
+               ->prerender_host_);
 }
 
 // static
@@ -188,10 +351,11 @@ bool PrerenderHost::AreHttpRequestHeadersCompatible(
 // static
 void PrerenderHost::SetHostCreationCallbackForTesting(
     base::OnceCallback<void(FrameTreeNodeId host_id)> callback) {
-  GetHostCreationCallbackForTesting() = std::move(callback);  // IN-TEST
+  GetHostCreationCallback() = std::move(callback);
 }
 
 PrerenderHost::PrerenderHost(
+    std::unique_ptr<PrerenderHost> reuse_host,
     const PrerenderAttributes& attributes,
     WebContentsImpl& web_contents,
     base::WeakPtr<PreloadingAttempt> attempt,
@@ -202,71 +366,59 @@ PrerenderHost::PrerenderHost(
                                            embedder_histogram_suffix())),
       attempt_(std::move(attempt)),
       devtools_attempt_(std::move(devtools_attempt)),
-      web_contents_(web_contents),
-      frame_tree_(std::make_unique<FrameTree>(web_contents.GetBrowserContext(),
-                                              this,
-                                              this,
-                                              &web_contents,
-                                              &web_contents,
-                                              &web_contents,
-                                              &web_contents,
-                                              &web_contents,
-                                              &web_contents,
-                                              FrameTree::Type::kPrerender)) {
+      web_contents_(web_contents) {
 #if BUILDFLAG(IS_ANDROID)
   if (trigger_type() == PreloadingTriggerType::kSpeculationRule) {
     base::trace_event::EmitNamedTrigger("sp-prerender-start");
   }
 #endif  // BUILDFLAG(IS_ANDROID)
-  // If the prerendering is browser-initiated, it is expected to have no
-  // initiator. All initiator related information should be null or invalid. On
-  // the other hand, renderer-initiated prerendering should have valid initiator
-  // information.
-  if (attributes.IsBrowserInitiated()) {
-    CHECK(!attributes.initiator_origin.has_value());
-    CHECK(!attributes.initiator_frame_token.has_value());
-    CHECK_EQ(attributes.initiator_process_id,
-             ChildProcessHost::kInvalidUniqueID);
-    CHECK_EQ(attributes.initiator_ukm_id, ukm::kInvalidSourceId);
-    CHECK(attributes.initiator_frame_tree_node_id.is_null());
-  } else {
-    CHECK(attributes.initiator_origin.has_value());
-    CHECK(attributes.initiator_frame_token.has_value());
-    CHECK_NE(attributes.initiator_process_id,
-             ChildProcessHost::kInvalidUniqueID);
-    CHECK_NE(attributes.initiator_ukm_id, ukm::kInvalidSourceId);
-    CHECK(attributes.initiator_frame_tree_node_id);
-  }
 
+  CheckPrerenderAttributes(attributes_);
   SetTriggeringOutcome(PreloadingTriggeringOutcome::kTriggeredButPending);
 
-  scoped_refptr<SiteInstanceImpl> site_instance =
-      SiteInstanceImpl::Create(web_contents.GetBrowserContext());
-  frame_tree_->Init(site_instance.get(),
-                    /*renderer_initiated_creation=*/false,
-                    /*main_frame_name=*/"", /*opener_for_origin=*/nullptr,
-                    /*frame_policy=*/blink::FramePolicy(),
-                    base::UnguessableToken::Create());
+  if (reuse_host) {
+    if (reuse_host->frame_tree_delegate_->on_wait_loading_finished_) {
+      std::move(reuse_host->frame_tree_delegate_->on_wait_loading_finished_)
+          .Run(PrerenderHost::LoadingOutcome::kPrerenderingCancelled);
+    }
+    frame_tree_delegate_ = std::move(reuse_host->frame_tree_delegate_);
+    // Reset the NavigationRequest if there is an on-going one in the frame tree
+    // since the navigation is no longer needed. If there is no on-going
+    // NavigationRequest, the function call will be no-op.
+    GetFrameTree()->root()->ResetNavigationRequest(
+        NavigationDiscardReason::kExplicitCancellation);
+    frame_tree_delegate_->prerender_host_ = *this;
+  } else {
+    frame_tree_delegate_ = std::make_unique<PrerenderFrameTreeDelegate>(
+        web_contents.GetBrowserContext(), web_contents, *this);
+    scoped_refptr<SiteInstanceImpl> site_instance =
+        SiteInstanceImpl::Create(web_contents.GetBrowserContext());
+    GetFrameTree()->Init(site_instance.get(),
+                         /*renderer_initiated_creation=*/false,
+                         /*main_frame_name=*/"", /*opener_for_origin=*/nullptr,
+                         /*frame_policy=*/blink::FramePolicy(),
+                         base::UnguessableToken::Create());
 
-  // Use the same SessionStorageNamespace as the primary page for the
-  // prerendering page.
-  frame_tree_->controller().SetSessionStorageNamespace(
-      site_instance->GetStoragePartitionConfig(),
-      web_contents_->GetPrimaryFrameTree()
-          .controller()
-          .GetSessionStorageNamespace(
-              site_instance->GetStoragePartitionConfig()));
+    // Use the same SessionStorageNamespace as the primary page for the
+    // prerendering page.
+    GetFrameTree()->controller().SetSessionStorageNamespace(
+        site_instance->GetStoragePartitionConfig(),
+        web_contents_->GetPrimaryFrameTree()
+            .controller()
+            .GetSessionStorageNamespace(
+                site_instance->GetStoragePartitionConfig()));
 
-  // TODO(crbug.com/40177940): This should be moved to FrameTree::Init
-  web_contents_->NotifySwappedFromRenderManager(
-      /*old_frame=*/nullptr,
-      frame_tree_->root()->render_manager()->current_frame_host());
+    // TODO(crbug.com/40177940): This should be moved to FrameTree::Init
+    web_contents_->NotifySwappedFromRenderManager(
+        /*old_frame=*/nullptr,
+        GetFrameTree()->root()->render_manager()->current_frame_host());
+  }
 
-  frame_tree_node_id_ = frame_tree_->root()->frame_tree_node_id();
+  frame_tree_node_id_ = GetFrameTree()->root()->frame_tree_node_id();
 
-  if (GetHostCreationCallbackForTesting()) {
-    std::move(GetHostCreationCallbackForTesting())  // IN-TEST
-        .Run(frame_tree_node_id_);
+  if (GetHostCreationCallback()) {
+    CHECK_IS_TEST();
+    std::move(GetHostCreationCallback()).Run(frame_tree_node_id_);
   }
 }
 
@@ -354,79 +506,6 @@ PrerenderHost::~PrerenderHost() {
   for (auto& observer : observers_) {
     observer.OnHostDestroyed(final_status_.value());
   }
-
-  // If we are still waiting on test loop, we can assume the page loading step
-  // has been cancelled and the PrerenderHost is being discarded without
-  // completing loading the page.
-  if (on_wait_loading_finished_) {
-    std::move(on_wait_loading_finished_)
-        .Run(PrerenderHost::LoadingOutcome::kPrerenderingCancelled);
-  }
-
-  if (frame_tree_) {
-    frame_tree_->Shutdown();
-  }
-}
-
-void PrerenderHost::DidStopLoading() {
-  if (on_wait_loading_finished_) {
-    std::move(on_wait_loading_finished_).Run(LoadingOutcome::kLoadingCompleted);
-  }
-}
-
-bool PrerenderHost::IsHidden() {
-  return true;
-}
-
-FrameTree* PrerenderHost::LoadingTree() {
-  // For prerendering loading tree is the same as its frame tree as loading is
-  // done at a frame tree level in the background, unlike the loading visible
-  // to the user where we account for nested frame tree loading state.
-  return frame_tree_.get();
-}
-
-void PrerenderHost::SetFocusedFrame(FrameTreeNode* node,
-                                    SiteInstanceGroup* source) {
-  // `node` can only become focused when `node`'s current RenderFrameHost is
-  // active.
-  NOTREACHED();
-}
-
-FrameTree* PrerenderHost::GetOwnedPictureInPictureFrameTree() {
-  return nullptr;
-}
-
-FrameTree* PrerenderHost::GetPictureInPictureOpenerFrameTree() {
-  return nullptr;
-}
-
-bool PrerenderHost::OnRenderFrameProxyVisibilityChanged(
-    RenderFrameProxyHost* render_frame_proxy_host,
-    blink::mojom::FrameVisibility visibility) {
-  return false;
-}
-
-FrameTreeNodeId PrerenderHost::GetOuterDelegateFrameTreeNodeId() {
-  // A prerendered FrameTree is not "inner to" or "nested inside" another
-  // FrameTree; it exists in parallel to the primary FrameTree of the current
-  // WebContents. Therefore, it must not attempt to access the primary
-  // FrameTree in the sense of an "outer delegate" relationship, so we return
-  // the invalid ID here.
-  return FrameTreeNodeId();
-}
-
-RenderFrameHostImpl* PrerenderHost::GetProspectiveOuterDocument() {
-  // A prerendered FrameTree never has an outer document.
-  return nullptr;
-}
-
-void PrerenderHost::ActivateAndShowRepostFormWarningDialog() {
-  // Not supported, cancel pending reload.
-  GetNavigationController().CancelPendingReload();
-}
-
-bool PrerenderHost::ShouldPreserveAbortedURLs() {
-  return false;
 }
 
 // TODO(crbug.com/40150744): Inspect diffs from the current
@@ -471,8 +550,9 @@ bool PrerenderHost::StartPrerendering() {
   base::WeakPtr<NavigationHandle> created_navigation_handle =
       GetNavigationController().LoadURLWithParams(load_url_params);
 
-  if (!created_navigation_handle)
+  if (!created_navigation_handle) {
     return false;
+  }
 
   if (attributes_.prerender_navigation_handle_callback) {
     attributes_.prerender_navigation_handle_callback.Run(
@@ -483,8 +563,9 @@ bool PrerenderHost::StartPrerendering() {
   // can fail during navigation start, for example, due to prerendering a
   // non-supported URL scheme that is filtered out in
   // PrerenderNavigationThrottle.
-  if (final_status_.has_value())
+  if (final_status_.has_value()) {
     return false;
+  }
 
   if (initial_navigation_id_.has_value()) {
     // In usual code path, `initial_navigation_id_` should be set by
@@ -549,8 +630,8 @@ void PrerenderHost::ReadyToCommitNavigation(
   CHECK(navigation_request->IsInPrerenderedMainFrame());
   // Prerender frame tree node is alive, see:
   // `PrerenderHostRegistry::ReadyToCommitNavigation`.
-  CHECK(frame_tree_);
-  CHECK_EQ(frame_tree_.get(),
+  CHECK(GetFrameTree());
+  CHECK_EQ(GetFrameTree(),
            &navigation_request->frame_tree_node()->frame_tree());
 
   if (!IsInitialNavigation(*navigation_request)) {
@@ -581,7 +662,7 @@ void PrerenderHost::DidFinishNavigation(NavigationHandle* navigation_handle) {
 
   // Observe navigation only in the prerendering frame tree.
   CHECK_EQ(&(navigation_request->frame_tree_node()->frame_tree()),
-           frame_tree_.get());
+           GetFrameTree());
 
   const bool is_prerender_main_frame =
       navigation_request->GetFrameTreeNodeId() == frame_tree_node_id_;
@@ -633,18 +714,18 @@ std::unique_ptr<StoredPage> PrerenderHost::Activate(
   // There should be no ongoing main-frame navigation during activation.
   // TODO(crbug.com/40174232): Make sure sub-frame navigations are
   // fine.
-  CHECK(!frame_tree_->root()->HasNavigation());
+  CHECK(!GetFrameTree()->root()->HasNavigation());
 
   // Before the root's current_frame_host is cleared, collect the subframes of
   // `frame_tree_` whose FrameTree will need to be updated.
-  FrameTree::NodeRange node_range = frame_tree_->Nodes();
+  FrameTree::NodeRange node_range = GetFrameTree()->Nodes();
   std::vector<FrameTreeNode*> subframe_nodes(std::next(node_range.begin()),
                                              node_range.end());
 
   // Before the root's current_frame_host is cleared, collect the replication
   // state so that it can be used for post-activation validation.
   blink::mojom::FrameReplicationState prior_replication_state =
-      frame_tree_->root()->current_replication_state();
+      GetFrameTree()->root()->current_replication_state();
 
   // Update FrameReplicationState::has_received_user_gesture_before_nav of the
   // prerendered page.
@@ -665,7 +746,7 @@ std::unique_ptr<StoredPage> PrerenderHost::Activate(
   // frame_tree_.reset() that calls into observer functions to minimize the
   // duration of current_frame_host being null.
   std::unique_ptr<StoredPage> page =
-      frame_tree_->root()->render_manager()->TakePrerenderedPage();
+      GetFrameTree()->root()->render_manager()->TakePrerenderedPage();
 
   NavigationEntryRestoreContextImpl context;
   std::unique_ptr<NavigationEntryImpl> nav_entry =
@@ -716,8 +797,7 @@ std::unique_ptr<StoredPage> PrerenderHost::Activate(
     subframe_node->SetFrameTree(target_frame_tree);
   }
 
-  frame_tree_->Shutdown();
-  frame_tree_.reset();
+  frame_tree_delegate_.reset();
 
   page->render_frame_host()->ForEachRenderFrameHostImplIncludingSpeculative(
       [this](RenderFrameHostImpl* rfh) {
@@ -730,8 +810,9 @@ std::unique_ptr<StoredPage> PrerenderHost::Activate(
             web_contents_->GetPageVisibilityState());
       });
 
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnActivated();
+  }
 
   // The activated page is on the primary tree now. It can propagate the client
   // hints to the global settings.
@@ -769,7 +850,7 @@ std::unique_ptr<StoredPage> PrerenderHost::Activate(
 // Usually frame policy for the main frame is empty as in the most common case a
 // parent document sets a policy on the child iframe.
 bool PrerenderHost::IsFramePolicyCompatibleWithPrimaryFrameTree() {
-  FrameTreeNode* prerender_root_ftn = frame_tree_->root();
+  FrameTreeNode* prerender_root_ftn = GetFrameTree()->root();
   FrameTreeNode* primary_root_ftn = web_contents_->GetPrimaryFrameTree().root();
 
   // Ensure that the pending frame policy is not set on the main frames, as it
@@ -1096,14 +1177,14 @@ PrerenderHost::AreCommonNavigationParamsCompatibleWithNavigation(
 }
 
 RenderFrameHostImpl* PrerenderHost::GetPrerenderedMainFrameHost() {
-  CHECK(frame_tree_);
-  CHECK(frame_tree_->root()->current_frame_host());
-  return frame_tree_->root()->current_frame_host();
+  CHECK(GetFrameTree());
+  CHECK(GetFrameTree()->root()->current_frame_host());
+  return GetFrameTree()->root()->current_frame_host();
 }
 
 FrameTree& PrerenderHost::GetPrerenderFrameTree() {
-  CHECK(frame_tree_);
-  return *frame_tree_;
+  CHECK(GetFrameTree());
+  return *GetFrameTree();
 }
 
 void PrerenderHost::RecordFailedFinalStatus(
@@ -1140,32 +1221,7 @@ void PrerenderHost::RecordActivation(NavigationRequest& navigation_request) {
 }
 
 PrerenderHost::LoadingOutcome PrerenderHost::WaitForLoadStopForTesting() {
-  LoadingOutcome status = LoadingOutcome::kLoadingCompleted;
-
-  if (!frame_tree_->IsLoadingIncludingInnerFrameTrees() &&
-      GetInitialNavigationId().has_value())
-    return status;
-
-  base::RunLoop loop;
-  on_wait_loading_finished_ = base::BindOnce(
-      [](base::OnceClosure on_close, LoadingOutcome* result,
-         LoadingOutcome status) {
-        *result = status;
-        std::move(on_close).Run();
-      },
-      loop.QuitClosure(), &status);
-  loop.Run();
-  // Reset callback to null in case if loop is quit by timeout.
-  //
-  // This `if` body causes SEGV for `kPrerenderingCancelled` case because the
-  // callback is called in dtor and `this` is already destructed here.
-  //
-  // TODO(crbug.com/372691377): Split setup and wait parts and make the wait
-  // part `static`.
-  if (status != PrerenderHost::LoadingOutcome::kPrerenderingCancelled) {
-    on_wait_loading_finished_.Reset();
-  }
-  return status;
+  return frame_tree_delegate_->WaitForLoadStopForTesting();  // IN-TEST
 }
 
 const GURL& PrerenderHost::GetInitialUrl() const {
@@ -1277,8 +1333,8 @@ void PrerenderHost::SetFailureReason(
     case PrerenderFinalStatus::kMemoryPressureAfterTriggered:
     case PrerenderFinalStatus::kPrerenderingDisabledByDevTools:
     case PrerenderFinalStatus::kActivatedWithAuxiliaryBrowsingContexts:
-    case PrerenderFinalStatus::kMaxNumOfRunningEagerPrerendersExceeded:
-    case PrerenderFinalStatus::kMaxNumOfRunningNonEagerPrerendersExceeded:
+    case PrerenderFinalStatus::kMaxNumOfRunningImmediatePrerendersExceeded:
+    case PrerenderFinalStatus::kMaxNumOfRunningNonImmediatePrerendersExceeded:
     case PrerenderFinalStatus::kMaxNumOfRunningEmbedderPrerendersExceeded:
     case PrerenderFinalStatus::kPrerenderingUrlHasEffectiveUrl:
     case PrerenderFinalStatus::kRedirectedPrerenderingUrlHasEffectiveUrl:
@@ -1374,6 +1430,15 @@ bool PrerenderHost::IsNoVarySearchHintUrlMatch(const GURL& url) const {
   return false;
 }
 
+bool PrerenderHost::IsUrlSameOrigin(const GURL& url) const {
+  return url::IsSameOriginWith(GetInitialUrl(), url);
+}
+
+bool PrerenderHost::IsUrlSameSite(const GURL& url) const {
+  return prerender_navigation_utils::IsSameSite(
+      url, url::Origin::Create(GetInitialUrl()));
+}
+
 void PrerenderHost::OnAcceptClientHintChanged(
     const url::Origin& origin,
     const std::vector<network::mojom::WebClientHintsType>& client_hints_type) {
@@ -1383,8 +1448,9 @@ void PrerenderHost::OnAcceptClientHintChanged(
 void PrerenderHost::GetAllowedClientHintsOnPage(
     const url::Origin& origin,
     blink::EnabledClientHints* client_hints) const {
-  if (!client_hints_type_.contains(origin))
+  if (!client_hints_type_.contains(origin)) {
     return;
+  }
   for (const auto& hint : client_hints_type_.at(origin)) {
     client_hints->SetIsEnabled(hint, true);
   }
@@ -1397,8 +1463,9 @@ std::string PrerenderHost::GetHistogramSuffix() const {
 void PrerenderHost::Cancel(PrerenderFinalStatus status) {
   TRACE_EVENT("navigation", "PrerenderHost::Cancel", "final_status", status);
   // Already cancelled.
-  if (final_status_)
+  if (final_status_) {
     return;
+  }
 
   RenderFrameHostImpl* host = PrerenderHost::GetPrerenderedMainFrameHost();
   CHECK(host);
@@ -1442,6 +1509,9 @@ base::TimeDelta PrerenderHost::WaitUntilHeadTimeout() {
   if (IsSpeculationRuleType(attributes_.trigger_type)) {
     CHECK(eagerness().has_value());
     switch (eagerness().value()) {
+      // Currently, `kImmediate` and `kEager` behaves the same.
+      // TODO(crbug.com/40287486): Separate these behaviors.
+      case blink::mojom::SpeculationEagerness::kImmediate:
       case blink::mojom::SpeculationEagerness::kEager:
         timeout_in_milliseconds =
             features::kPrerender2NoVarySearchWaitForHeadersTimeoutEagerPrerender
@@ -1472,7 +1542,7 @@ void PrerenderHost::OnWaitingForHeadersStarted(
     NavigationHandle& navigation_handle,
     WaitingForHeadersStartedReason reason) {
   // Prerender frame tree is alive. This check is also done by the caller.
-  CHECK(frame_tree_);
+  CHECK(GetFrameTree());
   for (auto& observer : observers_) {
     observer.OnWaitingForHeadersStarted(navigation_handle, reason);
   }
@@ -1481,7 +1551,7 @@ void PrerenderHost::OnWaitingForHeadersStarted(
 void PrerenderHost::OnWaitingForHeadersFinished(
     WaitingForHeadersFinishedReason reason) {
   // Prerender frame tree is alive. This check is also done by the caller.
-  CHECK(frame_tree_);
+  CHECK(GetFrameTree());
 
   base::UmaHistogramEnumeration(
       "Prerender.Experimental.WaitingForHeadersFinishedReason" +

@@ -389,7 +389,9 @@ SpeculationRule* ParseSpeculationRule(JSONObject* input,
       return nullptr;
     }
 
-    if (eagerness_str == "eager" || eagerness_str == "immediate") {
+    if (eagerness_str == "immediate") {
+      eagerness = mojom::blink::SpeculationEagerness::kImmediate;
+    } else if (eagerness_str == "eager") {
       eagerness = mojom::blink::SpeculationEagerness::kEager;
     } else if (eagerness_str == "moderate") {
       eagerness = mojom::blink::SpeculationEagerness::kModerate;
@@ -404,7 +406,7 @@ SpeculationRule* ParseSpeculationRule(JSONObject* input,
     UseCounter::Count(context, WebFeature::kSpeculationRulesExplicitEagerness);
   } else {
     eagerness = source == "list"
-                    ? mojom::blink::SpeculationEagerness::kEager
+                    ? mojom::blink::SpeculationEagerness::kImmediate
                     : mojom::blink::SpeculationEagerness::kConservative;
   }
 
@@ -734,7 +736,8 @@ SpeculationRuleSet* SpeculationRuleSet::Parse(Source* source,
             result->selectors_.AppendVector(rule->predicate()->GetStyleRules());
           }
 
-          if (rule->eagerness() != mojom::blink::SpeculationEagerness::kEager) {
+          if (rule->eagerness() !=
+              mojom::blink::SpeculationEagerness::kImmediate) {
             result->requires_unfiltered_input_ = true;
           }
 

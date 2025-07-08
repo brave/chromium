@@ -16,11 +16,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service_factory.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_controller.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/ui/views/user_education/browser_help_bubble.h"
 #include "chrome/browser/ui/views/user_education/browser_user_education_service.h"
 #include "chrome/browser/user_education/user_education_service.h"
@@ -45,20 +47,16 @@ BrowserFeaturePromoController20::BrowserFeaturePromoController20(
     user_education::FeaturePromoSessionPolicy* session_policy,
     user_education::TutorialService* tutorial_service,
     user_education::ProductMessagingController* messaging_controller)
-    : FeaturePromoController20(feature_engagement_tracker,
-                               registry,
-                               help_bubble_registry,
-                               storage_service,
-                               session_policy,
-                               tutorial_service,
-                               messaging_controller),
-      browser_view_(browser_view) {}
+    : BrowserFeaturePromoController(browser_view,
+                                    feature_engagement_tracker,
+                                    registry,
+                                    help_bubble_registry,
+                                    storage_service,
+                                    session_policy,
+                                    tutorial_service,
+                                    messaging_controller) {}
 
 BrowserFeaturePromoController20::~BrowserFeaturePromoController20() = default;
-
-ui::ElementContext BrowserFeaturePromoController20::GetAnchorContext() const {
-  return views::ElementTrackerViews::GetContextForView(browser_view_);
-}
 
 user_education::FeaturePromoResult
 BrowserFeaturePromoController20::CanShowPromoForElement(
@@ -67,12 +65,12 @@ BrowserFeaturePromoController20::CanShowPromoForElement(
   // see https://crbug.com/346461762 for an example. This can also crash
   // unit_tests that use a BrowserWindow but not a browser, so also check if
   // the browser view's widget is closing.
-  if (browser_view_->browser()->IsBrowserClosing() ||
-      browser_view_->GetWidget()->IsClosed()) {
+  if (browser_view()->browser()->IsBrowserClosing() ||
+      browser_view()->GetWidget()->IsClosed()) {
     return user_education::FeaturePromoResult::kBlockedByContext;
   }
 
-  auto* const profile = browser_view_->GetProfile();
+  auto* const profile = browser_view()->GetProfile();
 
   // Turn off IPH while a required privacy interstitial is visible or pending.
   auto* const privacy_sandbox_service =
@@ -84,12 +82,12 @@ BrowserFeaturePromoController20::CanShowPromoForElement(
     return user_education::FeaturePromoResult::kBlockedByUi;
   }
 
-  Browser& browser = *browser_view_->browser();
+  Browser& browser = *browser_view()->browser();
 
   // Turn off IPH while the browser is showing fullscreen content (like a
   // video). See https://crbug.com/411475424.
   auto* const fullscreen_controller =
-      browser.exclusive_access_manager()->fullscreen_controller();
+      browser.GetFeatures().exclusive_access_manager()->fullscreen_controller();
   if (fullscreen_controller->IsWindowFullscreenForTabOrPending() ||
       fullscreen_controller->IsExtensionFullscreenOrPending()) {
     return user_education::FeaturePromoResult::kBlockedByUi;
@@ -107,7 +105,7 @@ BrowserFeaturePromoController20::CanShowPromoForElement(
   // Don't show IPH if the toolbar is collapsed in Responsive Mode/the overflow
   // button is visible.
   if (const auto* const controller =
-          browser_view_->toolbar()->toolbar_controller()) {
+          browser_view()->toolbar()->toolbar_controller()) {
     if (controller->InOverflowMode()) {
       return user_education::FeaturePromoResult::kWindowTooSmall;
     }
@@ -116,7 +114,7 @@ BrowserFeaturePromoController20::CanShowPromoForElement(
   // Don't show IPH if the anchor view is in an inactive window.
   auto* const anchor_view = anchor_element->AsA<views::TrackedElementViews>();
   auto* const anchor_widget = anchor_view ? anchor_view->view()->GetWidget()
-                                          : browser_view_->GetWidget();
+                                          : browser_view()->GetWidget();
   if (!anchor_widget) {
     return user_education::FeaturePromoResult::kAnchorNotVisible;
   }
@@ -126,37 +124,4 @@ BrowserFeaturePromoController20::CanShowPromoForElement(
   }
 
   return FeaturePromoController20::CanShowPromoForElement(anchor_element);
-}
-
-const ui::AcceleratorProvider*
-BrowserFeaturePromoController20::GetAcceleratorProvider() const {
-  return browser_view_;
-}
-
-std::u16string BrowserFeaturePromoController20::GetTutorialScreenReaderHint()
-    const {
-  return BrowserHelpBubble::GetFocusTutorialBubbleScreenReaderHint(
-      browser_view_);
-}
-
-std::u16string
-BrowserFeaturePromoController20::GetFocusHelpBubbleScreenReaderHint(
-    user_education::FeaturePromoSpecification::PromoType promo_type,
-    ui::TrackedElement* anchor_element) const {
-  return BrowserHelpBubble::GetFocusHelpBubbleScreenReaderHint(
-      promo_type, browser_view_, anchor_element);
-}
-
-std::u16string BrowserFeaturePromoController20::GetBodyIconAltText() const {
-  return l10n_util::GetStringUTF16(IDS_CHROME_TIP);
-}
-
-const base::Feature*
-BrowserFeaturePromoController20::GetScreenReaderPromptPromoFeature() const {
-  return &feature_engagement::kIPHFocusHelpBubbleScreenReaderPromoFeature;
-}
-
-const char*
-BrowserFeaturePromoController20::GetScreenReaderPromptPromoEventName() const {
-  return feature_engagement::events::kFocusHelpBubbleAcceleratorPromoRead;
 }

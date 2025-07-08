@@ -35,8 +35,11 @@ android_library("java") {
 
   srcjar_deps = [ ":jni_headers" ]
   sources = [
+    "java/src/org/chromium/components/credential_management/CredentialManagerAndroidGetResult.java",
+    "java/src/org/chromium/components/credential_management/CredentialManagerStoreResult.java",
     "java/src/org/chromium/components/credential_management/PasswordCredentialResponse.java",
     "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridge.java",
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerMetricsRecorder.java",
   ]
 
   resources_package = "org.chromium.components.credential_management"
@@ -54,6 +57,7 @@ static_library("browser_sources") {
     ":jni_headers",
     "//content/public/browser",
     "//content/public/common",
+    "//net",
   ]
 
   if (is_android) {
@@ -82,7 +86,10 @@ source_set("unit_tests") {
 }
 
 robolectric_library("junit_tests") {
-  sources = [ "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridgeTest.java" ]
+  sources = [
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridgeTest.java",
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerMetricsRecorderTest.java",
+  ]
 
   deps = [
     ":java",

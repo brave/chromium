@@ -16,7 +16,6 @@
 <translation id="1352919863522755794">Google Password Manager તમારા પાસવર્ડ ચેક કરી શક્યું નથી. તમારું ઇન્ટરનેટ કનેક્શન ચેક કરવાનો પ્રયાસ કરો.</translation>
 <translation id="1394995526009609883">તમે Chromeના સેટિંગમાં જઈને કોઈપણ સમયે તમારી પસંદગીઓને અપડેટ કરી શકો છો.</translation>
 <translation id="1407843355326180937">તમારા બધા ડિવાઇસ પર તમારા બુકમાર્ક વગેરે મેળવવા માટે, આ સાઇટ અને Chromeમાં સાઇન ઇન કરો.</translation>
-<translation id="1426599484714342603">Chrome Shoppingની સશક્તતા મેળવો</translation>
 <translation id="1462727070346936664">Chromeનો સૌથી વધુ લાભ મેળવવા માટે સાઇન ઇન કરો.</translation>
 <translation id="1493827051843127077">તમારા બધા ડિવાઇસ પર તમારી ટૅબ, પાસવર્ડ અને ચુકવણી સંબંધિત માહિતી સિંક કરવા માટે, Chromeને ડિફૉલ્ટ તરીકે સેટ કરો</translation>
 <translation id="1504372625950710826">Chrome અપડેટ ચેક કરી શક્યું નથી. તમારું ઇન્ટરનેટ કનેક્શન ચેક કરવાનો પ્રયાસ કરો.</translation>
@@ -33,7 +32,6 @@
 <translation id="1554731936187952550">નુકસાનકારક વેબસાઇટ સામે તમે Chromeની સૌથી સશક્ત સુરક્ષા ધરાવો છો</translation>
 <translation id="155816064895200734">Chromeને ડિફૉલ્ટ બ્રાઉઝર તરીકે સેટ કરો</translation>
 <translation id="1580570086594302477">Chromeમાં નવું છૂપું ટૅબ ખોલે છે.</translation>
-<translation id="1634522710245925681">કિંમતો વિશે સરળતાથી જાણકારી મેળવવા માટે Chromeનો ડિફૉલ્ટ તરીકે ઉપયોગ કરો</translation>
 <translation id="1646463005043273333">Chromeને ડિફૉલ્ટ બ્રાઉઝર તરીકે સેટ કરવા માટે, Chromeનું સેટિંગ ખોલે છે.</translation>
 <translation id="1670609221633730681">Chrome વિશે ટિપ: તમારા ઍડ્રેસ બાર માટે જગ્યા પસંદ કરો</translation>
 <translation id="1683863426423719967">Chrome તરફથી ટૅબ રિમાઇન્ડર મેળવવા માટે, તમારા iOS સેટિંગમાં નોટિફિકેશન ચાલુ કરો.</translation>
@@ -90,6 +88,7 @@
 <translation id="2957447865124070833"><ph name="BEGIN_BOLD" />Chrome <ph name="END_BOLD" />પસંદ કરો</translation>
 <translation id="2986402782150919988">Chromeમાં બુકમાર્ક ઉમેરો</translation>
 <translation id="3030414234702425231">કારણ કે તમે <ph name="SIGNOUT_MANAGED_DOMAIN" /> દ્વારા મેનેજ કરવામાં આવેલ એકાઉન્ટમાંથી સાઇન આઉટ કરી રહ્યાં છો, આ ડિવાઇસમાંથી તમારા Chrome ડેટા ડિલીટ થઈ જશે. તમારો ડેટા તમારા Google એકાઉન્ટમાં જળવાઈ રહેશે.</translation>
+<translation id="3042447686908081308">Chromeમાં આયાત કરો</translation>
 <translation id="3051521853355903257">Chromeમાં પાસવર્ડ મેનેજ કરો</translation>
 <translation id="309672519329227863">તમારા Chrome પાસવર્ડ અને બીજું ઘણું અન્ય ઍપ પર ઍક્સેસ કરો.</translation>
 <translation id="3109170945534582468">Chrome ઍક્શન</translation>
@@ -138,7 +137,6 @@
 <translation id="4724297637870447613">સર્વત્ર Chromeનો ઉપયોગ કરો</translation>
 <translation id="4738647308035481133">Google Chrome પેજ</translation>
 <translation id="4742795653798179840">Chromeનો ડેટા ડિલીટ કર્યો</translation>
-<translation id="4749294594657945639">અન્ય ઍપમાં તમારા સાચવેલા પાસવર્ડ સરળતાથી મેળવવા, ઑટોમૅટિક રીતે ભરવાની સુવિધા માટે Chrome પસંદ કરો.</translation>
 <translation id="4761869838909035636">Chromeની સલામતી માટે તપાસ ચલાવો</translation>
 <translation id="4798859546468762093">મનગમતું બનાવવાની અને અન્ય સુવિધાઓ મેળવવા માટે, Chromeનો <ph name="FEATURE_NAME_1" /> અને <ph name="FEATURE_NAME_2" />માં સમાવેશ કરો</translation>
 <translation id="4819268619367838612">ઍપને બહેતર બનાવવામાં સહાય કરવા માટે, Chrome વપરાશ અને ક્રૅશ થવા સંબંધિત ડેટા Googleને મોકલે છે. <ph name="BEGIN_LINK" />મેનેજ કરો<ph name="END_LINK" /></translation>
@@ -215,6 +213,7 @@
 <translation id="6533470733797826516">Chrome પર ઑટોમૅટિક રીતે ભરવાની સુવિધા વડે ઝડપથી સાઇન ઇન કરો</translation>
 <translation id="6536544321553662809">સરળતાથી લિંક શેર કરવા અને ખોલવા માટે Chromeને તમારા ડિફૉલ્ટ બ્રાઉઝર તરીકે સેટ કરો</translation>
 <translation id="6545449117344801102">Chrome તમને દિશાનિર્દેશો તેમજ સ્થાનિક માહિતી આપવા માટે, Google Maps પર સરનામાં શોધે છે અને પછી તેનો ઉપયોગ કરે છે.</translation>
+<translation id="6611692150236062461">અન્ય ઍપમાં તમારા સાચવેલા પાસવર્ડ સરળતાથી મેળવવા, ઑટોમૅટિક રીતે ભરવાની સુવિધા માટે Chrome પસંદ કરો.</translation>
 <translation id="6636941099779251629">તમારી સંસ્થાની પૉલિસી અનુસાર જરૂરી છે કે Chromeનો ઉપયોગ કરવા માટે તમે સાઇન ઇન કરો. <ph name="BEGIN_LINK" />વધુ જાણો<ph name="END_LINK" /></translation>
 <translation id="6646696210740573446">પ્રાઇવસી સર્વર મારફતે Googleને URLનો વાંચવામાં મુશ્કેલ બનાવેલો ભાગ મોકલે છે, જે તમારા IP ઍડ્રેસને છુપાવે છે. જો કોઈ સાઇટ તમારો પાસવર્ડ ચોરી કરવાનો પ્રયાસ કરે અથવા તમે કોઈ નુકસાનકારક ફાઇલ ડાઉનલોડ કરો, ત્યારે Chrome પેજ કન્ટેન્ટના બિટ સહિત URLs પણ Googleને મોકલી શકે છે.</translation>
 <translation id="6647304104688527905">Chromeમાં નવું ટૅબ ખોલે છે.</translation>
@@ -287,7 +286,6 @@
 <translation id="8018153653741938705">Google Chromeનો ઉપયોગ કરીને સલામત રહો</translation>
 <translation id="8022947259858476807">લિંક ખોલવા, વિજેટથી શોધવા અને અન્ય ઍપમાં પાસવર્ડ ઑટોમૅટિક રીતે ભરવાની સુવિધા માટે ડિફૉલ્ટ તરીકે Chromeનો ઉપયોગ કરો</translation>
 <translation id="804638182476029347">Chrome નોટિફિકેશનને કિંમતમાં ઘટાડા વિશે અલર્ટ મેળવવાની મંજૂરી આપો</translation>
-<translation id="804756029368067824">તમે ખરીદવા ઇચ્છતા હો એવી બાબતોની કિંમતો સરળતાથી ટ્રૅક કરવા અને કિંમત સંબંધિત જાણકારીઓ મેળવવા માટે, Chromeને તમારા ડિફૉલ્ટ બ્રાઉઝર તરીકે સેટ કરો.</translation>
 <translation id="8065292699993359127">છૂપા મોડમાં Chromeમાં URLs ખોલો</translation>
 <translation id="8069507567842347179">આ પૅકેજને Chrome પર પહેલેથી જ ટ્રૅક કરવામાં આવ્યું છે.</translation>
 <translation id="8136856065410661948">Chrome અને Google Lensમાંથી તમારા Apple Calendarમાં ઇવેન્ટ બનાવવા માટે, આનો ઉપયોગ કરવામાં આવશે.</translation>
@@ -313,8 +311,10 @@
 <ph name="TIME" />ના રોજ તમારા પાસફ્રેઝ સાથે તમારો ડેટા એન્ક્રિપ્ટ કરવામાં આવ્યો હતો. તમારા Google એકાઉન્ટમાં Chrome ડેટાનો ઉપયોગ કરવા અને તેને સાચવવા માટે, તમારો પાસફ્રેઝ દાખલ કરો.</translation>
 <translation id="8540666473246803645">Google Chrome</translation>
 <translation id="8544583291890527417">તમારા માટે Chrome ભાળ મેળવે તેવી પ્રાઇવસી કે સુરક્ષા સંબંધિત કોઈપણ સમસ્યાઓ માટેના અલર્ટ.</translation>
+<translation id="855027533751209304">Chrome વિશે ટિપ: તમે જે જુઓ છો, તે શોધો</translation>
 <translation id="8558480467877843976">હવે તમે કોઈપણ સમયે બ્રાઉઝ કરીને અથવા મેસેજ, દસ્તાવેજો અને અન્ય ઍપમાં લિંક પર ટૅપ કરીને Chromeનો ઉપયોગ કરી શકો છો.</translation>
 <translation id="8603022514504485810">Google Password Manager બધા પાસવર્ડ ચેક કરી શક્યું નથી. આવતી કાલે ફરી પ્રયાસ કરજો અથવા <ph name="BEGIN_LINK" />તમારા Google એકાઉન્ટમાં પાસવર્ડ ચેક કરો.<ph name="END_LINK" /></translation>
+<translation id="8610372330814566250">Chromeમાં તમારા Safari પાસવર્ડ, ઇતિહાસ, બુકમાર્ક અને ક્રેડિટ કાર્ડનો ઉપયોગ કરો</translation>
 <translation id="8630122478628016441">“જ્યારે તમે Chrome બંધ કરો, ત્યારે છૂપા ટૅબ લૉક કરો” ચાલુ કરો.</translation>
 <translation id="8673726683583791503">Google Lens વડે ખરીદો</translation>
 <translation id="8765470054473112089">જ્યારે તમે ઍડ્રેસ બાર અથવા શોધ બૉક્સમાં ટાઇપ કરો છો, ત્યારે બહેતર સૂચનો મેળવવા માટે Chrome તમે જે ટાઇપ કરો છો તેને તમારા ડિફૉલ્ટ શોધ એન્જિનને મોકલે છે. આ સુવિધા છૂપા મોડમાં કામ કરતી નથી.</translation>
@@ -336,6 +336,7 @@
 <translation id="9176561303811134420">Chromeમાં ચુકવણી પદ્ધતિઓ મેનેજ કરો</translation>
 <translation id="9181628561061032322">Chromeના તાજેતરના ટૅબ ખોલે છે.</translation>
 <translation id="948597495737267756">તમારા Chrome ઇતિહાસનું પેજ ખોલે છે.</translation>
+<translation id="954347330803595209">Chromeમાં તમારા પાસવર્ડ, ઇતિહાસ, બુકમાર્ક અને ક્રેડિટ કાર્ડનો ઉપયોગ કરવા માટે તમારા ડેટાની આયાત કરો</translation>
 <translation id="97300214378190234">જ્યારે પણ તમે અન્ય ઍપમાં લિંક પર ટૅપ કરો, ત્યારે Chromeનો ઉપયોગ કરો.</translation>
 <translation id="997929539742564806">Chromeમાંથી તમારા પાસવર્ડ અને પાસકી ઑટોમૅટિક રીતે ભરીને ઍપ અને સાઇટમાં ઝડપથી સાઇન ઇન કરો</translation>
 <translation id="998677222109959694">Chrome સેટિંગ મેનેજ કરો</translation>

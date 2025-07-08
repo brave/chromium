@@ -24,6 +24,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "components/browser_ui/site_settings/android/storage_info_fetcher.h"
 #include "components/browser_ui/site_settings/android/website_preference_bridge_util.h"
 #include "components/browsing_data/content/cookie_helper.h"
@@ -885,6 +886,7 @@ static void JNI_WebsitePreferenceBridge_SetContentSettingEnabled(
       case ContentSettingsType::GEOLOCATION:
       case ContentSettingsType::HAND_TRACKING:
       case ContentSettingsType::IDLE_DETECTION:
+      case ContentSettingsType::LOCAL_NETWORK_ACCESS:
       case ContentSettingsType::MEDIASTREAM_CAMERA:
       case ContentSettingsType::MEDIASTREAM_MIC:
       case ContentSettingsType::NFC:
@@ -893,6 +895,7 @@ static void JNI_WebsitePreferenceBridge_SetContentSettingEnabled(
       case ContentSettingsType::STORAGE_ACCESS:
       case ContentSettingsType::USB_GUARD:
       case ContentSettingsType::VR:
+      case ContentSettingsType::WINDOW_MANAGEMENT:
         value = CONTENT_SETTING_ASK;
         break;
       case ContentSettingsType::ADS:

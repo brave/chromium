@@ -7,11 +7,13 @@ package org.chromium.chrome.browser.tasks.tab_management;
 import android.app.Activity;
 import android.content.ComponentCallbacks;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.DataSetObserver;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
 
@@ -21,7 +23,6 @@ import androidx.annotation.IdRes;
 import androidx.annotation.LayoutRes;
 import androidx.annotation.StyleRes;
 import androidx.appcompat.content.res.AppCompatResources;
-import androidx.core.content.res.ResourcesCompat;
 
 import org.chromium.base.Callback;
 import org.chromium.base.lifetime.LifetimeAssert;
@@ -31,11 +32,13 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabGroupContextMenuCoordinator;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.tab_ui.R;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.list_view.ListViewTouchTracker;
 import org.chromium.components.browser_ui.widget.list_view.TouchTrackingListView;
 import org.chromium.components.collaboration.CollaborationService;
 import org.chromium.components.data_sharing.member_role.MemberRole;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
+import org.chromium.ui.UiUtils;
 import org.chromium.ui.listmenu.BasicListMenu.ListMenuItemType;
 import org.chromium.ui.listmenu.ListMenuItemAdapter;
 import org.chromium.ui.listmenu.ListMenuItemProperties;
@@ -97,7 +100,7 @@ public abstract class TabOverflowMenuCoordinator<T> {
                 int popupWidthPx,
                 @Nullable Callback<OverflowMenuHolder<T>> onDismiss,
                 Activity activity) {
-            mContext = activity;
+            mContext = new ContextThemeWrapper(activity, R.style.OverflowMenuThemeOverlay);
             mComponentCallbacks =
                     new ComponentCallbacks() {
                         @Override
@@ -159,8 +162,12 @@ public abstract class TabOverflowMenuCoordinator<T> {
             mMenuWindow.setHorizontalOverlapAnchor(horizontalOverlapAnchor);
             mMenuWindow.setVerticalOverlapAnchor(verticalOverlapAnchor);
             mMenuWindow.setPreferredHorizontalOrientation(horizontalOrientation);
+            mMenuWindow.setElevation(
+                    mContentView
+                            .getResources()
+                            .getDimensionPixelSize(R.dimen.tab_overflow_menu_elevation));
             // Override animation style or animate from anchor as default.
-            if (animStyle == ResourcesCompat.ID_NULL) {
+            if (animStyle == Resources.ID_NULL) {
                 mMenuWindow.setAnimateFromAnchor(true);
             } else {
                 mMenuWindow.setAnimationStyle(animStyle);
@@ -215,7 +222,7 @@ public abstract class TabOverflowMenuCoordinator<T> {
     protected @Nullable TabGroupSyncService mTabGroupSyncService;
 
     private final @LayoutRes int mMenuLayout;
-    private final Context mContext;
+    private final @Nullable Context mContext;
     private final OnItemClickedCallback<T> mOnItemClickedCallback;
     private @Nullable OverflowMenuHolder<T> mMenuHolder;
 
@@ -233,7 +240,7 @@ public abstract class TabOverflowMenuCoordinator<T> {
             Supplier<TabModel> tabModelSupplier,
             @Nullable TabGroupSyncService tabGroupSyncService,
             CollaborationService collaborationService,
-            Context context) {
+            @Nullable Context context) {
         mMenuLayout = menuLayout;
         mOnItemClickedCallback = onItemClickedCallback;
         mTabModelSupplier = tabModelSupplier;
@@ -291,6 +298,11 @@ public abstract class TabOverflowMenuCoordinator<T> {
         final @DrawableRes int bgDrawableId =
                 isIncognito ? R.drawable.menu_bg_tinted_on_dark_bg : R.drawable.menu_bg_tinted;
 
+        if (!isIncognito) {
+            ColorStateList menuBgColor =
+                    ColorStateList.valueOf(SemanticColorUtils.getMenuBgColor(context));
+            return UiUtils.getTintedDrawable(context, bgDrawableId, menuBgColor);
+        }
         return AppCompatResources.getDrawable(context, bgDrawableId);
         // Lint.ThenChange cannot handle multiline comments.
         // LINT.ThenChange(//components/browser_ui/widget/android/java/res/values/dimens.xml|//components/browser_ui/widget/android/java/res/values-night/dimens.xml)
@@ -385,7 +397,9 @@ public abstract class TabOverflowMenuCoordinator<T> {
         ModelList modelList = new ModelList();
         configureMenuItems(modelList, id);
         // Apply offset from the background.
-        offsetPopupRect(mContext, isIncognito, anchorViewRectProvider.getRect());
+        if (mContext != null) {
+            offsetPopupRect(mContext, isIncognito, anchorViewRectProvider.getRect());
+        }
         mMenuHolder =
                 new OverflowMenuHolder<>(
                         anchorViewRectProvider,
@@ -443,6 +457,7 @@ public abstract class TabOverflowMenuCoordinator<T> {
      * @return The DP measure {@param dimenRes}, converted to px.
      */
     protected int getDimensionPixelSize(@DimenRes int dimenRes) {
+        assert mContext != null : "context needs to be non-null to get pixel size";
         return mContext.getResources().getDimensionPixelSize(dimenRes);
     }
 
@@ -469,5 +484,16 @@ public abstract class TabOverflowMenuCoordinator<T> {
         // However, in Robolectric tests, the onDismissListener may not be called, so the menu won't
         // be destroyed, and the test will report a lifecycle error.
         if (mMenuHolder != null) mMenuHolder.destroy();
+    }
+
+    /**
+     * Changes the focusability of the menu.
+     *
+     * @param focusable True if the menu is focusable, false otherwise.
+     */
+    public void setMenuFocusable(boolean focusable) {
+        if (mMenuHolder != null) {
+            mMenuHolder.mMenuWindow.setFocusable(focusable);
+        }
     }
 }

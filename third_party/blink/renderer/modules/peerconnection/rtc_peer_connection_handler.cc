@@ -83,7 +83,7 @@ using webrtc::PeerConnectionObserver;
 using webrtc::StatsReport;
 using webrtc::StatsReports;
 
-namespace WTF {
+namespace blink {
 
 template <>
 struct CrossThreadCopier<scoped_refptr<DataChannelInterface>>
@@ -105,9 +105,6 @@ struct CrossThreadCopier<webrtc::scoped_refptr<webrtc::StatsObserver>>
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
-
-namespace blink {
 namespace {
 
 // Used to back histogram value of "WebRTC.PeerConnection.RtcpMux",
@@ -763,7 +760,7 @@ class RtcDataChannelLogOutputSinkProxy
           "data", WTF::String(base::span<const unsigned char>(message.data())));
     } else {
       json->SetString("data_type", "binary");
-      json->SetString("data", WTF::Base64Encode(message.data()));
+      json->SetString("data", Base64Encode(message.data()));
     }
 
     StringBuilder string_builder;
@@ -885,6 +882,11 @@ bool RTCPeerConnectionHandler::Initialize(
   configuration_.crypto_options->srtp.enable_encrypted_rtp_header_extensions =
       base::FeatureList::IsEnabled(kWebRtcEncryptedRtpHeaderExtensions);
   configuration_.enable_implicit_rollback = true;
+  if (base::FeatureList::IsEnabled(features::kWebRtcPqcForDtls)) {
+    configuration_.crypto_options->ephemeral_key_exchange_cipher_groups
+        .AddFirst(webrtc::CryptoOptions::EphemeralKeyExchangeCipherGroups::
+                      kX25519_MLKEM768);
+  }
 
   // Apply 40 ms worth of bursting. See webrtc::TaskQueuePacedSender.
   configuration_.pacer_burst_interval = webrtc::TimeDelta::Millis(40);
@@ -1273,7 +1275,7 @@ void RTCPeerConnectionHandler::AddIceCandidate(
          CrossThreadPersistent<RTCIceCandidatePlatform> candidate,
          webrtc::RTCError result, RTCVoidRequest* request) {
         // Inform tracker (chrome://webrtc-internals).
-        // Note that because the WTF::CrossThreadBindOnce() below uses a
+        // Note that because the CrossThreadBindOnce() below uses a
         // CrossThreadWeakPersistent when binding |tracker_ptr| this lambda may
         // be invoked with a null |tracker_ptr| so we have to guard against it.
         if (handler_weak_ptr && tracker_ptr) {
@@ -1325,7 +1327,7 @@ void RTCPeerConnectionHandler::AddIceCandidate(
         // a fake |native_peer_connection_|). Jump back to the renderer thread.
         PostCrossThreadTask(
             *task_runner, FROM_HERE,
-            WTF::CrossThreadBindOnce(
+            CrossThreadBindOnce(
                 std::move(callback_on_task_runner), handler_weak_ptr,
                 tracker_weak_ptr, std::move(pending_local_description),
                 std::move(current_local_description),

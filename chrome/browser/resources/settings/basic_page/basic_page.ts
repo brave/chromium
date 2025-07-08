@@ -20,43 +20,33 @@ import '../privacy_page/privacy_guide/privacy_guide_promo.js';
 import '../privacy_page/privacy_page.js';
 import '../safety_hub/safety_hub_entry_point.js';
 import '../autofill_page/autofill_page.js';
-import '../controls/settings_idle_load.js';
-import '../on_startup_page/on_startup_page.js';
 import '../people_page/people_page.js';
 import '../performance_page/battery_page.js';
 import '../performance_page/memory_page.js';
 import '../performance_page/performance_page.js';
 import '../performance_page/speed_page.js';
 import '../reset_page/reset_profile_banner.js';
-import '../search_page/search_page.js';
 import '../settings_page/settings_section.js';
 import '../settings_page_styles.css.js';
-// <if expr="not is_chromeos">
-import '../default_browser_page/default_browser_page.js';
-// </if>
-// <if expr="not chromeos_ash">
-import '../languages_page/languages.js';
-
-// </if>
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
 import {assert} from 'chrome://resources/js/assert.js';
-import {beforeNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 // clang-format off
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 // </if>
 // clang-format on
 
 
 
-import type {SettingsIdleLoadElement} from '../controls/settings_idle_load.js';
 import {loadTimeData} from '../i18n_setup.js';
-// <if expr="not chromeos_ash">
-import type {LanguageHelper, LanguagesModel} from '../languages_page/languages_types.js';
+// <if expr="not is_chromeos">
+import type {LanguagesModel} from '../languages_page/languages_types.js';
 // </if>
+import {pageVisibility} from '../page_visibility.js';
 import type {PageVisibility} from '../page_visibility.js';
 import type {PerformanceBrowserProxy} from '../performance_page/performance_browser_proxy.js';
 import {PerformanceBrowserProxyImpl, PerformanceFeedbackCategory} from '../performance_page/performance_browser_proxy.js';
@@ -66,8 +56,8 @@ import {MAX_PRIVACY_GUIDE_PROMO_IMPRESSION, PrivacyGuideBrowserProxyImpl} from '
 import {routes} from '../route.js';
 import type {Route} from '../router.js';
 import {RouteObserverMixin, Router} from '../router.js';
-import type {SearchResult} from '../search_settings.js';
 import {getSearchManager} from '../search_settings.js';
+import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
 import {MainPageMixin} from '../settings_page/main_page_mixin.js';
 
 import {getTemplate} from './basic_page.html.js';
@@ -76,7 +66,8 @@ const SettingsBasicPageElementBase =
     PrefsMixin(MainPageMixin(RouteObserverMixin(PrivacyGuideAvailabilityMixin(
         WebUiListenerMixin(I18nMixin(PolymerElement))))));
 
-export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
+export class SettingsBasicPageElement extends SettingsBasicPageElementBase
+    implements SettingsPlugin {
   static get is() {
     return 'settings-basic-page';
   }
@@ -87,26 +78,21 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
 
   static get properties() {
     return {
-      // <if expr="not chromeos_ash">
+      // <if expr="not is_chromeos">
       /**
        * Read-only reference to the languages model provided by the
        * 'settings-languages' instance.
        */
-      languages: {
-        type: Object,
-        notify: true,
-      },
-
-      languageHelper: Object,
+      languages: Object,
       // </if>
 
       /**
        * Dictionary defining page visibility.
        */
-      pageVisibility: {
+      pageVisibility_: {
         type: Object,
         value() {
-          return {};
+          return pageVisibility || {};
         },
       },
 
@@ -179,11 +165,10 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
     ];
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   declare languages?: LanguagesModel;
-  declare languageHelper: LanguageHelper;
   // </if>
-  declare pageVisibility: PageVisibility;
+  declare private pageVisibility_: PageVisibility;
   declare inSearchMode: boolean;
   declare private showResetProfileBanner_: boolean;
 
@@ -223,15 +208,6 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
   override currentRouteChanged(newRoute: Route, oldRoute?: Route) {
     this.currentRoute_ = newRoute;
 
-    if (routes.ADVANCED && routes.ADVANCED.contains(newRoute)) {
-      // Render the advanced page now (don't wait for idle).
-      // In Polymer3, async() does not wait long enough for layout to complete.
-      // beforeNextRender() must be used instead.
-      beforeNextRender(this, () => {
-        this.getIdleLoad_();
-      });
-    }
-
     super.currentRouteChanged(newRoute, oldRoute);
     if (newRoute === routes.PRIVACY) {
       this.updatePrivacyGuidePromoVisibility_();
@@ -248,16 +224,9 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
     return visibility !== false;
   }
 
-  private getIdleLoad_(): Promise<Element> {
-    const idleLoad = this.shadowRoot!.querySelector<SettingsIdleLoadElement>(
-        '#advancedPageTemplate');
-    assert(idleLoad);
-    return idleLoad.get();
-  }
-
   private updatePrivacyGuidePromoVisibility_() {
     if (!this.isPrivacyGuideAvailable ||
-        this.pageVisibility.privacy === false || this.prefs === undefined ||
+        this.pageVisibility_.privacy === false || this.prefs === undefined ||
         this.getPref('privacy_guide.viewed').value ||
         this.privacyGuideBrowserProxy_.getPromoImpressionCount() >=
             MAX_PRIVACY_GUIDE_PROMO_IMPRESSION ||
@@ -277,41 +246,20 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
   }
 
   /**
+   * SettingsPlugin implementation
    * Queues a task to search the basic sections, then another for the advanced
    * sections.
    * @param query The text to search for.
    * @return A signal indicating that searching finished.
    */
-  searchContents(query: string): Promise<SearchResult> {
+  async searchContents(query: string) {
     const basicPage = this.shadowRoot!.querySelector<HTMLElement>('#basicPage');
     assert(basicPage);
-    const whenSearchDone = [
-      getSearchManager().search(query, basicPage),
-    ];
-
-    if (this.pageVisibility.advancedSettings !== false) {
-      whenSearchDone.push(this.getIdleLoad_().then(function(advancedPage) {
-        return getSearchManager().search(query, advancedPage);
-      }));
-    }
-
-    return Promise.all(whenSearchDone).then(function(requests) {
-      // Combine the SearchRequests results to a single SearchResult object.
-      return {
-        canceled: requests.some(function(r) {
-          return r.canceled;
-        }),
-        didFindMatches: requests.some(function(r) {
-          return r.didFindMatches();
-        }),
-        // All requests correspond to the same user query, so only need to check
-        // one of them.
-        wasClearSearch: requests[0].isSame(''),
-      };
-    });
+    const request = await getSearchManager().search(query, basicPage);
+    return request.getSearchResult();
   }
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   private onOpenChromeOsLanguagesSettingsClick_() {
     OpenWindowProxyImpl.getInstance().openUrl(
         loadTimeData.getString('osSettingsLanguagesPageUrl'));
@@ -331,6 +279,9 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
    * @return Whether to show #basicPage. This is an optimization to lazy render
    *     #basicPage only when a section/subpage within it is being shown, or
    *     when in search mode.
+   * TODO(crbug.com/424223101): Move <settings-reset-profile-banner> to
+   * settings-main, and make <settincgs-basic-page> as a whole lazy rendered,
+   * then remove showBasicPage_()
    */
   private showBasicPage_(): boolean {
     if (this.currentRoute_ === undefined) {
@@ -338,10 +289,6 @@ export class SettingsBasicPageElement extends SettingsBasicPageElementBase {
     }
 
     return this.inSearchMode || routes.BASIC.contains(this.currentRoute_);
-  }
-
-  private showAdvancedSettings_(visibility?: boolean): boolean {
-    return this.showPage_(visibility);
   }
 
   private showAiPage_(visibility?: boolean): boolean {

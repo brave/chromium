@@ -14,9 +14,9 @@
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/hints/test_optimization_guide_decider.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/test_optimization_guide_decider.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "components/page_content_annotations/core/test_page_content_annotator.h"
 #include "components/search_engines/search_engines_test_environment.h"
@@ -393,7 +393,9 @@ class PageContentAnnotationsServiceRemotePageMetadataTest
     : public PageContentAnnotationsServiceTest {
  public:
   PageContentAnnotationsServiceRemotePageMetadataTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kRemotePageMetadata);
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+    features::kRemotePageMetadata,
+    {{"supported_locales", "*"}, {"supported_countries", "*"}});
   }
 
  private:
@@ -436,8 +438,9 @@ class PageContentAnnotationsServiceSalientImageMetadataTest
     : public PageContentAnnotationsServiceTest {
  public:
   PageContentAnnotationsServiceSalientImageMetadataTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kPageContentAnnotationsPersistSalientImageMetadata);
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+      features::kPageContentAnnotationsPersistSalientImageMetadata,
+      {{"supported_locales", "*"}, {"supported_countries", "*"}});
   }
 
  private:

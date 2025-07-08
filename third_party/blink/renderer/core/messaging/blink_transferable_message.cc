@@ -56,7 +56,7 @@ BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
   }
   result.delegated_capability = message.delegated_capability;
 
-  result.parent_task_id = message.parent_task_id;
+  result.task_state_id = message.task_state_id;
 
   if (!message.array_buffer_contents_array.empty()) {
     SerializedScriptValue::ArrayBufferContentsArray array_buffer_contents_array;
@@ -142,7 +142,7 @@ scoped_refptr<StaticBitmapImage> ToStaticBitmapImage(
 scoped_refptr<StaticBitmapImage> WrapAcceleratedBitmapImage(
     AcceleratedImageInfo image) {
   return AcceleratedStaticBitmapImage::CreateFromExternalSharedImage(
-      std::move(image.shared_image), image.sync_token, image.size, image.format,
-      image.alpha_type, image.color_space, std::move(image.release_callback));
+      std::move(image.shared_image), image.sync_token, image.alpha_type,
+      image.color_space, std::move(image.release_callback));
 }
 }  // namespace blink

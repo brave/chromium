@@ -6,6 +6,7 @@ import '../common/learn_mode_bridge.js';
 
 import {Features} from '/common/features.js';
 import {Flags} from '/common/flags.js';
+import {KeepAlive} from '/common/keep_alive.js';
 import {LocalStorage} from '/common/local_storage.js';
 import {InstanceChecker} from '/common/mv3/instance_checker.js';
 
@@ -14,6 +15,7 @@ import {NavBraille} from '../common/braille/nav_braille.js';
 import {EarconId} from '../common/earcon_id.js';
 import {LocaleOutputHelper} from '../common/locale_output_helper.js';
 import {Msgs} from '../common/msgs.js';
+import {OffscreenBridge} from '../common/offscreen_bridge.js';
 import {PanelCommand, PanelCommandType} from '../common/panel_command.js';
 import {PermissionChecker} from '../common/permission_checker.js';
 import {SettingsManager} from '../common/settings_manager.js';
@@ -92,6 +94,7 @@ export class Background extends ChromeVoxState {
 
   static async init(): Promise<void> {
     // Pre-initialization.
+    KeepAlive.init();
     await this.maybeCreateOffscreenDocument_();
     await Features.init();
     await Flags.init();
@@ -141,6 +144,7 @@ export class Background extends ChromeVoxState {
     ]);
     ChromeVoxState.resolveReadyPromise_();
     ChromeVoxState.instance.onIntroduceChromeVox();
+    OffscreenBridge.chromeVoxReady();
   }
 
   static async maybeCreateOffscreenDocument_() {

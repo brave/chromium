@@ -8,6 +8,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -38,7 +39,7 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 namespace {
@@ -64,13 +65,14 @@ constexpr bool kAllowShmOverlays = false;
 #endif
 
 gpu::SharedImageUsageSet GetShmSharedImageUsage(SharedImageUsageSet usage) {
-  if (kAllowShmOverlays) {
-    return usage.Has(gpu::SHARED_IMAGE_USAGE_SCANOUT)
-               ? SHARED_IMAGE_USAGE_CPU_WRITE_ONLY | SHARED_IMAGE_USAGE_SCANOUT
-               : SHARED_IMAGE_USAGE_CPU_WRITE_ONLY;
+  gpu::SharedImageUsageSet new_usage = SHARED_IMAGE_USAGE_CPU_WRITE_ONLY;
+  if (usage.Has(SHARED_IMAGE_USAGE_CPU_READ)) {
+    new_usage |= SHARED_IMAGE_USAGE_CPU_READ;
   }
-
-  return SHARED_IMAGE_USAGE_CPU_WRITE_ONLY;
+  if (kAllowShmOverlays && usage.Has(gpu::SHARED_IMAGE_USAGE_SCANOUT)) {
+    new_usage |= SHARED_IMAGE_USAGE_SCANOUT;
+  }
+  return new_usage;
 }
 
 }  // namespace
@@ -391,7 +393,17 @@ SharedImageUsageSet CompoundImageBacking::GetGpuSharedImageUsage(
     // Remove SCANOUT usage since it was previously moved to the shmem backing.
     // See: |GetShmSharedImageUsage|
     usage.RemoveAll(SharedImageUsageSet(gpu::SHARED_IMAGE_USAGE_SCANOUT));
-    return usage;
+  }
+  if (usage.Has(SHARED_IMAGE_USAGE_CPU_READ)) {
+    // Remove CPU_READ usage since it was previously moved to the shmem backing.
+    // See: |GetShmSharedImageUsage|
+    usage.RemoveAll(SharedImageUsageSet(gpu::SHARED_IMAGE_USAGE_CPU_READ));
+  }
+  if (usage.Has(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY)) {
+    // Remove CPU_WRITE usage since it was previously moved to the shmem
+    // backing. See: |GetShmSharedImageUsage|
+    usage.RemoveAll(
+        SharedImageUsageSet(gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY));
   }
 
   return usage;
@@ -444,7 +456,7 @@ std::unique_ptr<SharedImageBacking> CompoundImageBacking::CreateSharedMemory(
 
   auto buffer_format = ToBufferFormat(format);
   auto handle = GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
-      gfx::GpuMemoryBufferId(0), size, buffer_format, buffer_usage);
+      size, buffer_format, buffer_usage);
 
   SharedMemoryRegionWrapper shm_wrapper;
   if (!shm_wrapper.Initialize(handle, size, buffer_format)) {

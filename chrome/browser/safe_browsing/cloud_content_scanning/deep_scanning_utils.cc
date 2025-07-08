@@ -155,8 +155,9 @@ void MaybeReportDeepScanningVerdict(
     const std::string& mime_type,
     const std::string& trigger,
     const std::string& content_transfer_method,
-    DeepScanAccessPoint access_point,
+    const std::string& source_email,
     const int64_t content_size,
+    const safe_browsing::ReferrerChain& referrer_chain,
     BinaryUploadService::Result result,
     const enterprise_connectors::ContentAnalysisResponse& response,
     enterprise_connectors::EventResult event_result) {
@@ -168,10 +169,10 @@ void MaybeReportDeepScanningVerdict(
 
   std::string unscanned_reason = MaybeGetUnscannedReason(result);
   if (!unscanned_reason.empty()) {
-    router->OnUnscannedFileEvent(
-        url, tab_url, source, destination, file_name, download_digest_sha256,
-        mime_type, trigger, access_point, unscanned_reason,
-        content_transfer_method, content_size, event_result);
+    router->OnUnscannedFileEvent(url, tab_url, source, destination, file_name,
+                                 download_digest_sha256, mime_type, trigger,
+                                 unscanned_reason, content_transfer_method,
+                                 content_size, referrer_chain, event_result);
   }
 
   if (result != BinaryUploadService::Result::SUCCESS)
@@ -188,13 +189,14 @@ void MaybeReportDeepScanningVerdict(
 
       router->OnUnscannedFileEvent(
           url, tab_url, source, destination, file_name, download_digest_sha256,
-          mime_type, trigger, access_point, std::move(unscanned_reason),
-          content_transfer_method, content_size, event_result);
+          mime_type, trigger, std::move(unscanned_reason),
+          content_transfer_method, content_size, referrer_chain, event_result);
     } else if (response_result.triggered_rules_size() > 0) {
       router->OnAnalysisConnectorResult(
           url, tab_url, source, destination, file_name, download_digest_sha256,
           mime_type, trigger, response.request_token(), content_transfer_method,
-          access_point, response_result, content_size, event_result);
+          source_email, response_result, content_size, referrer_chain,
+          event_result);
     }
   }
 }
@@ -210,8 +212,8 @@ void ReportAnalysisConnectorWarningBypass(
     const std::string& mime_type,
     const std::string& trigger,
     const std::string& content_transfer_method,
-    DeepScanAccessPoint access_point,
     const int64_t content_size,
+    const safe_browsing::ReferrerChain& referrer_chain,
     const enterprise_connectors::ContentAnalysisResponse& response,
     std::optional<std::u16string> user_justification) {
   DCHECK(std::ranges::all_of(download_digest_sha256, base::IsHexDigit<char>));
@@ -228,31 +230,13 @@ void ReportAnalysisConnectorWarningBypass(
     router->OnAnalysisConnectorWarningBypassed(
         url, tab_url, source, destination, file_name, download_digest_sha256,
         mime_type, trigger, response.request_token(), content_transfer_method,
-        access_point, result, content_size, user_justification);
+        referrer_chain, result, content_size, user_justification);
   }
-}
-
-std::string DeepScanAccessPointToString(DeepScanAccessPoint access_point) {
-  switch (access_point) {
-    case DeepScanAccessPoint::DOWNLOAD:
-      return "Download";
-    case DeepScanAccessPoint::UPLOAD:
-      return "Upload";
-    case DeepScanAccessPoint::DRAG_AND_DROP:
-      return "DragAndDrop";
-    case DeepScanAccessPoint::PASTE:
-      return "Paste";
-    case DeepScanAccessPoint::PRINT:
-      return "Print";
-    case DeepScanAccessPoint::FILE_TRANSFER:
-      return "FileTransfer";
-  }
-  NOTREACHED();
 }
 
 void RecordDeepScanMetrics(
     bool is_cloud,
-    DeepScanAccessPoint access_point,
+    enterprise_connectors::DeepScanAccessPoint access_point,
     base::TimeDelta duration,
     int64_t total_bytes,
     const BinaryUploadService::Result& result,
@@ -285,12 +269,13 @@ void RecordDeepScanMetrics(
                         result_value, success);
 }
 
-void RecordDeepScanMetrics(bool is_cloud,
-                           DeepScanAccessPoint access_point,
-                           base::TimeDelta duration,
-                           int64_t total_bytes,
-                           const std::string& result,
-                           bool success) {
+void RecordDeepScanMetrics(
+    bool is_cloud,
+    enterprise_connectors::DeepScanAccessPoint access_point,
+    base::TimeDelta duration,
+    int64_t total_bytes,
+    const std::string& result,
+    bool success) {
   // Don't record metrics if the duration is unusable.
   if (duration.InMilliseconds() == 0)
     return;

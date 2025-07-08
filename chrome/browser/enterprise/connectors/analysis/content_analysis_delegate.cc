@@ -120,7 +120,7 @@ void OnContentAnalysisComplete(
 
 void OnPathsExpanded(
     base::WeakPtr<content::WebContents> web_contents,
-    safe_browsing::DeepScanAccessPoint access_point,
+    DeepScanAccessPoint access_point,
     ContentAnalysisDelegate::Data data,
     std::unique_ptr<FilesScanData> files_scan_data,
     ContentAnalysisDelegate::ForFilesCompletionCallback callback) {
@@ -195,11 +195,8 @@ void ContentAnalysisDelegate::Data::AddClipboardData(
     text.push_back(clipboard_paste_data.rtf);
   }
   if (!clipboard_paste_data.png.empty()) {
-    // Send image only to local agent for analysis.
-    if (settings.cloud_or_local_settings.is_local_analysis()) {
       image = std::string(clipboard_paste_data.png.begin(),
                           clipboard_paste_data.png.end());
-    }
   }
   if (!clipboard_paste_data.custom_data.empty()) {
     for (const auto& entry : clipboard_paste_data.custom_data) {
@@ -261,7 +258,7 @@ void ContentAnalysisDelegate::Cancel(bool warning) {
   // Don't report this upload as cancelled if the user didn't bypass the
   // warning.
   if (!warning) {
-    RecordDeepScanMetrics(
+    safe_browsing::RecordDeepScanMetrics(
         data_.settings.cloud_or_local_settings.is_cloud_analysis(),
         access_point_, base::TimeTicks::Now() - upload_start_time_, 0,
         "CancelledByUser", false);
@@ -338,18 +335,18 @@ bool ContentAnalysisDelegate::BypassRequiresJustification() const {
 std::u16string ContentAnalysisDelegate::GetBypassJustificationLabel() const {
   int id;
   switch (access_point_) {
-    case safe_browsing::DeepScanAccessPoint::UPLOAD:
-    case safe_browsing::DeepScanAccessPoint::DRAG_AND_DROP:
-    case safe_browsing::DeepScanAccessPoint::FILE_TRANSFER:
+    case DeepScanAccessPoint::UPLOAD:
+    case DeepScanAccessPoint::DRAG_AND_DROP:
+    case DeepScanAccessPoint::FILE_TRANSFER:
       id = IDS_DEEP_SCANNING_DIALOG_UPLOAD_BYPASS_JUSTIFICATION_LABEL;
       break;
-    case safe_browsing::DeepScanAccessPoint::DOWNLOAD:
+    case DeepScanAccessPoint::DOWNLOAD:
       id = IDS_DEEP_SCANNING_DIALOG_DOWNLOAD_BYPASS_JUSTIFICATION_LABEL;
       break;
-    case safe_browsing::DeepScanAccessPoint::PASTE:
+    case DeepScanAccessPoint::PASTE:
       id = IDS_DEEP_SCANNING_DIALOG_PASTE_BYPASS_JUSTIFICATION_LABEL;
       break;
-    case safe_browsing::DeepScanAccessPoint::PRINT:
+    case DeepScanAccessPoint::PRINT:
       id = IDS_DEEP_SCANNING_DIALOG_PRINT_BYPASS_JUSTIFICATION_LABEL;
       break;
   }
@@ -392,7 +389,7 @@ void ContentAnalysisDelegate::CreateForWebContents(
     content::WebContents* web_contents,
     Data data,
     CompletionCallback callback,
-    safe_browsing::DeepScanAccessPoint access_point) {
+    DeepScanAccessPoint access_point) {
   Factory* testing_factory = GetFactoryStorage();
   bool wait_for_verdict =
       data.settings.block_until_verdict == BlockUntilVerdict::kBlock;
@@ -487,7 +484,7 @@ void ContentAnalysisDelegate::CreateForFilesInWebContents(
     content::WebContents* web_contents,
     Data data,
     ForFilesCompletionCallback callback,
-    safe_browsing::DeepScanAccessPoint access_point) {
+    DeepScanAccessPoint access_point) {
   DCHECK(data.text.empty());
   DCHECK(data.image.empty());
   DCHECK(!data.page.IsValid());
@@ -536,7 +533,7 @@ ContentAnalysisDelegate::ContentAnalysisDelegate(
     content::WebContents* web_contents,
     Data data,
     CompletionCallback callback,
-    safe_browsing::DeepScanAccessPoint access_point)
+    DeepScanAccessPoint access_point)
     : data_(std::move(data)),
       tab_id_(sessions::SessionTabHelper::IdForTab(web_contents)),
       callback_(std::move(callback)),
@@ -544,9 +541,14 @@ ContentAnalysisDelegate::ContentAnalysisDelegate(
   DCHECK(web_contents);
   profile_ = Profile::FromBrowserContext(web_contents->GetBrowserContext());
   url_ = web_contents->GetLastCommittedURL();
-  if (base::FeatureList::IsEnabled(kEnterpriseIframeDlpRulesSupport) &&
-      access_point_ == safe_browsing::DeepScanAccessPoint::UPLOAD) {
+  if (base::FeatureList::IsEnabled(kEnterpriseIframeDlpRulesSupport)) {
     frame_url_chain_ = CollectFrameUrls(web_contents);
+    base::UmaHistogramCustomCounts(
+        base::JoinString(
+            {"Enterprise.IframeDlpRulesSupport",
+             DeepScanAccessPointToString(access_point_), "UrlChainSize"},
+            "."),
+        frame_url_chain_.size(), 1, kMaxFrameUrls, 10);
   }
   title_ = base::UTF16ToUTF8(web_contents->GetTitle());
   user_action_id_ = base::HexEncode(base::RandBytesAsVector(128));
@@ -758,12 +760,18 @@ void ContentAnalysisDelegate::PrepareTextRequest() {
                                    /*buckets=*/50);
   }
 
-  if (!text_request_complete_) {
+  if (text_request_complete_) {
+    // When no text scan is required, mark `result_.text_results` as true so
+    // caller code doesn't interpret text data as being blocked. Note that the
+    // paste might still be blocked if the same paste action has its image
+    // request blocked.
+    std::fill(result_.text_results.begin(), result_.text_results.end(), true);
+  } else {
     text_request_handler_ = ClipboardRequestHandler::Create(
         this, GetBinaryUploadService(), profile_, url_,
         ClipboardRequestHandler::Type::kText, access_point_,
-        data_.clipboard_source, GetContentTransferMethod(),
-        std::move(full_text),
+        data_.clipboard_source, data_.source_content_area_email,
+        GetContentTransferMethod(), std::move(full_text),
         base::BindOnce(&ContentAnalysisDelegate::TextRequestCallback,
                        weak_ptr_factory_.GetWeakPtr()));
 
@@ -788,11 +796,18 @@ void ContentAnalysisDelegate::PrepareImageRequest() {
                                    /*buckets=*/50);
   }
 
-  if (!image_request_complete_) {
+  if (image_request_complete_) {
+    // When no image scan is required, mark `result_.image_result` as true so
+    // caller code doesn't interpret the image as being blocked. Note that the
+    // paste might still be blocked if the same paste action has its text
+    // request blocked.
+    result_.image_result = true;
+  } else {
     image_request_handler_ = ClipboardRequestHandler::Create(
         this, GetBinaryUploadService(), profile_, url_,
         ClipboardRequestHandler::Type::kImage, access_point_,
-        data_.clipboard_source, GetContentTransferMethod(), data_.image,
+        data_.clipboard_source, data_.source_content_area_email,
+        GetContentTransferMethod(), data_.image,
         base::BindOnce(&ContentAnalysisDelegate::ImageRequestCallback,
                        weak_ptr_factory_.GetWeakPtr()));
 
@@ -805,7 +820,11 @@ void ContentAnalysisDelegate::PreparePageRequest() {
   // prevents scanning.
   page_request_complete_ = !data_.page.IsValid();
 
-  if (!page_request_complete_) {
+  if (page_request_complete_) {
+    // When no print scan is required, mark `result_.page_result` as true so
+    // caller code doesn't interpret the print action as being blocked.
+    result_.page_result = true;
+  } else {
     page_print_request_handler_ = PagePrintRequestHandler::Create(
         this, GetBinaryUploadService(), profile_, url_, data_.printer_name,
         page_content_type_, std::move(data_.page),
@@ -987,7 +1006,8 @@ bool ContentAnalysisDelegate::text_request_required() const {
 bool ContentAnalysisDelegate::image_request_required() const {
   return !data_.image.empty() &&
          data_.image.size() <=
-             data_.settings.cloud_or_local_settings.max_file_size();
+             data_.settings.cloud_or_local_settings.max_file_size() &&
+         data_.settings.cloud_or_local_settings.is_local_analysis();
 }
 
 const AnalysisSettings& ContentAnalysisDelegate::settings() const {

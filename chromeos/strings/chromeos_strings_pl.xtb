@@ -220,7 +220,6 @@
 <translation id="181434555916624618">Na razie wyniki z ludźmi nie będą wyświetlane. Użyj innego prompta.</translation>
 <translation id="1815850098929213707">Wybrany klawisz to <ph name="KEYS" />. Kliknij przycisk, aby edytować element sterujący</translation>
 <translation id="1818174214124933000">Gdy wybierzesz opcję Wyślij, Twoja opinia i treści (widoczne poniżej) zostaną wysłane do Google, sprawdzone przez weryfikatorów oraz wykorzystane do trenowania lub ulepszania naszych produktów i usług zgodnie z <ph name="LINK_POLICY_BEGIN" />Polityką prywatności<ph name="LINK_POLICY_END" /> i <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Warunkami korzystania z usług Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Nauczyciel wysłał nieobsługiwany materiał. Powiadom go o tym.</translation>
 <translation id="1823120442877418684">Postacie</translation>
 <translation id="1827738518074806965">Galeria sztuki</translation>
 <translation id="183287940576828840">Obraźliwe/niebezpieczne</translation>
@@ -327,6 +326,7 @@
 <translation id="2240366984605217732">Przełącznik układu</translation>
 <translation id="224421911978987610">długi czas naświetlania</translation>
 <translation id="2244834438220057800">zielony</translation>
+<translation id="2248689665683494517">minimalistyczna martwa natura z kilkoma kwiatami maków polnych w szklanym wazonie na czarnym tle</translation>
 <translation id="225692081236532131">Stan aktywacji</translation>
 <translation id="2267285889943769271">Dodaj zrzut ekranu</translation>
 <translation id="2268044343513325586">Zawęź</translation>
@@ -756,6 +756,7 @@
 <translation id="430786093962686457">szyfonu</translation>
 <translation id="4310735698903592804">Najnowsze tapety utworzone z wykorzystaniem AI od Google</translation>
 <translation id="4320904097188876154">neonowy róż</translation>
+<translation id="432961742358282111">Kliknij prawym przyciskiem lub naciśnij i przytrzymaj, aby zobaczyć definicje, tłumaczenia lub konwersje jednostek. Aby zarządzać tą funkcją, naciskaj klawisze strzałek w lewo lub w prawo.</translation>
 <translation id="4333390807948134856">Naciśnięto klawisz <ph name="KEY_NAME" /></translation>
 <translation id="4334293042716981313">Możesz też <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />wpisać własny prompt<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">klawisz</translation>
@@ -1435,7 +1436,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Zapytaj ekspertów na forum pomocy Chromebooka</translation>
-<translation id="7309823890857024809">minimalistyczna martwa natura z kilkoma łodygami maków polnych w szklanej wazie na czarnym tle</translation>
 <translation id="7311368985037279727">kolor klawiatury</translation>
 <translation id="7317831949569936035">Rejestracja w szkole</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1464,7 +1464,7 @@ Aby korzystać z tej funkcji, pobierz model transkrypcji (do 100 MB).</transla
 <translation id="741244894080940828">przeliczanie</translation>
 <translation id="7415801143053185905">Bardzo duże opóźnienie HTTP</translation>
 <translation id="7418738250896500352">Zbyt wiele słów do uproszczenia</translation>
-<translation id="7425037327577270384">Pomóż mi w pisaniu</translation>
+<translation id="7425037327577270384">Pomóż mi pisać</translation>
 <translation id="7425832472614771259">Pobrano <ph name="PROGRESS_PERCENTAGE" />% modelu transkrypcji w języku: <ph name="LANGUAGE_NAME" /></translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">Tego punktu APN nie można wyłączyć ani usunąć. Upewnij się, że włączone punkty APN typu <ph name="ATTACH" /> zostały wyłączone lub usunięte.</translation>

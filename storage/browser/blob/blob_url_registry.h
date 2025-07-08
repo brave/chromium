@@ -51,7 +51,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
   // contexts and stores them in `frame_receivers_`.
   // `partitioning_blob_url_closure` runs when the storage_key check fails
   // in `BlobURLStoreImpl::ResolveAsURLLoaderFactory` and increments the use
-  // counter.
+  // counter. `top_level_blob_document_url` should be set to the frame URL if
+  // this method is called for a top-level blob URL document context.
   void AddReceiver(
       const blink::StorageKey& storage_key,
       const url::Origin& renderer_origin,
@@ -62,15 +63,21 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
                std::optional<blink::mojom::PartitioningBlobURLInfo>)>
           partitioning_blob_url_closure,
       base::RepeatingCallback<bool()> storage_access_check_callback,
+      std::optional<GURL> top_level_blob_document_url,
+      const char* context_type_for_debugging,
+      base::RepeatingCallback<std::string()> storage_key_debug_string_callback,
       bool partitioning_disabled_by_policy = false);
 
   // Binds receivers corresponding to connections from renderer worker
-  // contexts and stores them in `worker_receivers_`.
+  // contexts and threaded worklet contexts, storing them in
+  // `worker_receivers_`.
   void AddReceiver(
       const blink::StorageKey& storage_key,
       const url::Origin& renderer_origin,
       int render_process_host_id,
       mojo::PendingReceiver<blink::mojom::BlobURLStore> receiver,
+      const char* context_type_for_debugging,
+      base::RepeatingCallback<std::string()> storage_key_debug_string_callback,
       base::RepeatingCallback<bool()> storage_access_check_callback =
           base::BindRepeating([]() -> bool { return false; }),
       bool partitioning_disabled_by_policy = false,

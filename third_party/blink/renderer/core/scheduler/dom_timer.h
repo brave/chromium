@@ -36,11 +36,8 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/timer.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
 
 namespace blink {
 
@@ -96,7 +93,7 @@ class CORE_EXPORT DOMTimer final : public GarbageCollected<DOMTimer>,
   void Dispose();
 
   void Trace(Visitor*) const override;
-  const char* NameInHeapSnapshot() const override { return "DOMTimer"; }
+  const char* GetHumanReadableName() const override { return "DOMTimer"; }
 
   void Stop() override;
 

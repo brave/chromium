@@ -383,7 +383,7 @@ int SimpleEntryImpl::ReadData(int stream_index,
   }
 
   if (stream_index < 0 || stream_index >= kSimpleEntryStreamCount ||
-      buf_len < 0) {
+      offset < 0 || buf_len < 0) {
     if (net_log_.IsCapturing()) {
       NetLogReadWriteComplete(
           net_log_, net::NetLogEventType::SIMPLE_CACHE_ENTRY_READ_END,
@@ -426,7 +426,7 @@ int SimpleEntryImpl::WriteData(int stream_index,
   }
 
   if (stream_index < 0 || stream_index >= kSimpleEntryStreamCount ||
-      offset < 0 || buf_len < 0) {
+      offset < 0 || buf_len < 0 || (!buf && buf_len != 0)) {
     if (net_log_.IsCapturing()) {
       NetLogReadWriteComplete(
           net_log_, net::NetLogEventType::SIMPLE_CACHE_ENTRY_WRITE_END,
@@ -519,15 +519,16 @@ int SimpleEntryImpl::ReadSparseData(int64_t offset,
     return net::ERR_INVALID_ARGUMENT;
   }
 
-  // Truncate |buf_len| to make sure that |offset + buf_len| does not overflow.
+  // Truncate `buf_len` to make sure that `offset + buf_len` does not overflow.
   // This is OK since one can't write that far anyway.
-  // The result of std::min is guaranteed to fit into int since |buf_len| did.
-  buf_len = std::min(static_cast<int64_t>(buf_len),
-                     std::numeric_limits<int64_t>::max() - offset);
+  // The result of std::min is guaranteed to fit into size_t since `buf_len`
+  // did.
+  size_t length = std::min(static_cast<int64_t>(buf_len),
+                           std::numeric_limits<int64_t>::max() - offset);
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::ReadSparseOperation(
-      this, offset, buf_len, buf, std::move(callback)));
+      this, static_cast<uint64_t>(offset), length, buf, std::move(callback)));
   return net::ERR_IO_PENDING;
 }
 
@@ -554,7 +555,8 @@ int SimpleEntryImpl::WriteSparseData(int64_t offset,
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::WriteSparseOperation(
-      this, offset, buf_len, buf, std::move(callback)));
+      this, static_cast<uint64_t>(offset), static_cast<size_t>(buf_len), buf,
+      std::move(callback)));
   return net::ERR_IO_PENDING;
 }
 
@@ -565,15 +567,16 @@ RangeResult SimpleEntryImpl::GetAvailableRange(int64_t offset,
   if (offset < 0 || len < 0)
     return RangeResult(net::ERR_INVALID_ARGUMENT);
 
-  // Truncate |len| to make sure that |offset + len| does not overflow.
+  // Truncate `buf_len` to make sure that `offset + buf_len` does not overflow.
   // This is OK since one can't write that far anyway.
-  // The result of std::min is guaranteed to fit into int since |len| did.
-  len = std::min(static_cast<int64_t>(len),
-                 std::numeric_limits<int64_t>::max() - offset);
+  // The result of std::min is guaranteed to fit into size_t since `buf_len`
+  // did.
+  size_t length = std::min(static_cast<int64_t>(len),
+                           std::numeric_limits<int64_t>::max() - offset);
 
   ScopedOperationRunner operation_runner(this);
   pending_operations_.push(SimpleEntryOperation::GetAvailableRangeOperation(
-      this, offset, len, std::move(callback)));
+      this, static_cast<uint64_t>(offset), length, std::move(callback)));
   return RangeResult(net::ERR_IO_PENDING);
 }
 
@@ -736,15 +739,17 @@ void SimpleEntryImpl::RunNextOperationIfNeeded() {
         break;
       case SimpleEntryOperation::TYPE_READ_SPARSE:
         ReadSparseDataInternal(operation.sparse_offset(), operation.buf(),
-                               operation.length(), operation.ReleaseCallback());
+                               operation.sparse_length(),
+                               operation.ReleaseCallback());
         break;
       case SimpleEntryOperation::TYPE_WRITE_SPARSE:
         WriteSparseDataInternal(operation.sparse_offset(), operation.buf(),
-                                operation.length(),
+                                operation.sparse_length(),
                                 operation.ReleaseCallback());
         break;
       case SimpleEntryOperation::TYPE_GET_AVAILABLE_RANGE:
-        GetAvailableRangeInternal(operation.sparse_offset(), operation.length(),
+        GetAvailableRangeInternal(operation.sparse_offset(),
+                                  operation.sparse_length(),
                                   operation.ReleaseRangeResultCalback());
         break;
       case SimpleEntryOperation::TYPE_DOOM:
@@ -790,7 +795,7 @@ void SimpleEntryImpl::OpenEntryInternal(
   auto results = std::make_unique<SimpleEntryCreationResults>(
       SimpleEntryStat(last_used_, data_size_, sparse_data_size_));
 
-  int32_t trailer_prefetch_size = -1;
+  uint32_t trailer_prefetch_size = 0;
   base::Time last_used_time;
   if (SimpleBackendImpl* backend = backend_.get()) {
     if (cache_type_ == net::APP_CACHE) {
@@ -897,7 +902,7 @@ void SimpleEntryImpl::OpenOrCreateEntryInternal(
   auto results = std::make_unique<SimpleEntryCreationResults>(
       SimpleEntryStat(last_used_, data_size_, sparse_data_size_));
 
-  int32_t trailer_prefetch_size = -1;
+  uint32_t trailer_prefetch_size = 0;
   base::Time last_used_time;
   if (SimpleBackendImpl* backend = backend_.get()) {
     if (cache_type_ == net::APP_CACHE) {
@@ -999,7 +1004,7 @@ int SimpleEntryImpl::ReadDataInternal(bool sync_possible,
                                   net::ERR_FAILED);
   }
   DCHECK_EQ(STATE_READY, state_);
-  if (offset >= GetDataSize(stream_index) || offset < 0 || !buf_len) {
+  if (offset >= GetDataSize(stream_index) || !buf_len) {
     // If there is nothing to read, we bail out before setting state_ to
     // STATE_IO_PENDING (so ScopedOperationRunner might start us on next op
     // here).
@@ -1693,8 +1698,10 @@ void SimpleEntryImpl::SetStream0Data(net::IOBuffer* buf,
   int data_size = GetDataSize(0);
   if (offset == 0 && truncate) {
     stream_0_data_->SetCapacity(buf_len);
-    stream_0_data_->span().copy_from(
-        buf->first(base::checked_cast<size_t>(buf_len)));
+    if (buf_len) {
+      stream_0_data_->span().copy_from(
+          buf->first(base::checked_cast<size_t>(buf_len)));
+    }
     data_size_[0] = buf_len;
   } else {
     const int buffer_size =

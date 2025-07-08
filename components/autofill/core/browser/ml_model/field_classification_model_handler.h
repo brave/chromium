@@ -10,13 +10,16 @@
 
 #include "base/containers/lru_cache.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/ml_model/field_classification_model_encoder.h"
+#include "components/autofill/core/browser/ml_model/logging/autofill_ml_internals.mojom.h"
+#include "components/autofill/core/browser/ml_model/logging/ml_log_router.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/optimization_guide/core/model_handler.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/inference/model_handler.h"
 #include "components/optimization_guide/proto/autofill_field_classification_model_metadata.pb.h"
 
 namespace autofill {
@@ -39,7 +42,8 @@ class FieldClassificationModelHandler
 
   FieldClassificationModelHandler(
       optimization_guide::OptimizationGuideModelProvider* model_provider,
-      optimization_guide::proto::OptimizationTarget optimization_target);
+      optimization_guide::proto::OptimizationTarget optimization_target,
+      autofill::MLLogRouter* log_router = nullptr);
   ~FieldClassificationModelHandler() override;
 
   // This function asynchronously queries predictions for the `form_structure`
@@ -70,13 +74,15 @@ class FieldClassificationModelHandler
       base::optional_ref<const optimization_guide::ModelInfo> model_info)
       override;
 
+  bool ShouldApplySmallFormRules() const;
+
 #if defined(UNIT_TEST)
   const FieldTypeSet& get_supported_types() const { return supported_types_; }
 #endif
 
  private:
   // Computes the predicted type for every element of `outputs`.
-  // The size of the resulting vector is not guatanteed to have
+  // The size of the resulting vector is not guaranteed to have
   // `form.field_count()` elements if the maximum number of fields to be
   // predicted is limited by the model.
   std::vector<FieldType> GetMostLikelyTypes(
@@ -88,6 +94,14 @@ class FieldClassificationModelHandler
   // `model_output`, mapped to the corresponding FieldType.
   std::pair<FieldType, float> GetMostLikelyType(
       const std::vector<float>& model_output) const;
+
+  // Applies small form rules from FormFieldParser. If triggered, sets some or
+  // all values in `predicted_types` to `UNKNOWN_TYPE`. See
+  // `ClearCandidatesIfHeuristicsDidNotFindEnoughFields` for details.
+  // The purpose is to have identical post-processing for ML and regex
+  // predictions for more accurate comparison.
+  void ApplySmallFormRules(const FormStructure& form,
+                           std::vector<FieldType>& predicted_types) const;
 
   // Assigns field types from `predicted_types` to field in the `form`.
   void AssignPredictedFieldTypesToForm(
@@ -121,6 +135,11 @@ class FieldClassificationModelHandler
 
   // Cached model classifications.
   base::LRUCache<ModelInputHash, std::vector<FieldType>> predictions_cache_;
+
+  raw_ptr<autofill::MLLogRouter> log_router_ = nullptr;
+
+  autofill_ml_internals::mojom::MLPredictionLogPtr CreateMLPredictionLog(
+      const FormStructure& form_structure) const;
 
   base::WeakPtrFactory<FieldClassificationModelHandler> weak_ptr_factory_{this};
 };

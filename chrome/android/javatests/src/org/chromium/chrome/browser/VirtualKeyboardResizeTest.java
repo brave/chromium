@@ -184,7 +184,7 @@ public class VirtualKeyboardResizeTest {
                 JavaScriptUtils.executeJavaScriptAndWaitForResult(
                         getWebContents(), "window.resizeEventLog");
         JsonReader jsonReader = new JsonReader(new StringReader(jsonText));
-        ArrayList<Integer> pageHeights = new ArrayList<Integer>();
+        ArrayList<Integer> pageHeights = new ArrayList<>();
         try {
             jsonReader.beginArray();
             while (jsonReader.hasNext()) {
@@ -345,6 +345,7 @@ public class VirtualKeyboardResizeTest {
      */
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/421296274")
     public void testResizesVisualMetaTag() throws Throwable {
         startMainActivityWithURL("/chrome/test/data/android/about.html");
 
@@ -446,6 +447,7 @@ public class VirtualKeyboardResizeTest {
     /** Test that the virtual keyboard mode is correctly set/reset on navigations. */
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/421296274")
     public void testModeAfterNavigation() throws Throwable {
         startMainActivityWithURL("/chrome/test/data/android/page_with_editable.html");
 

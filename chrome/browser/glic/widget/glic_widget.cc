@@ -16,6 +16,7 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/outsets.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -48,12 +49,10 @@ gfx::Outsets GetTargetOutsets(const gfx::Rect& bounds) {
   int frame_thickness = ui::GetResizableFrameThicknessFromMonitorInDIP(
       MonitorFromRect(&bounds_rect, MONITOR_DEFAULTTONEAREST),
       /*has_caption=*/false);
-  // On Windows, the presence of a frame means that we need to adjust both the
-  // width and height of the widget by 2*frame thickness, and center the content
-  // horizontally.
-  outsets.set_left(frame_thickness);
-  outsets.set_right(frame_thickness);
-  outsets.set_bottom(2 * frame_thickness);
+  // On Windows, the presence of a frame means that we need to adjust the left,
+  // right and bottom by frame thickness.
+  outsets.set_left_right(frame_thickness, frame_thickness);
+  outsets.set_bottom(frame_thickness);
 #endif
   return outsets;
 }
@@ -129,11 +128,11 @@ std::unique_ptr<GlicWidget> GlicWidget::Create(
   // window. See b/404947780.
   params.name = "GlicWidget";
   // Support of rounded corners varies across platforms. See
-  // Widget::InitParams::corner_radius. DO NOT apply this radius using
+  // Widget::InitParams::rounded_corners. DO NOT apply this radius using
   // views::Background or in the web client because it will mismatch with
   // the window's actual corner radius. e.g. on win10 resizable windows
   // do have rounded corners.
-  params.corner_radius = kGlicWidgetCornerRadius;
+  params.rounded_corners = gfx::RoundedCornersF(kGlicWidgetCornerRadius);
 #if BUILDFLAG(IS_MAC)
   params.animation_enabled = true;
 #endif
@@ -160,8 +159,8 @@ std::unique_ptr<GlicWidget> GlicWidget::Create(
       ui::win::SetAppIdForWindow(
           ShellUtil::GetBrowserModelId(InstallUtil::IsPerUserInstall()), hwnd);
     }
-  }  // BUILDFLAG(IS_WIN)
-#endif  //
+  }
+#endif  // BUILDFLAG(IS_WIN)
   return widget;
 }
 

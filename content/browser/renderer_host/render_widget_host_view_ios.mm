@@ -758,7 +758,6 @@ void RenderWidgetHostViewIOS::OnUpdateTextInputStateCalled(
     TextInputManager* text_input_manager,
     RenderWidgetHostViewBase* updated_view,
     bool did_update_state) {
-#if !BUILDFLAG(IS_IOS_TVOS)
   if (text_input_manager->GetActiveWidget()) {
     [ui_view_->view_
         onUpdateTextInputState:*text_input_manager->GetTextInputState()
@@ -769,7 +768,6 @@ void RenderWidgetHostViewIOS::OnUpdateTextInputStateCalled(
     [ui_view_->view_ onUpdateTextInputState:ui::mojom::TextInputState()
                                  withBounds:[ui_view_->view_ bounds]];
   }
-#endif
 }
 
 void RenderWidgetHostViewIOS::OnTextSelectionChanged(
@@ -933,6 +931,26 @@ void RenderWidgetHostViewIOS::ContentInsetChanged() {
   }
 }
 
+void RenderWidgetHostViewIOS::ExtendSelectionAndDelete(int32_t before,
+                                                       int32_t after) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->ExtendSelectionAndDelete(before, after);
+}
+
+void RenderWidgetHostViewIOS::ExtendSelectionAndReplace(
+    uint32_t before,
+    uint32_t after,
+    const std::u16string& replacement_text) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->ExtendSelectionAndReplace(before, after, replacement_text);
+}
+
 void RenderWidgetHostViewIOS::DeleteSurroundingText(int before, int after) {
   if (auto* widget_host = GetActiveWidget()) {
     auto* input_handler = widget_host->GetFrameWidgetInputHandler();
@@ -941,6 +959,14 @@ void RenderWidgetHostViewIOS::DeleteSurroundingText(int before, int after) {
     }
     input_handler->DeleteSurroundingTextInCodePoints(before, after);
   }
+}
+
+void RenderWidgetHostViewIOS::ExecuteEditCommand(const std::string& command) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->ExecuteEditCommand(command, std::nullopt);
 }
 
 void RenderWidgetHostViewIOS::SendKeyEvent(

@@ -12,6 +12,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -760,7 +761,8 @@ TEST_F(OAuthMultiloginHelperTest, InvalidTokenErrorWithRefreshTokens) {
       kAccountId,
       GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
   EXPECT_FALSE(url_loader()->IsPending(multilogin_url()));
-  EXPECT_TRUE(token_service()->RefreshTokenHasError(kAccountId));
+  EXPECT_NE(token_service()->GetAuthError(kAccountId),
+            GoogleServiceAuthError::AuthErrorNone());
   EXPECT_TRUE(callback_called_);
   EXPECT_EQ(SetAccountsInCookieResult::kPersistentError, result_);
 }
@@ -992,7 +994,8 @@ TEST_F(OAuthMultiloginHelperTest, BoundTokenFailureChallengedTwice) {
       kAccountId,
       GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
   EXPECT_FALSE(url_loader()->IsPending(multilogin_url()));
-  EXPECT_TRUE(token_service()->RefreshTokenHasError(kAccountId));
+  EXPECT_NE(token_service()->GetAuthError(kAccountId),
+            GoogleServiceAuthError::AuthErrorNone());
   EXPECT_TRUE(callback_called_);
   EXPECT_EQ(SetAccountsInCookieResult::kPersistentError, result_);
 }

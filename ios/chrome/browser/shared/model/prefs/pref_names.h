@@ -40,6 +40,15 @@ inline constexpr char kBottomOmniboxByDefault[] =
 inline constexpr char kBrowserLockdownModeEnabled[] =
     "ios.browser_lockdown_mode_enabled";
 
+// A map of sessionID (clientID) to sub-dictionaries of conversationID
+// (serverID) and creation timestamp.
+inline constexpr char kBwgSessionMap[] = "ios.bwg.session_map";
+
+// Number of times the "BWG" settings "new" IPH badge has been shown.
+// This is set to INT_MAX when the user visites the "BWG" settings page.
+inline constexpr char kBWGSettingsNewBadgeShownCount[] =
+    "ios.bwg_settings_new_badge_shown_count";
+
 // A map of profile data directory to cached information. This cache can
 // be used to display information about profiles without actually having
 // to load them.
@@ -298,6 +307,10 @@ inline constexpr char
     kIosMagicStackSegmentationTabResumptionImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.tab_resumption_freshness";
 
+// Whether to show Google links to GoogleMaps in a native view.
+inline constexpr char kIosMiniMapShowNativeMap[] =
+    "ios.mini_map.show_native_map";
+
 // The number of consecutive times the user dismissed the password bottom sheet.
 // This gets reset to 0 whenever the user selects a password from the bottom
 // sheet or from the keyboard accessory.
@@ -383,6 +396,11 @@ inline constexpr char kIosSaveToDriveDownloadManagerPolicySettings[] =
 // enterprise policy.
 inline constexpr char kIosChooseFromDriveFilePickerPolicySettings[] =
     "ios.choose_from_drive.file_picker_policy";
+
+// Preference to store the current ThemeSpecificsIos for the user's background
+// choices.
+inline constexpr char kIosSavedThemeSpecificsIos[] =
+    "ios.saved_theme_specifics_ios";
 
 // String preference containing the default account to use for saving images to
 // Google Photos.
@@ -614,10 +632,6 @@ inline constexpr char kLastBackgroundedTime[] = "ios.last_backgrounded_time";
 // browser policy.
 inline constexpr char kLastSigninTimestamp[] = "signin.last_signin_timestamp";
 
-// Integer that represents the value of BrowserSigninPolicy. Values are defined
-// in ios/chrome/browser/policy/model/policy_util.h.
-inline constexpr char kBrowserSigninPolicy[] = "signin.browser_signin_policy";
-
 // Bool that represents whether iCloud backups are allowed by policy.
 inline constexpr char kAllowChromeDataInBackups[] =
     "ios.allow_chrome_data_in_backups";
@@ -766,11 +780,27 @@ inline constexpr char kIosSyncInfobarErrorLastDismissedTimestamp[] =
 // A boolean specifying whether the bwg consent form has been accepted.
 inline constexpr char kIOSBwgConsent[] = "ios.bwg.consent";
 
+// A boolean specifying whether the BWG Promo was shown manually.
+inline constexpr char kIOSBWGManualPromo[] = "ios.bwg.manual_promo";
+
 // A time object storing the first browser startup with a managed primary
 // identity in the personal profile after multi-profile becomes supported. Used
 // to trigger forced migration after some grace period.
 inline constexpr char kWaitingForMultiProfileForcedMigrationTimestamp[] =
     "ios.waiting_for_multi_profile_forced_migration_timestamp";
+
+// A time object storing when the sign-in promo should be displayed again.
+// The value is set on the first cold start to make sure sign-in promo is not
+// triggered right after the FRE.
+inline constexpr char kNextSSORecallTime[] = "ios.next_sso_recall_time";
+
+// An integer determining the enabled status of Gemini by policy.
+// 0 means Gemini is enabled (default), and 1 means it's disabled.
+inline constexpr char kGeminiEnabledByPolicy[] = "ios.gemini_enabled_by_policy";
+
+// A boolean specifying if the multi-profile force-migration is done.
+inline constexpr char kMultiProfileForcedMigrationDone[] =
+    "ios.multi_profile_forced_migration_done";
 
 }  // namespace prefs
 

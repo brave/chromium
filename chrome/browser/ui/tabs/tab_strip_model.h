@@ -26,6 +26,7 @@
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_scrubbing_metrics.h"
 #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
+#include "chrome/common/buildflags.h"
 #include "components/sessions/core/session_id.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
@@ -45,7 +46,6 @@ class Profile;
 class TabGroupModel;
 class TabStripModelDelegate;
 class TabStripModelObserver;
-class TabStripServiceImpl;
 
 namespace content {
 class WebContents;
@@ -55,12 +55,18 @@ namespace split_tabs {
 class SplitTabData;
 class SplitTabVisualData;
 enum class SplitTabLayout;
+enum class SplitTabCreatedSource;
 }
 
 namespace tabs {
 class SplitTabCollection;
 class TabStripCollection;
 class TabGroupTabCollection;
+}
+
+namespace tabs_api {
+class MojoTreeBuilder;
+class TabStripModelAdapterImpl;
 }
 
 class TabGroupModelFactory {
@@ -177,7 +183,6 @@ class ScopedTabStripModalUI {
 class TabStripModel {
  public:
   using TabIterator = tabs::TabCollection::TabIterator;
-  using CollectionIterator = tabs::TabCollection::Iterator;
 
   // TODO(crbug.com/40881446): Remove this, and use std::optional<size_t> (or at
   // least std::optional<int>) in its place.
@@ -417,6 +422,10 @@ class TabStripModel {
   // Returns the currently active Tab, or NULL if there is none.
   tabs::TabInterface* GetActiveTab() const;
 
+  // Returns the currently active tab or if it is a split tab, all the tabs in
+  // that split. Doesn't take into account occlusion.
+  std::vector<tabs::TabInterface*> GetVisibleTabs() const;
+
   // Returns the WebContents at the specified index, or NULL if there is
   // none.
   content::WebContents* GetWebContentsAt(int index) const;
@@ -499,6 +508,11 @@ class TabStripModel {
   bool IsTabClosable(const content::WebContents* contents) const;
 
   split_tabs::SplitTabData* GetSplitData(split_tabs::SplitTabId split_id) const;
+
+  // Returns the set of SplitTabIds for the split tabs found in this
+  // TabStripModel. These ids are globally unique and randomly generated across
+  // all windows.
+  std::set<split_tabs::SplitTabId> ListSplits() const;
 
   bool ContainsSplit(split_tabs::SplitTabId split_id) const;
 
@@ -604,11 +618,13 @@ class TabStripModel {
   void UpdateSplitRatio(split_tabs::SplitTabId split_id,
                         double start_content_ratio);
 
-  // Updates the active tab within `split_id` with the tab at `update_index`.
+  // Updates the split tab at index `split_index` with the tab at
+  // `update_index`. The split that includes `split_index` must include the
+  // active tab in the tab strip.
   enum class SplitUpdateType { kReplace, kSwap };
-  void UpdateActiveTabInSplit(split_tabs::SplitTabId split_id,
-                              int update_index,
-                              SplitUpdateType update_type);
+  void UpdateTabInSplit(tabs::TabInterface* split_tab,
+                        int update_index,
+                        SplitUpdateType update_type);
 
   // Reverses the order of tabs with `split_id`.
   void ReverseTabsInSplit(split_tabs::SplitTabId split_id);
@@ -618,7 +634,8 @@ class TabStripModel {
   // must be sorted in ascending order.
   split_tabs::SplitTabId AddToNewSplit(
       const std::vector<int> indices,
-      split_tabs::SplitTabVisualData visual_data);
+      split_tabs::SplitTabVisualData visual_data,
+      split_tabs::SplitTabCreatedSource source);
 
   // Create a new tab group and add the set of tabs pointed to be |indices| to
   // it. Pins all of the tabs if any of them were pinned, and reorders the tabs
@@ -675,10 +692,16 @@ class TabStripModel {
   TabIterator begin() const;
   TabIterator end() const;
 
-  CollectionIterator collection_begin(
-      base::PassKey<TabStripServiceImpl> key) const;
-  CollectionIterator collection_end(
-      base::PassKey<TabStripServiceImpl> key) const;
+  // Gets the root of the tab strip model. Used to traverse the tab topology.
+  const tabs::TabCollection* Root(
+      base::PassKey<tabs_api::MojoTreeBuilder> key) const;
+
+  // Finds the group id for a tab collection. Note that this API can be error
+  // prone. Make sure to read and understand the potential problems with
+  // relying on group id.
+  std::optional<const tab_groups::TabGroupId> FindGroupIdFor(
+      const tabs::TabCollection::Handle& collection_handle,
+      base::PassKey<tabs_api::TabStripModelAdapterImpl>) const;
 
   // View API //////////////////////////////////////////////////////////////////
 
@@ -714,6 +737,11 @@ class TabStripModel {
     CommandGoBack,
     CommandCloseAllTabs,
     CommandCommerceProductSpecifications,
+#if BUILDFLAG(ENABLE_GLIC)
+    CommandGlicShareLimit,
+    CommandGlicStartShare,
+    CommandGlicStopShare,
+#endif
     CommandLast
   };
 
@@ -823,12 +851,10 @@ class TabStripModel {
   tabs::TabInterface* GetTabForWebContents(
       const content::WebContents* contents) const;
 
-  // Returns [start, end) where the leftmost tab in the split has index start
-  // and the rightmost tab in the split has index end - 1.
-  gfx::Range GetIndexRangeOfSplit(split_tabs::SplitTabId split_id) const;
-
  private:
   FRIEND_TEST_ALL_PREFIXES(TabStripModelTest, GetIndicesClosedByCommand);
+  // Temporary private API.
+  FRIEND_TEST_ALL_PREFIXES(TabStripModelTest, FindGroupIdFor);
 
   struct DetachNotifications;
   struct MoveNotification {
@@ -1112,6 +1138,10 @@ class TabStripModel {
   void RemoveSplitImpl(split_tabs::SplitTabId split_id,
                        SplitTabChange::SplitTabRemoveReason reason);
 
+  void UpdateTabInSplitImpl(tabs::TabInterface* split_tab,
+                            int update_index,
+                            SplitUpdateType update_type);
+
   // Adds tabs to newly-allocated group id |new_group|. This group must be new
   // and have no tabs in it.
   void AddToNewGroupImpl(
@@ -1257,6 +1287,15 @@ class TabStripModel {
   std::optional<tab_groups::TabGroupId> GetGroupToAssign(int index,
                                                          int to_position);
 
+  // Private API for now, because this API can be difficult to use correctly.
+  // Interim stop gap until we have a handle based API. Use PassKey to access
+  // this.
+  // One notable deficiencies is that it doesn't work for all tab collection
+  // types (e.g.: unpinned collection, tab strip collection, and split tab
+  // collection). The onus is on the caller to handle those cases correctly.
+  std::optional<const tab_groups::TabGroupId> FindGroupIdFor(
+      const tabs::TabCollection::Handle& collection_handle) const;
+
   // Returns a valid index to be selected after the tabs in `block_tabs` are
   // closed. If index is after the block, index is adjusted to reflect the fact
   // that the block is going away.
@@ -1275,6 +1314,10 @@ class TabStripModel {
 
   std::vector<std::pair<tabs::TabInterface*, int>> GetTabsAndIndicesInSplit(
       split_tabs::SplitTabId split_id);
+
+  // Returns [start, end) where the leftmost tab in the split has index start
+  // and the rightmost tab in the split has index end - 1.
+  gfx::Range GetIndexRangeOfSplit(split_tabs::SplitTabId split_id) const;
 
   // If inserting at `index` breaks a split, returns its id, otherwise nullopt.
   std::optional<split_tabs::SplitTabId> InsertionBreaksSplitContiguity(

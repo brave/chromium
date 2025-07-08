@@ -197,7 +197,7 @@
 <translation id="1738949837603788263">Zóna <ph name="ZONE_NUMBER" /></translation>
 <translation id="1745577949879301685">Obrázky se nepodařilo načíst. Zkontrolujte připojení k síti a zkuste je načíst znovu.</translation>
 <translation id="1751249301761991853">Osobní</translation>
-<translation id="1751335846119670066">Pomoz mi číst</translation>
+<translation id="1751335846119670066">Pomoz mi přečíst</translation>
 <translation id="1753496554272155572">Zavřít náhled tapety</translation>
 <translation id="1754578112426924640">Tlačítko Upravit pro <ph name="ACCELERATOR_INFO" />.</translation>
 <translation id="1755556344721611131">Diagnostická aplikace</translation>
@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Výsledky s lidmi se zatím nezobrazují. Zkuste jiný pokyn.</translation>
 <translation id="1815850098929213707">Vybraná klávesa je <ph name="KEYS" />. Klepnutím na tlačítko ovládací prvek upravíte</translation>
 <translation id="1818174214124933000">Když vyberete Odeslat, vaše zpětná vazba a obsah (zobrazené níže) budou odeslány do Googlu, zkontrolovány lidmi a použity k trénování nebo vylepšování našich produktů a služeb v souladu se <ph name="LINK_POLICY_BEGIN" />zásadami ochrany soukromí<ph name="LINK_POLICY_END" /> a <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />smluvními podmínkami společnosti Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Učitel poslal nepodporovaný zdroj. Sdělte mu to.</translation>
 <translation id="1823120442877418684">Objekty</translation>
 <translation id="1827738518074806965">Galerie umění</translation>
 <translation id="183287940576828840">Nevhodné/nebezpečné</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Přepnout rozvržení</translation>
 <translation id="224421911978987610">dlouhá expozice</translation>
 <translation id="2244834438220057800">zelená</translation>
+<translation id="2248689665683494517">minimalistické zátiší s několika květy vlčích máků ve skleněné váze s černým pozadím</translation>
 <translation id="225692081236532131">Stav aktivace</translation>
 <translation id="2267285889943769271">Přidat snímek obrazovky</translation>
 <translation id="2268044343513325586">Upřesnit</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">šifón</translation>
 <translation id="4310735698903592804">Tapety vytvořené nedávno pomocí Google AI</translation>
 <translation id="4320904097188876154">neonově růžová</translation>
+<translation id="432961742358282111">Kliknutím pravým tlačítkem nebo podržením získáte definice, překlady nebo převody jednotek. Tuto funkci můžete spravovat šipkami vlevo nebo vpravo.</translation>
 <translation id="4333390807948134856">Klávesa <ph name="KEY_NAME" /> byla stisknuta</translation>
 <translation id="4334293042716981313">Můžete taky <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />napsat svůj vlastní pokyn<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">klávesa</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Zeptejte se odborníků ve fóru nápovědy pro Chromebooky</translation>
-<translation id="7309823890857024809">minimalistické zátiší s několika květy vlčích máků ve skleněné váze s černým pozadím</translation>
 <translation id="7311368985037279727">barva klávesnice</translation>
 <translation id="7317831949569936035">Registrace do školy</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1562,7 +1562,7 @@ Pokud přepisy chcete získat, stáhněte si pro ně model (až 100 MB).</trans
 <translation id="7859006200041800233">kaktusový květ</translation>
 <translation id="7865217133132122390">Zapnout mikrofon</translation>
 <translation id="7869143217755017858">Deaktivovat tmavý režim</translation>
-<translation id="7878972877380405573">Shrnout pomocí funkce Pomoz mi číst</translation>
+<translation id="7878972877380405573">Shrnout pomocí funkce Pomoz mi přečíst</translation>
 <translation id="7881066108824108340">DNS</translation>
 <translation id="7882358943899516840">Typ poskytovatele</translation>
 <translation id="7882501334836096755">Veřejný klíč</translation>

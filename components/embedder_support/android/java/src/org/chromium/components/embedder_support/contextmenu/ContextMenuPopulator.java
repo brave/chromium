@@ -4,10 +4,9 @@
 
 package org.chromium.components.embedder_support.contextmenu;
 
-import android.util.Pair;
-
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 
 import java.util.List;
@@ -21,21 +20,20 @@ public interface ContextMenuPopulator {
     /**
      * Should be used to populate {@code menu} with the correct context menu items.
      *
-     * @return A list separate by groups. Each "group" will contain items related to said group as
-     *     well as an integer that is a string resource for the group. Image items will have items
-     *     that belong to that are related to that group and the string resource for the group will
-     *     likely say "IMAGE". If the link pressed is contains multiple items (like an image link)
-     *     the list will have both an image list and a link list.
+     * @return A list of groups. If the link contains multiple items (like an image link), the list
+     *     will have both an image group and a link group. The groups will be separated from each
+     *     other by horizontal dividers.
      */
-    List<Pair<Integer, ModelList>> buildContextMenu();
+    List<ModelList> buildContextMenu();
 
     /**
      * Called when a context menu item has been selected.
      *
      * @param itemId The id of the selected menu item.
+     * @param menuItem The ListItem corresponding to the selected item.
      * @return Whether or not the selection was handled.
      */
-    boolean onItemSelected(int itemId);
+    boolean onItemSelected(int itemId, @Nullable ListItem menuItem);
 
     /** Called when the context menu is closed. */
     void onMenuClosed();

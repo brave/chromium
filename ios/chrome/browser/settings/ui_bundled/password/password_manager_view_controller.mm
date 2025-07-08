@@ -15,7 +15,10 @@
 #import "base/ios/ios_util.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
+#import "base/strings/string_number_conversions.h"
+#import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/google/core/common/google_util.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/password_manager/core/browser/password_manager_constants.h"
@@ -487,6 +490,13 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   [self updateWidgetPromoCellLayoutIfNeeded];
 }
 
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  if ([self.scrimView isDescendantOfView:self.view]) {
+    [self.view bringSubviewToFront:self.scrimView];
+  }
+}
+
 #pragma mark - SettingsRootTableViewController
 
 - (void)loadModel {
@@ -720,10 +730,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   _trustedVaultWidgetPromoItem =
       [[InlinePromoItem alloc] initWithType:ItemTypeTrustedVaultWidgetPromo];
   _trustedVaultWidgetPromoItem.shouldShowCloseButton = NO;
-  // TODO(crbug.com/407605858): Update this image based on the UX
-  // recommendation.
+  _trustedVaultWidgetPromoItem.shouldDisplayBadge = NO;
   _trustedVaultWidgetPromoItem.promoImage =
-      [UIImage imageNamed:WidgetPromoImageName()];
+      [UIImage imageNamed:kPasswordManagerTrustedVaultWidgetPromoImage];
   _trustedVaultWidgetPromoItem.promoText = l10n_util::GetNSStringF(
       IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_PASSWORDS_MESSAGE_WITH_EMAIL,
       _userEmail);
@@ -1074,6 +1083,10 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         [self clearSectionWithIdentifier:SectionIdentifierWidgetPromo
                         withRowAnimation:UITableViewRowAnimationTop];
 
+        [self
+            clearSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo
+                      withRowAnimation:UITableViewRowAnimationTop];
+
         [self clearSectionWithIdentifier:SectionIdentifierManageAccountHeader
                         withRowAnimation:UITableViewRowAnimationTop];
 
@@ -1116,6 +1129,22 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
             withRowAnimation:UITableViewRowAnimationTop];
 
         sectionIndex++;
+        // Add the trusted vault promo section.
+        if (password_manager::features::
+                IsPasswordManagerTrustedVaultWidgetEnabled() &&
+            _shouldShowTrustedVaultWidgetPromo) {
+          [model insertSectionWithIdentifier:
+                     SectionIdentifierTrustedVaultWidgetPromo
+                                     atIndex:sectionIndex];
+          [self.tableView
+                insertSections:[NSIndexSet indexSetWithIndex:sectionIndex]
+              withRowAnimation:UITableViewRowAnimationTop];
+          [model addItem:self.trustedVaultWidgetPromoItem
+              toSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
+
+          sectionIndex++;
+        }
+
         // Add widget promo section.
         if (_shouldShowPasswordManagerWidgetPromo) {
           [model insertSectionWithIdentifier:SectionIdentifierWidgetPromo
@@ -1235,7 +1264,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         initWithGURL:
             google_util::AppendGoogleLocaleParam(
                 GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
-                GetApplicationContext()->GetApplicationLocale())] ];
+                GetApplicationContext()
+                    ->GetApplicationLocaleStorage()
+                    ->Get())] ];
   } else {
     _manageAccountLinkItem.text =
         l10n_util::GetNSString(IDS_IOS_PASSWORD_MANAGER_HEADER_NOT_SYNCING);
@@ -1292,18 +1323,28 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
 // Shows scrim overlay and hide toolbar.
 - (void)showScrim {
-  if (self.scrimView.alpha < 1.0f) {
-    self.scrimView.alpha = 0.0f;
-    [self.tableView addSubview:self.scrimView];
-    // We attach our constraints to the superview because the tableView is
-    // a scrollView and it seems that we get an empty frame when attaching to
-    // it.
-    AddSameConstraints(self.scrimView, self.view.superview);
+  UIView* scrimView = self.scrimView;
+  if (scrimView.alpha < 1.0f) {
+    scrimView.alpha = 0.0f;
+    [self.tableView addSubview:scrimView];
+
+    UIView* superview = self.tableView.superview;
+
+    [NSLayoutConstraint activateConstraints:@[
+      [scrimView.leadingAnchor constraintEqualToAnchor:superview.leadingAnchor],
+      [scrimView.trailingAnchor
+          constraintEqualToAnchor:superview.trailingAnchor],
+      [scrimView.bottomAnchor constraintEqualToAnchor:superview.bottomAnchor],
+      [scrimView.topAnchor
+          constraintEqualToAnchor:self.navigationController.navigationBar
+                                      .bottomAnchor],
+
+    ]];
     self.tableView.accessibilityElementsHidden = YES;
     self.tableView.scrollEnabled = NO;
     [UIView animateWithDuration:kTableViewNavigationScrimFadeDuration
                      animations:^{
-                       self.scrimView.alpha = 1.0f;
+                       scrimView.alpha = 1.0f;
                        [self.view layoutIfNeeded];
                      }];
   }
@@ -1543,10 +1584,10 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   }
 
   self.trustedVaultWidgetPromoItem.enabled = enabled;
-  // TODO(crbug.com/407605858): Update images based on the UX recommendation.
-  self.trustedVaultWidgetPromoItem.promoImage =
-      [UIImage imageNamed:enabled ? WidgetPromoImageName()
-                                  : WidgetPromoDisabledImageName()];
+  self.trustedVaultWidgetPromoItem.promoImage = [UIImage
+      imageNamed:enabled
+                     ? kPasswordManagerTrustedVaultWidgetPromoImage
+                     : kPasswordManagerTrustedVaultWidgetPromoDisabledImage];
   [self reconfigureCellsForItems:@[ self.trustedVaultWidgetPromoItem ]];
 }
 
@@ -1890,7 +1931,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
           [TableViewIllustratedEmptyView defaultTextAttributesForSubtitle];
       NSURL* linkURL = net::NSURLWithGURL(google_util::AppendGoogleLocaleParam(
           GURL(password_manager::kPasswordManagerHelpCenteriOSURL),
-          GetApplicationContext()->GetApplicationLocale()));
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get()));
       NSDictionary* linkAttributes = @{
         NSForegroundColorAttributeName : [UIColor colorNamed:kBlueColor],
         NSLinkAttributeName : linkURL,

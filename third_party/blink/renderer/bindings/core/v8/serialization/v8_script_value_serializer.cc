@@ -398,7 +398,7 @@ void V8ScriptValueSerializer::WriteUnguessableToken(
 }
 
 void V8ScriptValueSerializer::WriteUTF8String(const StringView& string) {
-  StringUTF8Adaptor utf8(string);
+  StringUtf8Adaptor utf8(string);
   WriteUint32(utf8.size());
   WriteRawBytes(utf8.data(), utf8.size());
 }
@@ -917,7 +917,7 @@ v8::Maybe<bool> V8ScriptValueSerializer::WriteHostObject(
     return v8::Just(true);
   }
   if (!exception_state.HadException()) {
-    StringView interface = wrappable->GetWrapperTypeInfo()->interface_name;
+    StringView interface = ToWrapperTypeInfo(wrappable)->interface_name;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kDataCloneError,
         interface + " object could not be cloned.");

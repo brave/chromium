@@ -9,11 +9,10 @@
 #include <vector>
 
 #include "base/callback_list.h"
-#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/common/buildflags.h"
+#include "ui/base/unowned_user_data/user_data_factory.h"
 
-class ChromeAutofillAiClient;
 class FileSystemAccessPageActionController;
 class FromGWSNavigationAndKeepAliveRequestObserver;
 class IntentPickerViewPageActionController;
@@ -28,10 +27,18 @@ class SidePanelRegistry;
 class TabResourceUsageTabHelper;
 class TabUIHelper;
 class TranslatePageActionController;
+class QwacWebContentsObserver;
+class ManagePasswordsPageActionController;
+
+namespace actor::ui {
+class ActorUiTabController;
+}  // namespace actor::ui
 
 namespace commerce {
 class CommerceUiTabHelper;
 class PriceInsightsPageActionViewController;
+class DiscountsPageActionViewController;
+class ProductSpecificationsPageActionViewController;
 }
 
 namespace content {
@@ -56,7 +63,6 @@ class ExtensionSidePanelManager;
 
 #if BUILDFLAG(ENABLE_GLIC)
 namespace glic {
-class GlicPageContextEligibilityObserver;
 class GlicTabIndicatorHelper;
 }
 #endif
@@ -77,10 +83,6 @@ namespace privacy_sandbox {
 class PrivacySandboxTabObserver;
 class PrivacySandboxIncognitoTabObserver;
 }  // namespace privacy_sandbox
-
-namespace metrics {
-class DwaWebContentsObserver;
-}  // namespace metrics
 
 namespace sync_sessions {
 class SyncSessionsRouterTabHelper;
@@ -114,20 +116,11 @@ class InactiveWindowMouseEventController;
 // tab. It can be subclassed by tests to perform dependency injection.
 class TabFeatures {
  public:
-  static std::unique_ptr<TabFeatures> CreateTabFeatures();
-  virtual ~TabFeatures();
+  TabFeatures();
+  ~TabFeatures();
 
   TabFeatures(const TabFeatures&) = delete;
   TabFeatures& operator=(const TabFeatures&) = delete;
-
-  // Call this method to stub out TabFeatures for tests.
-  using TabFeaturesFactory =
-      base::RepeatingCallback<std::unique_ptr<TabFeatures>()>;
-  static void ReplaceTabFeaturesForTesting(TabFeaturesFactory factory);
-
-  LensSearchController* lens_search_controller() {
-    return lens_search_controller_.get();
-  }
 
   enterprise_data_protection::DataProtectionNavigationController*
   data_protection_controller() {
@@ -156,10 +149,6 @@ class TabFeatures {
     return side_panel_registry_.get();
   }
 
-  ChromeAutofillAiClient* chrome_autofill_ai_client() {
-    return chrome_autofill_ai_client_.get();
-  }
-
   ReadAnythingSidePanelController* read_anything_side_panel_controller() {
     return read_anything_side_panel_controller_.get();
   }
@@ -175,10 +164,6 @@ class TabFeatures {
   privacy_sandbox::PrivacySandboxIncognitoTabObserver*
   privacy_sandbox_incognito_tab_observer() {
     return privacy_sandbox_incognito_tab_observer_.get();
-  }
-
-  metrics::DwaWebContentsObserver* dwa_web_contents_observer() {
-    return dwa_web_contents_observer_.get();
   }
 
   extensions::ExtensionSidePanelManager* extension_side_panel_manager() {
@@ -206,6 +191,11 @@ class TabFeatures {
     return file_system_access_page_action_controller_.get();
   }
 
+  ManagePasswordsPageActionController*
+  manage_passwords_page_action_controller() {
+    return manage_passwords_page_action_controller_.get();
+  }
+
   tab_groups::CollaborationMessagingTabData*
   collaboration_messaging_tab_data() {
     return collaboration_messaging_tab_data_.get();
@@ -222,6 +212,16 @@ class TabFeatures {
   commerce::PriceInsightsPageActionViewController*
   commerce_price_insights_page_action_view_controller() {
     return commerce_price_insights_page_action_view_controller_.get();
+  }
+
+  commerce::DiscountsPageActionViewController*
+  commerce_discounts_page_action_view_controller() {
+    return commerce_discounts_page_action_view_controller_.get();
+  }
+
+  commerce::ProductSpecificationsPageActionViewController*
+  commerce_product_specifications_page_action_view_controller() {
+    return commerce_product_specifications_page_action_view_controller_.get();
   }
 
   LensOverlayController* lens_overlay_controller();
@@ -245,6 +245,10 @@ class TabFeatures {
 
   TabUIHelper* tab_ui_helper() { return tab_ui_helper_.get(); }
 
+  actor::ui::ActorUiTabController* actor_ui_tab_controller() {
+    return actor_ui_tab_controller_.get();
+  }
+
   // Note: Temporary until there is a more uniform way to swap out features for
   // testing.
   TabResourceUsageTabHelper* SetResourceUsageHelperForTesting(
@@ -253,34 +257,21 @@ class TabFeatures {
   TabUIHelper* SetTabUIHelperForTesting(
       std::unique_ptr<TabUIHelper> tab_ui_helper);
 
-#if BUILDFLAG(ENABLE_GLIC)
-  glic::GlicPageContextEligibilityObserver*
-  glic_page_context_eligibility_observer() {
-    return glic_page_context_eligibility_observer_.get();
-  }
-#endif
-
   TabAlertController* tab_alert_controller() {
     return tab_alert_controller_.get();
   }
 
   // Called exactly once to initialize features.
-  // Can be overridden in tests to initialize nothing.
-  virtual void Init(TabInterface& tab, Profile* profile);
+  void Init(TabInterface& tab, Profile* profile);
 
- protected:
-  TabFeatures();
-
-  // Override these methods to stub out individual feature controllers for
-  // testing.
-  virtual std::unique_ptr<LensSearchController> CreateLensController(
-      TabInterface* tab);
-
-  virtual std::unique_ptr<commerce::CommerceUiTabHelper>
-  CreateCommerceUiTabHelper(TabInterface& tab, Profile* profile);
+  static ui::UserDataFactoryWithOwner<TabInterface>&
+  GetUserDataFactoryForTesting();
 
  private:
   bool initialized_ = false;
+
+  // Returns the factory used to create owned components.
+  static ui::UserDataFactoryWithOwner<TabInterface>& GetUserDataFactory();
 
   // TODO(https://crbug.com/347770670): Delete this code when tab-discarding no
   // longer swizzles WebContents.
@@ -303,8 +294,6 @@ class TabFeatures {
   std::unique_ptr<customize_chrome::SidePanelController>
       customize_chrome_side_panel_controller_;
 
-  std::unique_ptr<ChromeAutofillAiClient> chrome_autofill_ai_client_;
-
   std::unique_ptr<ReadAnythingSidePanelController>
       read_anything_side_panel_controller_;
 
@@ -320,9 +309,6 @@ class TabFeatures {
 
   std::unique_ptr<privacy_sandbox::PrivacySandboxIncognitoTabObserver>
       privacy_sandbox_incognito_tab_observer_;
-
-  std::unique_ptr<metrics::DwaWebContentsObserver>
-      dwa_web_contents_observer_;
 
   // The tab-scoped extension side-panel manager. There is a separate
   // window-scoped extension side-panel manager.
@@ -356,6 +342,10 @@ class TabFeatures {
   // interact with this to have their feature's page action shown.
   std::unique_ptr<page_actions::PageActionController> page_action_controller_;
 
+  // Responsible for managing the "Manage Passwords" page action.
+  std::unique_ptr<ManagePasswordsPageActionController>
+      manage_passwords_page_action_controller_;
+
   // Responsible for managing the "Translate" page action.
   std::unique_ptr<TranslatePageActionController>
       translate_page_action_controller_;
@@ -371,6 +361,14 @@ class TabFeatures {
   std::unique_ptr<commerce::PriceInsightsPageActionViewController>
       commerce_price_insights_page_action_view_controller_;
 
+  // Responsible for managing the commerce "Price insights" page action.
+  std::unique_ptr<commerce::DiscountsPageActionViewController>
+      commerce_discounts_page_action_view_controller_;
+
+  // Responsible for managing the commerce "Product Specifications" page action.
+  std::unique_ptr<commerce::ProductSpecificationsPageActionViewController>
+      commerce_product_specifications_page_action_view_controller_;
+
   // Contains the recent collaboration message for a shared tab.
   std::unique_ptr<tab_groups::CollaborationMessagingTabData>
       collaboration_messaging_tab_data_;
@@ -380,9 +378,6 @@ class TabFeatures {
 
 #if BUILDFLAG(ENABLE_GLIC)
   std::unique_ptr<glic::GlicTabIndicatorHelper> glic_tab_indicator_helper_;
-
-  std::unique_ptr<glic::GlicPageContextEligibilityObserver>
-      glic_page_context_eligibility_observer_;
 #endif
 
   std::unique_ptr<memory_saver::MemorySaverChipController>
@@ -401,6 +396,10 @@ class TabFeatures {
   std::unique_ptr<TabAlertController> tab_alert_controller_;
 
   std::unique_ptr<TabUIHelper> tab_ui_helper_;
+
+  std::unique_ptr<QwacWebContentsObserver> qwac_web_contents_observer_;
+
+  std::unique_ptr<actor::ui::ActorUiTabController> actor_ui_tab_controller_;
 
   // Must be the last member.
   base::WeakPtrFactory<TabFeatures> weak_factory_{this};

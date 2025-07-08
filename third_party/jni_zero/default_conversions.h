@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <type_traits>
+#include <tuple>
 #include <vector>
 
 #include "third_party/jni_zero/common_apis.h"
@@ -29,6 +30,16 @@ inline ScopedJavaLocalRef<jobject> ToJniType(JNIEnv* env, const T& opt_value) {
     return nullptr;
   }
   return ToJniType(env, opt_value.value());
+}
+
+// Allow conversions of a nullable Java array to an std::optional container by
+// wrapping non-optional conversions.
+template <internal::IsOptional T>
+inline T FromJniArray(JNIEnv* env, const JavaRef<jobject>& j_object) {
+  if (!j_object) {
+    return std::nullopt;
+  }
+  return FromJniArray<typename T::value_type>(env, j_object);
 }
 
 // Convert Java array -> container type using FromJniType() on each element.

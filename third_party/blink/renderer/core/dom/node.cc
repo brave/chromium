@@ -396,7 +396,7 @@ Node* Node::PseudoAwarePreviousSibling() const {
   }
 
   // Note the [[fallthrough]] attributes, the order of the cases matters and
-  // corresponds to the ordering of pseudo elements in a traversal:
+  // corresponds to the ordering of pseudo-elements in a traversal:
   // ::scroll-marker-group(before), ::marker, ::scroll-marker,
   // ::scroll-button(), ::checkmark,
   // ::before, non-pseudo Elements, ::after, ::picker-icon,
@@ -498,16 +498,15 @@ Node* Node::PseudoAwarePreviousSibling() const {
           kPseudoIdViewTransitionOld,
           To<PseudoElement>(this)->view_transition_name());
     case kPseudoIdViewTransitionGroup: {
+      auto* pseudo = To<ViewTransitionPseudoElementBase>(this);
+      auto* parent_pseudo = To<ViewTransitionPseudoElementBase>(parent);
       const Vector<AtomicString>& names =
-          To<ViewTransitionPseudoElementBase>(this)->GetViewTransitionNames();
-      wtf_size_t found_index =
-          names.Find(To<PseudoElement>(this)->view_transition_name());
+          parent_pseudo->GetContainedViewTransitionNames();
+      wtf_size_t found_index = names.Find(pseudo->view_transition_name());
       CHECK_NE(found_index, kNotFound);
       if (found_index == 0) {
         return nullptr;
       }
-
-      CHECK_EQ(parent->GetPseudoId(), kPseudoIdViewTransition);
       return parent->GetPseudoElement(kPseudoIdViewTransitionGroup,
                                       names[found_index - 1]);
     }
@@ -621,16 +620,15 @@ Node* Node::PseudoAwareNextSibling() const {
           kPseudoIdViewTransitionNew,
           To<PseudoElement>(this)->view_transition_name());
     case kPseudoIdViewTransitionGroup: {
+      auto* pseudo = To<ViewTransitionPseudoElementBase>(this);
+      auto* parent_pseudo = To<ViewTransitionPseudoElementBase>(parent);
       const Vector<AtomicString>& names =
-          To<ViewTransitionPseudoElementBase>(this)->GetViewTransitionNames();
-      wtf_size_t found_index =
-          names.Find(To<PseudoElement>(this)->view_transition_name());
+          parent_pseudo->GetContainedViewTransitionNames();
+      wtf_size_t found_index = names.Find(pseudo->view_transition_name());
       CHECK_NE(found_index, kNotFound);
       if (found_index == names.size() - 1) {
         return nullptr;
       }
-
-      CHECK_EQ(parent->GetPseudoId(), kPseudoIdViewTransition);
       return parent->GetPseudoElement(kPseudoIdViewTransitionGroup,
                                       names[found_index + 1]);
     }
@@ -746,7 +744,8 @@ Node* Node::PseudoAwareLastChild() const {
     // pseudo traversal.
     if (GetPseudoId() == kPseudoIdViewTransition) {
       const Vector<AtomicString>& names =
-          To<ViewTransitionPseudoElementBase>(this)->GetViewTransitionNames();
+          To<ViewTransitionPseudoElementBase>(this)
+              ->GetContainedViewTransitionNames();
       if (names.empty()) {
         return nullptr;
       }
@@ -754,9 +753,17 @@ Node* Node::PseudoAwareLastChild() const {
                                                names.back());
     }
     if (GetPseudoId() == kPseudoIdViewTransitionGroup) {
-      return current_element->GetPseudoElement(
-          kPseudoIdViewTransitionImagePair,
-          To<PseudoElement>(this)->view_transition_name());
+      if (!To<ViewTransitionPseudoElementBase>(current_element)
+               ->GetContainedViewTransitionNames()
+               .empty()) {
+        return current_element->GetPseudoElement(
+            kPseudoIdViewTransitionGroupChildren,
+            To<PseudoElement>(this)->view_transition_name());
+      } else {
+        return current_element->GetPseudoElement(
+            kPseudoIdViewTransitionImagePair,
+            To<PseudoElement>(this)->view_transition_name());
+      }
     }
     if (GetPseudoId() == kPseudoIdViewTransitionImagePair) {
       const AtomicString& name =
@@ -1592,7 +1599,7 @@ void Node::SetNeedsStyleRecalc(StyleChangeType change_type,
     // done after resolving style for the author DOM. See
     // StyleEngine::RecalcTransitionPseudoStyle.
     // Since the dirty bits from the originating element (root element) are not
-    // propagated to these pseudo elements during the default walk, we need to
+    // propagated to these pseudo-elements during the default walk, we need to
     // invalidate style for these elements here.
     bool mark_transition_pseudos =
         RuntimeEnabledFeatures::ScopedViewTransitionsEnabled()
@@ -2339,9 +2346,7 @@ void Node::setTextContent(const String& text) {
       // mutation observer listeners attached.
       if (container->HasOneTextChild() &&
           To<Text>(container->firstChild())->data() == text && !text.empty() &&
-          (!RuntimeEnabledFeatures::
-               SameValueTextContentFiresMutationObserversEnabled() ||
-           !GetDocument().HasMutationObservers())) {
+          !GetDocument().HasMutationObservers()) {
         return;
       }
 
@@ -2536,10 +2541,14 @@ void Node::MovedFrom(ContainerNode& old_parent) {}
 void Node::RemovedFrom(ContainerNode& insertion_point) {
   DCHECK(IsContainerNode() || IsInTreeScope() || GetDOMParts());
   if (insertion_point.isConnected()) {
-    ClearNeedsStyleRecalc();
-    ClearChildNeedsStyleRecalc();
-    ClearNeedsStyleInvalidation();
-    ClearChildNeedsStyleInvalidation();
+    // Don't clear the layout/style flags on `moveBefore`, so that the layout is
+    // recomputed and reattached on the next style recalc.
+    if (!GetDocument().StatePreservingAtomicMoveInProgress()) {
+      ClearNeedsStyleRecalc();
+      ClearChildNeedsStyleRecalc();
+      ClearNeedsStyleInvalidation();
+      ClearChildNeedsStyleInvalidation();
+    }
     ClearFlag(kIsConnectedFlag);
 #if DCHECK_IS_ON()
     insertion_point.GetDocument().DecrementNodeCount();
@@ -2927,11 +2936,18 @@ void Node::WillMoveToNewDocument(Document& new_document) {
     old_document.SetFocusedElement(nullptr, params);
   }
 
+  const LocalFrame* old_frame = old_document.GetFrame();
+  const LocalFrame* new_frame = new_document.GetFrame();
+  const bool moving_from_connected_local_root_to_different_local_root =
+      old_frame && (!new_frame || &old_frame->LocalFrameRoot() !=
+                                      &new_frame->LocalFrameRoot());
+  if (moving_from_connected_local_root_to_different_local_root) {
+    old_frame->GetEventHandlerRegistry().DidMoveOutOfLocalRoot(*this);
+  }
+
   if (!old_document.GetPage() ||
       old_document.GetPage() == new_document.GetPage())
     return;
-
-  old_document.GetFrame()->GetEventHandlerRegistry().DidMoveOutOfPage(*this);
 
   if (auto* this_element = DynamicTo<Element>(this)) {
     StylePropertyMapReadOnly* computed_style_map_item =
@@ -3034,9 +3050,13 @@ void Node::MoveEventListenersToNewDocument(Document& old_document,
     }
   }
 
-  if (new_document.GetPage() &&
-      new_document.GetPage() != old_document.GetPage()) {
-    new_document.GetFrame()->GetEventHandlerRegistry().DidMoveIntoPage(*this);
+  const LocalFrame* old_frame = old_document.GetFrame();
+  const LocalFrame* new_frame = new_document.GetFrame();
+  const bool moving_into_different_connected_local_root =
+      new_frame && (!old_frame || &new_frame->LocalFrameRoot() !=
+                                      &old_frame->LocalFrameRoot());
+  if (moving_into_different_connected_local_root) {
+    new_frame->GetEventHandlerRegistry().DidMoveIntoLocalRoot(*this);
   }
 }
 
@@ -3248,8 +3268,9 @@ void Node::DispatchSimulatedClick(const Event* underlying_event,
 }
 
 void Node::DefaultEventHandler(Event& event) {
-  if (event.target() != this)
+  if (event.RawTarget() != this) {
     return;
+  }
   const AtomicString& event_type = event.type();
   if (event_type == event_type_names::kKeydown ||
       event_type == event_type_names::kKeypress ||

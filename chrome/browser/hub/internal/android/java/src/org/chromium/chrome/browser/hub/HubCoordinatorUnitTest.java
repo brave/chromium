@@ -38,9 +38,7 @@ import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRule;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.Tab;
@@ -57,12 +55,6 @@ import java.util.Collection;
 
 /** Tests for {@link HubCoordinator}. */
 @RunWith(ParameterizedRobolectricTestRunner.class)
-// TODO(crbug.com/419289558): Re-enable color surface feature flags
-@Features.DisableFeatures({
-    ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
-    ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
-    ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE
-})
 public class HubCoordinatorUnitTest {
     // All the tests in this file will run twice, once for isXrDevice=true and once for
     // isXrDevice=false. Expect all the tests with the same results on XR devices too.
@@ -188,7 +180,8 @@ public class HubCoordinatorUnitTest {
                         mMenuButtonCoordinator,
                         mSearchActivityClient,
                         mEdgeToEdgeSupplier,
-                        mHubColorMixer);
+                        mHubColorMixer,
+                        /* xrSpaceModeObservableSupplier= */ null);
         ShadowLooper.runUiThreadTasks();
         mRootView.getChildCount();
         assertNotEquals(0, mRootView.getChildCount());
@@ -281,7 +274,7 @@ public class HubCoordinatorUnitTest {
         assertEquals(mIncognitoTabSwitcherPane, mPaneManager.getFocusedPaneSupplier().get());
         assertTrue(mHubCoordinator.getHandleBackPressChangedSupplier().get());
 
-        assertEquals(Boolean.FALSE, mHubCoordinator.handleEscPress());
+        assertEquals(false, mHubCoordinator.handleEscPress());
         assertEquals(mIncognitoTabSwitcherPane, mPaneManager.getFocusedPaneSupplier().get());
         assertTrue(mHubCoordinator.getHandleBackPressChangedSupplier().get());
     }
@@ -302,13 +295,13 @@ public class HubCoordinatorUnitTest {
     @Test
     public void testBackNavigationWithNullTabOnEscapeKeyPress() {
         assertFalse(mHubCoordinator.getHandleBackPressChangedSupplier().get());
-        assertEquals(Boolean.FALSE, mHubCoordinator.handleEscPress());
+        assertEquals(false, mHubCoordinator.handleEscPress());
 
         mTabSupplier.set(mTab);
         assertTrue(mHubCoordinator.getHandleBackPressChangedSupplier().get());
         mTabSupplier.set(null);
 
-        assertEquals(Boolean.FALSE, mHubCoordinator.handleEscPress());
+        assertEquals(false, mHubCoordinator.handleEscPress());
         verify(mHubLayoutController, never()).selectTabAndHideHubLayout(anyInt());
     }
 
@@ -327,12 +320,12 @@ public class HubCoordinatorUnitTest {
     @Test
     public void testBackNavigationWithTabOnEscapeKeyPress() {
         assertFalse(mHubCoordinator.getHandleBackPressChangedSupplier().get());
-        assertEquals(Boolean.FALSE, mHubCoordinator.handleEscPress());
+        assertEquals(false, mHubCoordinator.handleEscPress());
 
         mTabSupplier.set(mTab);
         assertTrue(mHubCoordinator.getHandleBackPressChangedSupplier().get());
 
-        assertEquals(Boolean.TRUE, mHubCoordinator.handleEscPress());
+        assertEquals(true, mHubCoordinator.handleEscPress());
         verify(mHubLayoutController).selectTabAndHideHubLayout(eq(TAB_ID));
     }
 

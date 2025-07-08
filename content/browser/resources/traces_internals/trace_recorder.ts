@@ -4,18 +4,25 @@
 
 import '//resources/cr_elements/cr_button/cr_button.js';
 import '//resources/cr_elements/cr_toast/cr_toast.js';
+import '//resources/cr_elements/cr_collapse/cr_collapse.js';
+import '//resources/cr_elements/cr_expand_button/cr_expand_button.js';
 
 import type {CrToastElement} from '//resources/cr_elements/cr_toast/cr_toast.js';
+import {assert} from '//resources/js/assert.js';
 import {CrRouter} from '//resources/js/cr_router.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import type {BigBuffer} from '//resources/mojo/mojo/public/mojom/base/big_buffer.mojom-webui.js';
 
+import {TraceConfig, TraceConfig_BufferConfig_FillPolicy} from './perfetto_config.js';
+import type {TrackEventConfig} from './perfetto_config.js';
 import {getCss} from './trace_recorder.css.js';
 import {getHtml} from './trace_recorder.html.js';
-import {TraceReportBrowserProxy} from './trace_report_browser_proxy.js';
+import {TracesBrowserProxy} from './traces_browser_proxy.js';
+import type {TraceCategory} from './traces_internals.mojom-webui.js';
 
 enum TracingState {
   IDLE = 'Idle',
+  STARTING = 'Starting',
   RECORDING = 'Recording',
   STOPPING = 'Stopping',
 }
@@ -41,29 +48,46 @@ export class TraceRecorderElement extends CrLitElement {
 
   static override get properties() {
     return {
-      traceConfig: {type: String},
+      traceConfig: {type: Object},
       toastMessage: {type: String},
       tracingState: {type: String},
+      traceCategories: {type: Array},
+      trackEventConfig: {type: Object},
+      categoriesExpanded_: {type: Boolean},
+      bufferUsage: {type: Number},
+      hadDataLoss: {type: Boolean},
     };
   }
 
-  private browserProxy_: TraceReportBrowserProxy =
-      TraceReportBrowserProxy.getInstance();
+  private browserProxy_: TracesBrowserProxy = TracesBrowserProxy.getInstance();
+
   // Bound method for router events
   private boundLoadConfigFromUrl_ = this.loadConfigFromUrl_.bind(this);
   // Bound method for onTraceComplete listener
   private boundOnTraceComplete_ = this.onTraceComplete_.bind(this);
+  // Bound method for buffer usage polling
+  private readonly boundPollBufferUsage_ = this.pollBufferUsage_.bind(this);
+
   // Property to store the listener ID for onTraceComplete
   private onTraceCompleteListenerId_: number|null = null;
+  // ID for the polling interval
+  private bufferPollIntervalId_: number|null = null;
+  private encodedConfigString: string = '';
 
-  protected accessor traceConfig: string = '';
   protected accessor toastMessage: string = '';
   // Initialize the tracing state to IDLE.
   protected accessor tracingState: TracingState = TracingState.IDLE;
+  protected accessor traceCategories: TraceCategory[] = [];
+  protected accessor traceConfig: TraceConfig|undefined;
+  protected accessor trackEventConfig: TrackEventConfig|undefined;
+  protected accessor categoriesExpanded_: boolean = false;
+  protected accessor bufferUsage: number = 0;
+  protected accessor hadDataLoss: boolean = false;
 
   override connectedCallback() {
     super.connectedCallback();
     this.loadConfigFromUrl_();
+    this.loadTraceCategories_();
     CrRouter.getInstance().addEventListener(
         'cr-router-path-changed', this.boundLoadConfigFromUrl_);
     this.onTraceCompleteListenerId_ =
@@ -86,12 +110,7 @@ export class TraceRecorderElement extends CrLitElement {
     return this.tracingState === TracingState.IDLE && !!this.traceConfig;
   }
 
-  protected get isStopTracingEnabled(): boolean {
-    return this.tracingState === TracingState.RECORDING ||
-        this.tracingState === TracingState.STOPPING;
-  }
-
-  protected get isCloneTraceEnabled(): boolean {
+  protected get isRecording(): boolean {
     return this.tracingState === TracingState.RECORDING;
   }
 
@@ -99,6 +118,8 @@ export class TraceRecorderElement extends CrLitElement {
     switch (this.tracingState) {
       case TracingState.IDLE:
         return 'status-idle';
+      case TracingState.STARTING:
+        return 'status-starting';
       case TracingState.RECORDING:
         return 'status-tracing';
       case TracingState.STOPPING:
@@ -108,15 +129,24 @@ export class TraceRecorderElement extends CrLitElement {
     }
   }
 
-  protected async startTracing_(): Promise<void> {
-    const bigBufferConfig = this.decodeBase64ToBigBuffer_();
+  private async pollBufferUsage_(): Promise<void> {
+    const {success, percentFull, dataLoss} =
+        await this.browserProxy_.handler.getBufferUsage();
 
+    if (success) {
+      this.bufferUsage = percentFull;
+      this.hadDataLoss = dataLoss;
+    }
+  }
+
+  protected async startTracing_(): Promise<void> {
+    const bigBufferConfig = this.serializeTraceConfigToBigBuffer_();
     if (!bigBufferConfig) {
       return;
     }
 
     // Set state to RECORDING immediately to disable start button.
-    this.tracingState = TracingState.RECORDING;
+    this.tracingState = TracingState.STARTING;
 
     const {success} =
         await this.browserProxy_.handler.startTraceSession(bigBufferConfig);
@@ -125,10 +155,19 @@ export class TraceRecorderElement extends CrLitElement {
       this.showToast_('Failed to start tracing.');
       // Revert to IDLE if starting failed.
       this.tracingState = TracingState.IDLE;
+    } else {
+      this.tracingState = TracingState.RECORDING;
+      this.bufferPollIntervalId_ =
+          window.setInterval(this.boundPollBufferUsage_, 1000);
     }
   }
 
   protected async stopTracing_(): Promise<void> {
+    if (this.bufferPollIntervalId_ !== null) {
+      window.clearInterval(this.bufferPollIntervalId_);
+      this.bufferPollIntervalId_ = null;
+    }
+
     // Set state to STOPPING to indicate an ongoing operation.
     this.tracingState = TracingState.STOPPING;
 
@@ -144,34 +183,87 @@ export class TraceRecorderElement extends CrLitElement {
     this.downloadData_(trace);
   }
 
-  private downloadData_(traceData: BigBuffer|null): void {
-    if (traceData && traceData.bytes) {
-      try {
-        const blob = new Blob([new Uint8Array(traceData.bytes)], {
-          type: 'application/octet-stream',
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
+  protected onCategoriesExpandedChanged_(e: CustomEvent<{value: boolean}>) {
+    this.categoriesExpanded_ = e.detail.value;
+  }
 
-        const now = new Date();
-        a.download = `${
-            now.toLocaleString(
-                /*locales=*/ undefined, {
-                  hour: 'numeric',
-                  minute: 'numeric',
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour12: true,
-                })}.gz`;
-        a.click();
-      } catch (e) {
-        this.showToast_(`Error downloading trace: ${e}`);
-      }
-    } else {
-      this.showToast_('Failed to download trace or no trace data.');
+  protected isEnabled(categoryName: string): boolean {
+    if (!this.trackEventConfig?.enabledCategories) {
+      return false;
     }
+    return this.trackEventConfig.enabledCategories.includes(categoryName);
+  }
+
+  protected onCategoryChange_(event: Event, categoryName: string): void {
+    if (!this.trackEventConfig?.enabledCategories) {
+      return;
+    }
+    const isChecked = (event.target as HTMLInputElement).checked;
+    const enabledSet = new Set(this.trackEventConfig.enabledCategories);
+
+    if (isChecked) {
+      enabledSet.add(categoryName);
+    } else {
+      enabledSet.delete(categoryName);
+    }
+    this.trackEventConfig.enabledCategories = [...enabledSet];
+
+    this.updateUrlFromConfig_();
+  }
+
+  private getArrayFromBigBuffer(bigBuffer: BigBuffer): Uint8Array {
+    if (Array.isArray(bigBuffer.bytes)) {
+      return new Uint8Array(bigBuffer.bytes);
+    }
+    assert(!!bigBuffer.sharedMemory, 'sharedMemory must be defined here');
+    const sharedMemory = bigBuffer.sharedMemory;
+    const {buffer, result} =
+        sharedMemory.bufferHandle.mapBuffer(0, sharedMemory.size);
+    assert(result === Mojo.RESULT_OK, 'Could not map buffer');
+    return new Uint8Array(buffer);
+  }
+
+  private downloadData_(traceData: BigBuffer|null): void {
+    if (!traceData) {
+      this.showToast_('Failed to download trace or no trace data.');
+      return;
+    }
+    try {
+      const traceArray = this.getArrayFromBigBuffer(traceData);
+      const blob = new Blob([traceArray], {
+        type: 'application/octet-stream',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+
+      const now = new Date();
+      a.download = `${
+          now.toLocaleString(
+              /*locales=*/ undefined, {
+                hour: 'numeric',
+                minute: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour12: true,
+              })}.gz`;
+      a.click();
+    } catch (e) {
+      this.showToast_(`Error downloading trace: ${e}`);
+    }
+  }
+
+  private async loadTraceCategories_(): Promise<void> {
+    const {categories} =
+        await this.browserProxy_.handler.getTrackEventCategories();
+    const disabledPrefix = 'disabled-by-default-';
+    this.traceCategories =
+        categories.filter((category: TraceCategory) => !category.isGroup)
+            .sort(
+                (a, b) =>
+                    a.name.replace(disabledPrefix, '')
+                        .localeCompare(b.name.replace(disabledPrefix, '')));
   }
 
   // Decodes a Base64 string into a Uint8Array.
@@ -185,22 +277,40 @@ export class TraceRecorderElement extends CrLitElement {
     return bytes;
   }
 
-  private decodeBase64ToBigBuffer_(): BigBuffer|undefined {
+  // Encode from Uint8Array into a Base64 string.
+  private uint8ArrayToBase64_(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+  }
+
+  private serializeTraceConfigToBigBuffer_(): BigBuffer|undefined {
+    if (!this.traceConfig) {
+      return;
+    }
     let bigBuffer: BigBuffer|undefined = undefined;
     try {
-      const decodedBytes: Uint8Array =
-          this.base64ToUint8Array_(this.traceConfig);
+      const serializedConfig = TraceConfig.encode(this.traceConfig).finish();
       bigBuffer = {
-        bytes: Array.from(decodedBytes),
+        bytes: Array.from(serializedConfig),
       } as BigBuffer;
       return bigBuffer;
     } catch (error) {
-      this.showToast_(`Error decoding Base64: ${error}`);
+      this.showToast_(`Error encoding: ${error}`);
     }
     return bigBuffer;
   }
 
   private onTraceComplete_(trace: BigBuffer|null): void {
+    if (this.bufferPollIntervalId_ !== null) {
+      window.clearInterval(this.bufferPollIntervalId_);
+      this.bufferPollIntervalId_ = null;
+    }
+    this.bufferUsage = 0;
+    this.hadDataLoss = false;
+
     this.downloadData_(trace);
 
     // Crucially, only set to IDLE here after the trace has been
@@ -214,12 +324,113 @@ export class TraceRecorderElement extends CrLitElement {
   }
 
   private loadConfigFromUrl_(): void {
-    const router = CrRouter.getInstance();
-    const configParam = router.getQueryParams().get('trace_config');
-    const newConfig = configParam ?? '';
-    if (this.traceConfig !== newConfig) {
-      this.traceConfig = newConfig;
+    const params = new URLSearchParams(document.location.search);
+    const host = params.get('trace_config');
+    const newConfig = host ?? '';
+
+    if (this.encodedConfigString === newConfig && newConfig !== '') {
+      return;
     }
+
+    this.encodedConfigString = newConfig;
+    this.trackEventConfig = undefined;
+    this.traceConfig = undefined;
+    const serializedConfig = this.base64ToUint8Array_(newConfig);
+
+    if (serializedConfig.length === 0) {
+      this.initializeDefaultConfig_();
+      return;
+    }
+
+    try {
+      this.traceConfig = TraceConfig.decode(serializedConfig);
+
+      const trackEventDataSource = this.traceConfig.dataSources?.find(
+          ds => ds.config?.trackEventConfig !== undefined);
+      if (trackEventDataSource) {
+        this.trackEventConfig = trackEventDataSource.config?.trackEventConfig;
+      } else {
+        this.trackEventConfig = this.createDefaultTrackEventConfig_();
+        this.setDataSource_(this.traceConfig, this.trackEventConfig);
+      }
+    } catch (e) {
+      this.showToast_(`Could not parse trace config: ${e}`);
+    }
+  }
+
+  private updateUrlFromConfig_(): void {
+    if (!this.traceConfig) {
+      return;
+    }
+    try {
+      // Encode the modified config object back to a Uint8Array
+      const writer = TraceConfig.encode(this.traceConfig);
+
+      // Convert to Base64 and update the URL
+      const newEncodedConfigString = this.uint8ArrayToBase64_(writer.finish());
+      if (this.encodedConfigString === newEncodedConfigString) {
+        return;
+      }
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('trace_config', newEncodedConfigString);
+
+      // Update URL without reloading the page
+      history.replaceState({}, '', newUrl.toString());
+    } catch (e) {
+      this.showToast_(`Could not update trace config: ${e}`);
+    }
+  }
+
+  private initializeDefaultConfig_(): void {
+    this.traceConfig = {
+      buffers: [
+        {
+          sizeKb: 200 * 1024,
+          fillPolicy: TraceConfig_BufferConfig_FillPolicy.RING_BUFFER,
+        },
+        {
+          sizeKb: 256,
+          fillPolicy: TraceConfig_BufferConfig_FillPolicy.DISCARD,
+        },
+      ],
+      dataSources: [],
+    };
+    this.trackEventConfig = this.createDefaultTrackEventConfig_();
+    this.setDataSource_(this.traceConfig, this.trackEventConfig);
+    this.updateUrlFromConfig_();
+  }
+
+  private createDefaultTrackEventConfig_(): TrackEventConfig {
+    return {
+      enabledCategories: [],
+      disabledCategories: [],
+      enabledTags: [],
+      disabledTags: [],
+    };
+  }
+
+  private setDataSource_(
+      config: TraceConfig, trackEventConfig: TrackEventConfig): void {
+    if (!config.dataSources) {
+      this.showToast_(`Could not get Data Source from Trace Config`);
+      return;
+    }
+    config.dataSources.push(
+        // DataSource for track events
+        {
+          config: {
+            name: 'track_event',
+            targetBuffer: 0,
+            trackEventConfig: trackEventConfig,
+          },
+        },
+        // DataSource for org.chromium.trace_metadata2
+        {
+          config: {
+            name: 'org.chromium.trace_metadata2',
+            targetBuffer: 1,
+          },
+        });
   }
 }
 

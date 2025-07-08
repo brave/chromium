@@ -13,6 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
+#include "chrome/browser/ui/views/profiles/profile_management_types.h"
 #include "chrome/browser/ui/views/profiles/profile_picker_web_contents_host.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -47,11 +48,13 @@ class ProfilePickerDiceSignInProvider
 
   // Creates a new provider that will render the Gaia sign-in flow in `host` for
   // a profile at `profile_path`.
+  // `initial_email` is used to pre-fill the email field in the sign-in screen.
   // If no `profile_path` is provided, a new profile (and associated directory)
   // will be created.
   explicit ProfilePickerDiceSignInProvider(
       ProfilePickerWebContentsHost* host,
       signin_metrics::AccessPoint signin_access_point,
+      const std::string& initial_email,
       base::FilePath profile_path = base::FilePath());
   ~ProfilePickerDiceSignInProvider() override;
   ProfilePickerDiceSignInProvider(const ProfilePickerDiceSignInProvider&) =
@@ -65,7 +68,7 @@ class ProfilePickerDiceSignInProvider
   // the sign-in screen is displayed, `switch_finished_callback` gets called.
   // When the sign-in finishes (if it ever happens), `signin_finished_callback`
   // gets called.
-  void SwitchToSignIn(base::OnceCallback<void(bool)> switch_finished_callback,
+  void SwitchToSignIn(StepSwitchFinishedCallback switch_finished_callback,
                       SignedInCallback signin_finished_callback);
 
   // Reloads the sign-in page if applicable.
@@ -102,9 +105,8 @@ class ProfilePickerDiceSignInProvider
       override;
 
   // Initializes the flow with the newly created or loaded profile.
-  void OnProfileInitialized(
-      base::OnceCallback<void(bool)> switch_finished_callback,
-      Profile* new_profile);
+  void OnProfileInitialized(StepSwitchFinishedCallback switch_finished_callback,
+                            Profile* new_profile);
 
   // `account_info` is empty if the signin could not complete and must continue
   // in a browser (e.g. for SAML).
@@ -141,9 +143,13 @@ class ProfilePickerDiceSignInProvider
 
   const signin_metrics::AccessPoint signin_access_point_;
 
+  // The email to be prefilled in the profile creation flow.
+  const std::string initial_email_;
+
   // The path to the profile in which to perform the sign-in. If empty, a new
   // profile will be created.
   const base::FilePath profile_path_;
+
   // Sign-in callback, valid until it's called.
   SignedInCallback callback_;
 

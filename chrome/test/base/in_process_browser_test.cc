@@ -22,6 +22,7 @@
 #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -321,14 +322,11 @@ void InProcessBrowserTest::RunScheduledLayouts() {
 
 void InProcessBrowserTest::Initialize() {
   g_current_test = this;
-  base::FilePath src_dir;
-  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_dir));
 
   // chrome::DIR_TEST_DATA isn't going to be setup until after we call
   // ContentMain. However that is after tests' constructors or SetUp methods,
   // which sometimes need it. So just override it.
-  CHECK(base::PathService::Override(chrome::DIR_TEST_DATA,
-                                    src_dir.Append(GetChromeTestDataDir())));
+  chrome_test_utils::OverrideChromeTestDataDir();
 
 #if BUILDFLAG(IS_MAC)
   bundle_swizzler_ = std::make_unique<ScopedBundleSwizzlerMac>();
@@ -497,6 +495,10 @@ void InProcessBrowserTest::SetUp() {
   // Disable the notification delay timer used to prevent non system
   // notifications from showing up right after login.
   ash::ShellTestApi::SetUseLoginNotificationDelayForTest(false);
+
+  // On CrOS, we need to use ash::Shell to get all root windows.
+  views::test::WidgetTest::SetRootWindowProvider(
+      base::BindRepeating(&ash::Shell::GetAllRootWindows));
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Redirect the default download directory to a temporary directory.
@@ -560,6 +562,7 @@ void InProcessBrowserTest::TearDown() {
 #if BUILDFLAG(IS_CHROMEOS)
   ash::device_sync::DeviceSyncImpl::Factory::SetCustomFactory(nullptr);
   launch_browser_for_testing_ = nullptr;
+  views::test::WidgetTest::SetRootWindowProvider(base::NullCallback());
 #endif
 }
 

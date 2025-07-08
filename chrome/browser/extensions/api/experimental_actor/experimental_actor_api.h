@@ -57,7 +57,6 @@ class ExperimentalActorStopTaskFunction : public ExperimentalActorApiFunction {
  protected:
   ~ExperimentalActorStopTaskFunction() override;
   ResponseAction Run() override;
-  void OnTaskStopped(bool success);
 
   DECLARE_EXTENSION_FUNCTION("experimentalActor.stopTask",
                              EXPERIMENTALACTOR_STOPTASK)
@@ -82,6 +81,39 @@ class ExperimentalActorExecuteActionFunction
 
   DECLARE_EXTENSION_FUNCTION("experimentalActor.executeAction",
                              EXPERIMENTALACTOR_EXECUTEACTION)
+};
+
+class ExperimentalActorCreateTaskFunction
+    : public ExperimentalActorApiFunction {
+ public:
+  ExperimentalActorCreateTaskFunction();
+  ExperimentalActorCreateTaskFunction(
+      const ExperimentalActorCreateTaskFunction&) = delete;
+  ExperimentalActorCreateTaskFunction& operator=(
+      const ExperimentalActorCreateTaskFunction&) = delete;
+
+ protected:
+  ~ExperimentalActorCreateTaskFunction() override;
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("experimentalActor.createTask",
+                             EXPERIMENTALACTOR_CREATETASK)
+};
+
+class ExperimentalActorPerformActionsFunction
+    : public ExperimentalActorApiFunction {
+ public:
+  ExperimentalActorPerformActionsFunction();
+  ExperimentalActorPerformActionsFunction(
+      const ExperimentalActorPerformActionsFunction&) = delete;
+  ExperimentalActorPerformActionsFunction& operator=(
+      const ExperimentalActorPerformActionsFunction&) = delete;
+
+ protected:
+  ~ExperimentalActorPerformActionsFunction() override;
+  ResponseAction Run() override;
+  void OnActionsFinished(optimization_guide::proto::ActionsResult result);
+  DECLARE_EXTENSION_FUNCTION("experimentalActor.performActions",
+                             EXPERIMENTALACTOR_PERFORMACTIONS)
 };
 
 }  //  namespace extensions

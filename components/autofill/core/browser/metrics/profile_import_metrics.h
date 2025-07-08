@@ -186,6 +186,10 @@ void LogProfileUpdateImportDecision(
     const AutofillProfile& import_candidate,
     std::string_view app_locale);
 
+// Logs the user decision for saving a home/work profile superset.
+void LogHomeAndWorkSupersetImportDecision(
+    AutofillClient::AddressPromptUserDecision decision);
+
 // Logs if at least one setting-inaccessible field was removed on import.
 void LogRemovedSettingInaccessibleFields(bool did_remove);
 
@@ -228,6 +232,10 @@ void LogProfileMigrationImportDecision(
 
 // Logs that a specific type was edited in a migration prompt.
 void LogProfileMigrationEditedType(FieldType edited_type);
+
+// Logs the length of a zip code found in a valid and complete
+// profile considered for import.
+void LogZipCodeLengthMetric(std::u16string_view zip);
 
 // Logs the specific zip code separator char found in a valid and complete
 // profile considered for import.

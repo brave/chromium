@@ -235,7 +235,8 @@ bool EntityTable::MigrateToVersion(int version,
 
 bool EntityTable::AddAttribute(const EntityInstance& entity,
                                const AttributeInstance& attribute) {
-  for (FieldType type : attribute.GetDatabaseStoredTypes()) {
+  for (FieldType type :
+       attribute.type().storable_field_types(/*pass_key=*/{})) {
     sql::Statement s;
     InsertBuilder(db(), s, attributes::kTableName,
                   {attributes::kEntityGuid, attributes::kAttributeType,
@@ -371,10 +372,10 @@ EntityTable::LoadAttributes() const {
     }
     std::underlying_type_t<VerificationStatus> underlying_verification_status =
         s.ColumnInt(4);
-    attribute_records[entity_guid][attribute_type_name].push_back(
-        {.field_type = underlying_field_type,
-         .value = decrypted_value,
-         .verification_status = underlying_verification_status});
+    attribute_records[std::move(entity_guid)][std::move(attribute_type_name)]
+        .push_back({.field_type = underlying_field_type,
+                    .value = std::move(decrypted_value),
+                    .verification_status = underlying_verification_status});
   }
   if (!s.Succeeded()) {
     return {};
@@ -430,6 +431,12 @@ std::optional<EntityInstance> EntityTable::ValidateInstance(
     base::Time use_date,
     std::map<std::string, std::vector<AttributeRecord>> attribute_records)
     const {
+  // An attribute's field type must never be UNKNOWN_TYPE - otherwise we will
+  // discard its value here.
+  static_assert(!DenseSet<FieldType>(DenseSet<AttributeType>::all(),
+                                     &AttributeType::field_type_with_tag_types)
+                     .contains(UNKNOWN_TYPE));
+
   std::optional<EntityType> entity_type =
       StringToEntityType(/*pass_key=*/{}, type_name);
   if (!entity_type || !guid.is_valid()) {

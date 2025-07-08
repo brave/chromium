@@ -7,6 +7,7 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/password_manager/password_change_delegate.h"
@@ -15,6 +16,8 @@
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
+#include "components/password_manager/core/browser/password_manager_settings_service.h"
+#include "components/variations/service/variations_service.h"
 #include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
 
@@ -51,14 +54,23 @@ bool IsUrlMatchingOverride(const GURL& url) {
       url, change_password_url, {});
 }
 
+std::string GetVariationConfigCountryCode() {
+  variations::VariationsService* variation_service =
+      g_browser_process->variations_service();
+  return variation_service ? variation_service->GetLatestCountry()
+                           : std::string();
+}
+
 }  // namespace
 
 ChromePasswordChangeService::ChromePasswordChangeService(
     affiliations::AffiliationService* affiliation_service,
     OptimizationGuideKeyedService* optimization_keyed_service,
+    password_manager::PasswordManagerSettingsService* settings_service,
     std::unique_ptr<password_manager::PasswordFeatureManager> feature_manager)
     : affiliation_service_(affiliation_service),
       optimization_keyed_service_(optimization_keyed_service),
+      settings_service_(settings_service),
       feature_manager_(std::move(feature_manager)) {}
 
 ChromePasswordChangeService::~ChromePasswordChangeService() {
@@ -77,10 +89,14 @@ bool ChromePasswordChangeService::IsPasswordChangeAvailable() {
     return false;
   }
 
-  if (!optimization_keyed_service_) {
+  if (!optimization_keyed_service_ ||
+      !optimization_keyed_service_->ShouldModelExecutionBeAllowedForUser()) {
     return false;
   }
-  if (!optimization_keyed_service_->ShouldModelExecutionBeAllowedForUser()) {
+
+  if (!settings_service_ ||
+      !settings_service_->IsSettingEnabled(
+          password_manager::PasswordManagerSetting::kOfferToSavePasswords)) {
     return false;
   }
 
@@ -89,13 +105,24 @@ bool ChromePasswordChangeService::IsPasswordChangeAvailable() {
 #endif  // BUILDFLAG(IS_ANDROID)
 }
 
-bool ChromePasswordChangeService::IsPasswordChangeSupported(const GURL& url) {
+bool ChromePasswordChangeService::IsPasswordChangeSupported(
+    const GURL& url,
+    const autofill::LanguageCode& page_language) {
   if (!IsPasswordChangeAvailable()) {
     return false;
   }
 
   if (IsUrlMatchingOverride(url)) {
     return true;
+  }
+
+  if (page_language != autofill::LanguageCode("en") &&
+      page_language != autofill::LanguageCode("en-US")) {
+    return false;
+  }
+
+  if (GetVariationConfigCountryCode() != "us") {
+    return false;
   }
 
   const bool has_change_url =
@@ -117,15 +144,10 @@ void ChromePasswordChangeService::OfferPasswordChangeUi(
 
   std::unique_ptr<PasswordChangeDelegate> delegate =
       std::make_unique<PasswordChangeDelegateImpl>(
-          std::move(change_pwd_url), username, password, web_contents);
+          std::move(change_pwd_url), username, password,
+          tabs::TabInterface::GetFromContents(web_contents));
   delegate->AddObserver(this);
   password_change_delegates_.push_back(std::move(delegate));
-
-  // Init only after `delegate` was added to the vector, so it can be
-  // immediately returned by GetPasswordChangeDelegate() when the flow starts.
-  static_cast<PasswordChangeDelegateImpl*>(
-      password_change_delegates_.back().get())
-      ->OfferPasswordChangeUi();
 #else
   NOTREACHED();
 #endif  // BUILDFLAG(IS_ANDROID)

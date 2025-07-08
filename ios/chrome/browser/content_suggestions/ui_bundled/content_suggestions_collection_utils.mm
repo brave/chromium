@@ -4,6 +4,8 @@
 
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_collection_utils.h"
 
+#import <algorithm>
+
 #import "base/i18n/rtl.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/ntp_home_constant.h"
@@ -37,6 +39,9 @@ const CGFloat kSearchFieldMinMargin = 8;
 
 const CGFloat kTopSpacingMaterial = 24;
 
+// The special margins used by MIA.
+const CGFloat kMIASearchFieldMinMargin = 24;
+
 // Top margin for the doodle.
 const CGFloat kDoodleTopMarginRegularXRegular = 162;
 const CGFloat kDoodleTopMarginOther = 45;
@@ -46,6 +51,9 @@ const CGFloat kDoodleScaledTopMarginOther = 10;
 
 // Top margin for the search field
 const CGFloat kSearchFieldTopMargin = 22;
+
+// Top margin for the search field for single button MIA variations.
+const CGFloat kMIASearchFieldTopMargin = 29;
 
 // Bottom margin for the search field.
 const CGFloat kNTPShrunkLogoSearchFieldBottomPadding = 20;
@@ -73,7 +81,7 @@ const CGFloat kButtonShadowVerticalOffset = 1.0;
 const CGFloat kNewBadgeOffsetFromButtonCenter = 14.0;
 
 // The height of the Fakebox.
-const CGFloat kFakeboxHeight = 65;
+const CGFloat kFakeboxHeight = 64;
 const CGFloat kFakeboxHeightNonDynamic = 45;
 
 // The height of the Fakebox when it is pinned to the top.
@@ -115,21 +123,28 @@ void SetUpButtonWithNewFeatureBadge(UIButton* button) {
   button.layer.shadowOpacity = kButtonShadowOpacity;
   button.layer.shadowRadius = kButtonShadowRadius;
 
+  // Remove any possible badge view created as part a previous configuration.
+  for (UIView* subview in button.subviews) {
+    if ([subview isKindOfClass:[NewFeatureBadgeView class]]) {
+      [subview removeFromSuperview];
+    }
+  }
+
   NewFeatureBadgeView* badgeView =
       [[NewFeatureBadgeView alloc] initWithBadgeSize:kNewFeatureBadgeSize
                                             fontSize:kNewFeatureFontSize];
   badgeView.translatesAutoresizingMaskIntoConstraints = NO;
   badgeView.accessibilityElementsHidden = YES;
-  [button.imageView addSubview:badgeView];
+  [button addSubview:badgeView];
 
   [NSLayoutConstraint activateConstraints:@[
     [button.widthAnchor constraintEqualToConstant:kSymbolButtonSize],
     [button.heightAnchor constraintEqualToConstant:kSymbolButtonSize],
     [badgeView.centerXAnchor
-        constraintEqualToAnchor:button.imageView.centerXAnchor
+        constraintEqualToAnchor:button.centerXAnchor
                        constant:kNewBadgeOffsetFromButtonCenter],
     [badgeView.centerYAnchor
-        constraintEqualToAnchor:button.imageView.centerYAnchor
+        constraintEqualToAnchor:button.centerYAnchor
                        constant:-kNewBadgeOffsetFromButtonCenter],
   ]];
 }
@@ -189,20 +204,26 @@ CGFloat HeaderSeparatorHeight() {
 }
 
 CGFloat SearchFieldTopMargin() {
+  if (ShouldEnlargeNTPFakeboxForMIA()) {
+    return kMIASearchFieldTopMargin;
+  }
   return GetDeprecateFeedHeaderParameterValueAsDouble(
       kDeprecateFeedHeaderParameterSearchFieldTopMargin,
       /*default_value=*/kSearchFieldTopMargin);
 }
 
 CGFloat SearchFieldWidth(CGFloat width, UITraitCollection* trait_collection) {
-  if (!IsCompactWidth(trait_collection) && !IsCompactHeight(trait_collection)) {
+  if (IsRegularXRegularSizeClass(trait_collection)) {
     return kSearchFieldLarge;
   }
 
+  if (ShouldEnlargeNTPFakeboxForMIA() && !IsCompactHeight(trait_collection)) {
+    return std::max(width - kMIASearchFieldMinMargin * 2, kSearchFieldSmallMin);
+  }
+
   // Special case for narrow sizes.
-  return std::max(
-      kSearchFieldSmallMin,
-      std::min(kSearchFieldSmall, width - kSearchFieldMinMargin * 2));
+  return std::clamp(width - kSearchFieldMinMargin * 2, kSearchFieldSmallMin,
+                    kSearchFieldSmall);
 }
 
 CGFloat FakeOmniboxHeight() {
@@ -338,6 +359,29 @@ void ConfigureLensButtonAppearance(UIButton* lens_button,
   }
 }
 
+void ConfigureMIAButton(UIButton* mia_button, BOOL use_color_icon) {
+  [mia_button setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+  UIButtonConfiguration* buttonConfig =
+      [UIButtonConfiguration plainButtonConfiguration];
+  buttonConfig.contentInsets = NSDirectionalEdgeInsetsMake(0, 0, 0, 0);
+  mia_button.configuration = buttonConfig;
+
+  UIImage* magnifier_icon = CustomSymbolWithPointSize(
+      kMagnifyingglassSparkSymbol, kSymbolContentSuggestionsPointSize);
+
+  magnifier_icon = use_color_icon ? MakeSymbolMulticolor(magnifier_icon)
+                                  : MakeSymbolMonochrome(magnifier_icon);
+  [mia_button setImage:magnifier_icon forState:UIControlStateNormal];
+  mia_button.tintColor = FakeboxIconColor();
+  // TODO(crbug.com/425339867): Handle button accessibility
+
+  mia_button.pointerInteractionEnabled = YES;
+  // Make the pointer shape fit the location bar's semi-circle end shape.
+  mia_button.pointerStyleProvider =
+      CreateLiftEffectCirclePointerStyleProvider();
+}
+
 void ConfigureLensButtonWithNewBadgeAlpha(UIButton* lens_button,
                                           CGFloat new_badge_alpha) {
   // Fade button background.
@@ -346,7 +390,19 @@ void ConfigureLensButtonWithNewBadgeAlpha(UIButton* lens_button,
           colorWithAlphaComponent:new_badge_alpha];
   lens_button.layer.shadowOpacity = kButtonShadowOpacity * new_badge_alpha;
 
+  UIView* attachedBadgeView = nil;
+  for (UIView* subview in lens_button.subviews) {
+    if ([subview isKindOfClass:[NewFeatureBadgeView class]]) {
+      attachedBadgeView = subview;
+      break;
+    }
+  }
+
   // Scale the N badge.
+  attachedBadgeView.alpha = new_badge_alpha;
+  attachedBadgeView.transform = CGAffineTransformScale(
+      CGAffineTransformIdentity, new_badge_alpha, new_badge_alpha);
+
   for (UIView* subview in lens_button.imageView.subviews) {
     subview.alpha = new_badge_alpha;
     subview.transform = CGAffineTransformScale(

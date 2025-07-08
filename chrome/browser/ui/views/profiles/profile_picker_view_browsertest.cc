@@ -15,6 +15,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/test/bind.h"
@@ -61,8 +62,10 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/profiles/profile_customization_util.h"
 #include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
 #include "chrome/browser/ui/startup/first_run_service.h"
 #include "chrome/browser/ui/tab_dialogs.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -175,6 +178,9 @@ AccountInfo FillAccountInfo(
   account_info.hosted_domain = hosted_domain;
   account_info.locale = "en";
   account_info.picture_url = "https://get-avatar.com/foo";
+  AccountCapabilitiesTestMutator(&account_info.capabilities)
+      .set_is_subject_to_enterprise_policies(hosted_domain !=
+                                             kNoHostedDomainFound);
   return account_info;
 }
 
@@ -511,21 +517,20 @@ class ProfilePickerCreationFlowBrowserTest
 
     if (web_contents()) {
       SimulateEnableSyncDiceHeader(web_contents(), core_account_info);
+      // If the sync header is received then the user is always signed in to the
+      // browser.
+      EXPECT_TRUE(
+          identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
     }
-
-    // The flow should work even if the primary account is not set at this
-    // point,for example because the /ListAccounts call did not complete yet.
-    // Regression test for https://crbug.com/1469586
-    EXPECT_FALSE(
-        identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
-
     return account_info;
   }
 
   static bool HasPromoBeenShown(Browser* browser,
                                 const base::Feature& feature) {
-    return browser->window()->IsFeaturePromoActive(feature) ||
-           browser->window()->IsFeaturePromoQueued(feature);
+    return BrowserUserEducationInterface::From(browser)->IsFeaturePromoActive(
+               feature) ||
+           BrowserUserEducationInterface::From(browser)->IsFeaturePromoQueued(
+               feature);
   }
 
   // Returns true if the profile switch IPH has been shown.
@@ -695,6 +700,15 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest, ShowChoice) {
   EXPECT_NE(delegate->GetWindowTitle(), delegate->GetAccessibleWindowTitle());
   WaitForLoadStop(GURL("chrome://profile-picker/new-profile"));
   EXPECT_NE(delegate->GetWindowTitle(), delegate->GetAccessibleWindowTitle());
+}
+
+IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
+                       ShowChoiceWithInitialEmail) {
+  constexpr char kEmail[] = "test@gmail.com";
+  ProfilePicker::Show(ProfilePicker::Params::FromStartupWithEmail(kEmail));
+  EXPECT_TRUE(ProfilePicker::IsOpen());
+  WaitForPickerWidgetCreated();
+  WaitForLoadStop(GetSigninChromeSyncDiceUrl(kEmail));
 }
 
 IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
@@ -2137,7 +2151,8 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
   Browser* new_browser = waiter.Wait();
   profile_customization_observer.Wait();
   content::WebContents* dialog_web_contents =
-      new_browser->signin_view_controller()
+      new_browser->GetFeatures()
+          .signin_view_controller()
           ->GetModalDialogWebContentsForTesting();
   EXPECT_EQ(dialog_web_contents->GetLastCommittedURL(),
             kLocalProfileCreationUrl);
@@ -2148,7 +2163,8 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
           .GetProfileAttributesWithPath(new_browser->profile()->GetPath());
   ASSERT_TRUE(entry->IsEphemeral());
   EXPECT_FALSE(ProfilePicker::IsOpen());
-  EXPECT_TRUE(new_browser->signin_view_controller()->ShowsModalDialog());
+  EXPECT_TRUE(
+      new_browser->GetFeatures().signin_view_controller()->ShowsModalDialog());
 
   // Simulate clicking the "Done" button on the profile customization dialog.
   ConfirmLocalProfileCreation(dialog_web_contents);
@@ -2158,7 +2174,8 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
   ASSERT_EQ(2u, g_browser_process->profile_manager()
                     ->GetProfileAttributesStorage()
                     .GetNumberOfProfiles());
-  EXPECT_FALSE(new_browser->signin_view_controller()->ShowsModalDialog());
+  EXPECT_FALSE(
+      new_browser->GetFeatures().signin_view_controller()->ShowsModalDialog());
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -2189,7 +2206,8 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
   Browser* new_browser = browser_added_waiter.Wait();
   profile_customization_observer.Wait();
   content::WebContents* dialog_web_contents =
-      new_browser->signin_view_controller()
+      new_browser->GetFeatures()
+          .signin_view_controller()
           ->GetModalDialogWebContentsForTesting();
   EXPECT_EQ(dialog_web_contents->GetLastCommittedURL(),
             kLocalProfileCreationUrl);
@@ -2204,7 +2222,8 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
                     .GetNumberOfProfiles());
   ASSERT_TRUE(entry->IsEphemeral());
   EXPECT_FALSE(ProfilePicker::IsOpen());
-  EXPECT_TRUE(new_browser->signin_view_controller()->ShowsModalDialog());
+  EXPECT_TRUE(
+      new_browser->GetFeatures().signin_view_controller()->ShowsModalDialog());
 
   // Simulate clicking the "Delete profile" button on the profile customization
   // dialog.

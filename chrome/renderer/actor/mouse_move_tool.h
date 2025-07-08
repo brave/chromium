@@ -22,21 +22,23 @@ namespace actor {
 // A tool that can be invoked to perform a mouse move over a target.
 class MouseMoveTool : public ToolBase {
  public:
-  MouseMoveTool(mojom::MouseMoveActionPtr action, content::RenderFrame& frame);
+  MouseMoveTool(content::RenderFrame& frame,
+                Journal::TaskId task_id,
+                Journal& journal,
+                mojom::MouseMoveActionPtr action,
+                mojom::ToolTargetPtr target,
+                mojom::ObservedToolTargetPtr observed_target);
 
   ~MouseMoveTool() override;
 
   // actor::ToolBase
-  void Execute(ToolFinishedCallback callback) override;
+  mojom::ActionResultPtr Execute() override;
   std::string DebugString() const override;
 
  private:
   using ValidatedResult = base::expected<gfx::PointF, mojom::ActionResultPtr>;
   ValidatedResult Validate() const;
 
-  // Raw ref since this is owned by ToolExecutor whose lifetime is tied to
-  // RenderFrame.
-  base::raw_ref<content::RenderFrame> frame_;
   mojom::MouseMoveActionPtr action_;
 };
 

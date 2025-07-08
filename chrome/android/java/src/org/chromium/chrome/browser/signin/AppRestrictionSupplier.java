@@ -14,15 +14,17 @@ import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.supplier.OneshotSupplier;
+import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.policy.AbstractAppRestrictionsProvider;
 import org.chromium.components.policy.AppRestrictionsProvider;
 import org.chromium.components.policy.PolicySwitches;
 
-import java.util.LinkedList;
 import java.util.Locale;
-import java.util.Queue;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
@@ -33,53 +35,32 @@ import java.util.concurrent.RejectedExecutionException;
  * <p>This class is used during fullscreen signin flows, so its lifecycle ends when the flow
  * completes. At which point {@link #destroy()} should be called.
  */
-// TODO(crbug.com/385693639): This class should implement ObservableSupplier<Boolean>.
-public class AppRestrictionSupplier {
+@NullMarked
+public class AppRestrictionSupplier implements OneshotSupplier<Boolean> {
     private static final String TAG = "AppRestriction";
 
-    private boolean mInitialized;
-    private boolean mHasAppRestriction;
     private long mCompletionElapsedRealtimeMs;
-    private final Queue<Callback<Boolean>> mCallbacks = new LinkedList<>();
-    private final Queue<Callback<Long>> mCompletionTimeCallbacks = new LinkedList<>();
+    private final OneshotSupplierImpl<Boolean> mSupplier = new OneshotSupplierImpl<>();
 
-    private AsyncTask<Boolean> mFetchAppRestrictionAsyncTask;
+    private @Nullable AsyncTask<Boolean> mFetchAppRestrictionAsyncTask;
 
     public AppRestrictionSupplier() {
         ThreadUtils.assertOnUiThread();
         initialize();
     }
 
-    /**
-     * Register a callback whether app restriction is found on device. If app restrictions have
-     * already been fetched, the callback will be invoked immediately.
-     *
-     * @param callback Callback to run with whether app restriction is found on device.
-     */
-    public void getHasAppRestriction(Callback<Boolean> callback) {
+    @Override
+    public @Nullable Boolean onAvailable(Callback<Boolean> callback) {
         ThreadUtils.assertOnUiThread();
-
-        if (mInitialized) {
-            callback.onResult(mHasAppRestriction);
-        } else {
-            mCallbacks.add(callback);
-        }
+        return mSupplier.onAvailable(callback);
     }
 
-    /**
-     * Registers a callback for the timestamp from {@link SystemClock#elapsedRealtime} when the app
-     * restrictions call finished. If the restrictions have already been fetched, the callback will
-     * be invoked immediately.
-     *
-     * @param callback Callback to run with the timestamp of completing the fetch.
-     */
-    public void getCompletionElapsedRealtimeMs(Callback<Long> callback) {
-        ThreadUtils.assertOnUiThread();
-        if (mInitialized) {
-            callback.onResult(mCompletionElapsedRealtimeMs);
-        } else {
-            mCompletionTimeCallbacks.add(callback);
-        }
+    @Override
+    // TODO(https://github.com/uber/NullAway/issues/1209): Remove @SuppressWarnings("NullAway")
+    // when the issue gets fixed
+    @SuppressWarnings("NullAway")
+    public @Nullable Boolean get() {
+        return mSupplier.get();
     }
 
     /** Start fetching app restriction on an async thread. */
@@ -103,7 +84,7 @@ public class AppRestrictionSupplier {
         Context appContext = ContextUtils.getApplicationContext();
         try {
             mFetchAppRestrictionAsyncTask =
-                    new AsyncTask<Boolean>() {
+                    new AsyncTask<>() {
                         @Override
                         protected Boolean doInBackground() {
                             UserManager userManager =
@@ -128,9 +109,6 @@ public class AppRestrictionSupplier {
     }
 
     private void onRestrictionDetected(boolean isAppRestricted, long startTime) {
-        mHasAppRestriction = isAppRestricted;
-        mInitialized = true;
-
         // Only record histogram when startTime is valid.
         if (startTime > 0) {
             mCompletionElapsedRealtimeMs = SystemClock.elapsedRealtime();
@@ -143,12 +121,6 @@ public class AppRestrictionSupplier {
                             runTime,
                             isAppRestricted));
         }
-
-        while (!mCallbacks.isEmpty()) {
-            mCallbacks.remove().onResult(mHasAppRestriction);
-        }
-        while (!mCompletionTimeCallbacks.isEmpty()) {
-            mCompletionTimeCallbacks.remove().onResult(mCompletionElapsedRealtimeMs);
-        }
+        mSupplier.set(isAppRestricted);
     }
 }

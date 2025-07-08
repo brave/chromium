@@ -1263,6 +1263,8 @@ tflite_static_library("tflite") {
     sources += [
       "src/tensorflow/lite/delegates/xnnpack/file_util.cc",
       "src/tensorflow/lite/delegates/xnnpack/file_util.h",
+      "src/tensorflow/lite/delegates/xnnpack/mmap_handle.cc",
+      "src/tensorflow/lite/delegates/xnnpack/mmap_handle.h",
       "src/tensorflow/lite/delegates/xnnpack/quantization_util.cc",
       "src/tensorflow/lite/delegates/xnnpack/quantization_util.h",
       "src/tensorflow/lite/delegates/xnnpack/weight_cache.cc",
@@ -1405,8 +1407,8 @@ executable("tflite_benchmark") {
     "src/tensorflow/lite/tools/utils.h",
   ]
   deps = [
-    ":tflite_builtin_op_resolver_standalone",
-    ":tflite_standalone",
+    ":tflite",
+    ":tflite_builtin_op_resolver",
     ":tflite_tools_proto",
     "//third_party/abseil-cpp:absl",
     "//third_party/ruy",

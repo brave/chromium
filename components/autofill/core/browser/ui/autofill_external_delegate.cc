@@ -33,7 +33,9 @@
 #include "components/autofill/core/browser/autofill_trigger_source.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/autofill_ai/entity_data_manager.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
+#include "components/autofill/core/browser/data_manager/valuables/valuables_data_manager.h"
 #include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/filling/addresses/field_filling_address_util.h"
@@ -41,7 +43,7 @@
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/foundations/autofill_driver.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_delegate.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_manager.h"
 #include "components/autofill/core/browser/integrators/compose/autofill_compose_delegate.h"
 #include "components/autofill/core/browser/integrators/plus_addresses/autofill_plus_address_delegate.h"
 #include "components/autofill/core/browser/metrics/autofill_in_devtools_metrics.h"
@@ -53,6 +55,7 @@
 #include "components/autofill/core/browser/payments/credit_card_access_manager.h"
 #include "components/autofill/core/browser/payments/iban_access_manager.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
+#include "components/autofill/core/browser/payments/save_and_fill_manager.h"
 #include "components/autofill/core/browser/single_field_fillers/autocomplete/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_hiding_reason.h"
@@ -131,6 +134,8 @@ AutofillTriggerSource TriggerSourceFromSuggestionTriggerSource(
       return AutofillTriggerSource::kManualFallback;
     case AutofillSuggestionTriggerSource::kAutofillAi:
       return AutofillTriggerSource::kAutofillAi;
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
+      return AutofillTriggerSource::kProactivePasswordRecovery;
   }
   NOTREACHED();
 }
@@ -231,7 +236,6 @@ bool AutofillExternalDelegate::IsAutofillAndFirstLayerSuggestionId(
     case SuggestionType::kAddressEntry:
     case SuggestionType::kAddressEntryOnTyping:
     case SuggestionType::kAddressFieldByFieldFilling:
-    case SuggestionType::kHomeAndWorkAddressEntry:
     case SuggestionType::kCreditCardEntry:
     case SuggestionType::kDevtoolsTestAddresses:
     case SuggestionType::kSaveAndFillCreditCardEntry:
@@ -239,8 +243,10 @@ bool AutofillExternalDelegate::IsAutofillAndFirstLayerSuggestionId(
       // that a merchant has saved. This indicates there could be Autofill
       // suggestions related to standalone CVC fields.
     case SuggestionType::kVirtualCreditCardEntry:
+    case SuggestionType::kLoyaltyCardEntry:
       return true;
     case SuggestionType::kAccountStoragePasswordEntry:
+    case SuggestionType::kAllLoyaltyCardsEntry:
     case SuggestionType::kAllSavedPasswordsEntry:
     case SuggestionType::kAutocompleteEntry:
     case SuggestionType::kBnplEntry:
@@ -261,7 +267,6 @@ bool AutofillExternalDelegate::IsAutofillAndFirstLayerSuggestionId(
     case SuggestionType::kGeneratePasswordEntry:
     case SuggestionType::kIbanEntry:
     case SuggestionType::kInsecureContextPaymentDisabledMessage:
-    case SuggestionType::kLoyaltyCardEntry:
     case SuggestionType::kManageAddress:
     case SuggestionType::kManageAutofillAi:
     case SuggestionType::kManageCreditCard:
@@ -271,6 +276,9 @@ bool AutofillExternalDelegate::IsAutofillAndFirstLayerSuggestionId(
     case SuggestionType::kMerchantPromoCodeEntry:
     case SuggestionType::kMixedFormMessage:
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
+    case SuggestionType::kFreeformFooter:
     case SuggestionType::kPasswordFieldByFieldFilling:
     case SuggestionType::kPlusAddressError:
     case SuggestionType::kScanCreditCard:
@@ -550,7 +558,6 @@ void AutofillExternalDelegate::DidSelectSuggestion(
 #endif
       break;
     case SuggestionType::kAddressEntry:
-    case SuggestionType::kHomeAndWorkAddressEntry:
     case SuggestionType::kCreditCardEntry:
     case SuggestionType::kDevtoolsTestAddressEntry:
       FillAutofillFormData(
@@ -641,13 +648,12 @@ void AutofillExternalDelegate::DidSelectSuggestion(
       break;
     }
     case SuggestionType::kLoyaltyCardEntry:
-      // Always shows the masked loyalty card value as the preview of the
-      // suggestion.
       manager_->FillOrPreviewField(
           mojom::ActionPersistence::kPreview,
           mojom::FieldActionType::kReplaceAll, query_form_, query_field_,
           suggestion.main_text.value, suggestion.type, LOYALTY_MEMBERSHIP_ID);
       break;
+    case SuggestionType::kAllLoyaltyCardsEntry:
     case SuggestionType::kComposeDisable:
     case SuggestionType::kComposeGoToSettings:
     case SuggestionType::kComposeNeverShowOnThisSiteAgain:
@@ -675,6 +681,9 @@ void AutofillExternalDelegate::DidSelectSuggestion(
     case SuggestionType::kTitle:
     case SuggestionType::kSeparator:
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
+    case SuggestionType::kFreeformFooter:
     case SuggestionType::kAccountStoragePasswordEntry:
     case SuggestionType::kAllSavedPasswordsEntry:
     case SuggestionType::kGeneratePasswordEntry:
@@ -699,7 +708,6 @@ void AutofillExternalDelegate::DidAcceptSuggestion(
     case SuggestionType::kAddressEntry:
     case SuggestionType::kAddressFieldByFieldFilling:
     case SuggestionType::kDevtoolsTestAddressEntry:
-    case SuggestionType::kHomeAndWorkAddressEntry:
       DidAcceptAddressSuggestion(suggestion, metadata);
       break;
     case SuggestionType::kCreditCardEntry:
@@ -876,12 +884,25 @@ void AutofillExternalDelegate::DidAcceptSuggestion(
           mojom::ActionPersistence::kFill, mojom::FieldActionType::kReplaceAll,
           query_form_, query_field_, suggestion.main_text.value,
           SuggestionType::kLoyaltyCardEntry, LOYALTY_MEMBERSHIP_ID);
+      ValuablesDataManager* vdm = manager_->client().GetValuablesDataManager();
+      CHECK(vdm);
+      const std::string guid =
+          std::get<Suggestion::Guid>(suggestion.payload).value();
+      if (std::optional<LoyaltyCard> loyaty_card =
+              vdm->GetLoyaltyCardById(ValuableId(guid))) {
+        manager_->LogAndRecordLoyaltyCardFill(
+            *loyaty_card, query_form_.global_id(), query_field_.global_id());
+      }
       break;
     }
     case SuggestionType::kTitle:
     case SuggestionType::kSeparator:
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
+    case SuggestionType::kFreeformFooter:
     case SuggestionType::kAccountStoragePasswordEntry:
+    case SuggestionType::kAllLoyaltyCardsEntry:
     case SuggestionType::kAllSavedPasswordsEntry:
     case SuggestionType::kGeneratePasswordEntry:
     case SuggestionType::kDevtoolsTestAddresses:
@@ -935,7 +956,6 @@ bool AutofillExternalDelegate::RemoveSuggestion(const Suggestion& suggestion) {
     // These SuggestionTypes are various types which can appear in the first
     // level suggestion to fill an address or credit card field.
     case SuggestionType::kAddressEntry:
-    case SuggestionType::kHomeAndWorkAddressEntry:
     case SuggestionType::kAddressFieldByFieldFilling: {
       const std::string guid =
           std::get<Suggestion::AutofillProfilePayload>(suggestion.payload)
@@ -943,12 +963,9 @@ bool AutofillExternalDelegate::RemoveSuggestion(const Suggestion& suggestion) {
       if (AddressDataManager& adm = manager_->client()
                                         .GetPersonalDataManager()
                                         .address_data_manager();
-          auto* profile = adm.GetProfileByGUID(guid)) {
-        // Home and Work profiles are read-only and therefore cannot be deleted.
-        if (!profile->IsHomeAndWorkProfile()) {
-          adm.RemoveProfile(guid);
-          return true;
-        }
+          adm.GetProfileByGUID(guid)) {
+        adm.RemoveProfile(guid);
+        return true;
       }
       return false;
     }
@@ -991,6 +1008,10 @@ bool AutofillExternalDelegate::RemoveSuggestion(const Suggestion& suggestion) {
     case SuggestionType::kIbanEntry:
     case SuggestionType::kBnplEntry:
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
+    case SuggestionType::kFreeformFooter:
+    case SuggestionType::kAllLoyaltyCardsEntry:
     case SuggestionType::kAllSavedPasswordsEntry:
     case SuggestionType::kGeneratePasswordEntry:
     case SuggestionType::kAccountStoragePasswordEntry:
@@ -1353,11 +1374,16 @@ void AutofillExternalDelegate::DidAcceptPaymentsSuggestion(
       manager_->OnSingleFieldSuggestionSelected(
           suggestion, query_form_.global_id(), query_field_.global_id());
       break;
-    case SuggestionType::kSaveAndFillCreditCardEntry:
-      manager_->client()
-          .GetPaymentsAutofillClient()
-          ->ShowCreditCardSaveAndFillDialog();
+    case SuggestionType::kSaveAndFillCreditCardEntry: {
+      payments::SaveAndFillManager* save_and_fill_manager =
+          manager_->client()
+              .GetPaymentsAutofillClient()
+              ->GetSaveAndFillManager();
+      CHECK(save_and_fill_manager);
+
+      save_and_fill_manager->OnDidAcceptCreditCardSaveAndFillSuggestion();
       break;
+    }
     case SuggestionType::kScanCreditCard:
       manager_->client().GetPaymentsAutofillClient()->ScanCreditCard(
           base::BindOnce(&AutofillExternalDelegate::OnCreditCardScanned,

@@ -606,7 +606,6 @@ Ellenkező esetben a beépített érintőpad <ph name="TIMEOUT_SECONDS" /> múlv
 <translation id="3033545621352269033">Be</translation>
 <translation id="3033912566804961911">Összevonás a következővel: <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Fájlok megnyitása</translation>
-<translation id="3038571455154067151">A bejelentkezéshez adja meg a Family Link szülői hozzáférési kódot</translation>
 <translation id="3039939407102840004">Az érintőceruza töltöttségi szintje <ph name="PERCENTAGE" /> százalékon áll.</translation>
 <translation id="304097922505898963">A Billentyűparancsok alkalmazás megnyitása</translation>
 <translation id="304417730895741346">A kitűzött és a megnyitott alkalmazások a polcon találhatók. Ha ki szeretne tűzni egy alkalmazást a polcra, kattintson jobb egérgombbal az alkalmazásra vagy két ujjával koppintson az érintőpadra.</translation>
@@ -1015,6 +1014,7 @@ Az akkumulátor-élettartam növelése érdekében egyes funkciók korlátozotta
 <translation id="4305817255990598646">Váltás</translation>
 <translation id="4307713728991152670">A telefonján lévő legutóbbi fotók, médiatartalmak és alkalmazások megtekintésének beállítása</translation>
 <translation id="4312840429157639164">Kamera a jobb felső sarokhoz igazítva. Ütközés a rendszerfelülettel.</translation>
+<translation id="4312935606722154789">Két egymás melletti ablak csoportosítása vagy a csoportosítás megszüntetése</translation>
 <translation id="4316910396681052118">MINDEN ALKALMAZÁS</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">A Chrome böngésző összes javaslatának elrejtése</translation>
@@ -1583,7 +1583,6 @@ Nincsenek csatlakoztatott eszközök.</translation>
 <translation id="6095425951508823973">Kapcsolat hozzáadása a következővel: <ph name="PROVIDER" /></translation>
 <translation id="6099678161144790572">Az elmúlt egy hónapban szerkesztette</translation>
 <translation id="6103838137565245112">rendszer</translation>
-<translation id="610395411842312282">Két egymás melletti ablak csoportosítása</translation>
 <translation id="6108952804512516814">Létrehozás AI használatával</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" /> nyelvű beszédfájlok letöltve</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

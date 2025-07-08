@@ -606,7 +606,6 @@ Bekor qilinsa, <ph name="TIMEOUT_SECONDS" />dan keyin sensorli panel qayta yoqil
 <translation id="3033545621352269033">Yoniq</translation>
 <translation id="3033912566804961911"><ph name="DESK_NAME" /> bilan birlashtirish</translation>
 <translation id="3036649622769666520">Ochiq fayllar</translation>
-<translation id="3038571455154067151">Kirish uchun Family Link ota-ona ruxsat kodini tering</translation>
 <translation id="3039939407102840004">Stilus batareyasi <ph name="PERCENTAGE" />%.</translation>
 <translation id="304097922505898963">Key Shortcuts ilovasini ochish</translation>
 <translation id="304417730895741346">Qadalgan va ochiq ilovalaringiz panelda Ilovani panelga qadash uchun ilova ustida oʻng tugmani bosing yoki sensorli panelni ikki barmoq bilan bosing.</translation>
@@ -1014,6 +1013,7 @@ Quvvatni tejash uchun ayrim funksiyalar ishlashi cheklandi.</translation>
 <translation id="4305817255990598646">Almashtirish</translation>
 <translation id="4307713728991152670">Telefondagi oxirgi suratlar, media fayllar va ilovalarni koʻrishni sozlash</translation>
 <translation id="4312840429157639164">Kamera yuqori oʻng burchakka joylandi. Tizim platfromasi bilan muammo chiqdi.</translation>
+<translation id="4312935606722154789">Ikkita yonma-yon oynani guruhlash yoki guruhdan chiqarish</translation>
 <translation id="4316910396681052118">BARCHA ILOVALAR</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Barcha Google brauzeri takliflarini berkitish</translation>
@@ -1582,7 +1582,6 @@ Hech qanday qurilma ulanmagan.</translation>
 <translation id="6095425951508823973"><ph name="PROVIDER" /> bilan aloqa oʻrnatish</translation>
 <translation id="6099678161144790572">Oxirgi oyda tahrirlangan</translation>
 <translation id="6103838137565245112">tizim</translation>
-<translation id="610395411842312282">Ikkita yonma-yon oynani guruhlash</translation>
 <translation id="6108952804512516814">AI bilan yaratish</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" /> nutq fayllari yuklab olindi</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

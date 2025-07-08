@@ -14,7 +14,6 @@
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/display/display.h"
-#include "ui/gfx/win/wuc_backdrop.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host.h"
 #include "ui/views/win/hwnd_message_handler_delegate.h"
@@ -100,8 +99,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
   void OnActiveWindowChanged(bool active) override;
   void OnWidgetInitDone() override;
-  void OnWidgetThemeChanged(
-      ui::ColorProviderKey::ColorMode color_mode) override;
+  void OnWidgetThemeChanged(ui::ColorProviderKey::ColorMode color_mode,
+                            std::optional<SkColor> background_color) override;
   std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
   std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient() override;
   void Close() override;
@@ -194,6 +193,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   RequestUnadjustedMovement() override;
   void LockMouse(aura::Window* window) override;
   void UnlockMouse(aura::Window* window) override;
+  void ClientDestroyedWidget() override;
 
   // Overridden from aura::client::AnimationHost
   void SetHostTransitionOffsets(
@@ -230,7 +230,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void HandleCancelMode() override;
   void HandleCaptureLost() override;
   void HandleClose() override;
-  void HandleRequestClose() override;
   bool HandleCommand(int command) override;
   void HandleAccelerator(const ui::Accelerator& accelerator) override;
   void HandleCreate() override;
@@ -272,6 +271,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void HandleWindowSizeUnchanged() override;
   void HandleWindowScaleFactorChanged(float window_scale_factor) override;
   void HandleHeadlessWindowBoundsChanged(const gfx::Rect& bounds) override;
+  HBRUSH GetBackgroundPaintBrush() override;
 
   Widget* GetWidget();
   const Widget* GetWidget() const;
@@ -296,11 +296,14 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // Call Windows API to update the window display affinity.
   void UpdateAllowScreenshots();
 
-  // Creates a Windows.Ui.Composition backdrop and attaches it to the hwnd if
-  // the window does not have a redirection bitmap and Chromium is responsible
-  // for drawing the frame. Also resets the backdrop if the frame mode is
-  // changed to be system drawn.
-  void UpdateWUCBackdrop();
+  // Designates a Mica DWM_SYSTEMBACKDROP to the window if it does not have
+  // a redirection bitmap.
+  void UpdateBackdropColorMode();
+
+  // Returns true if a DWM Backdrop should be applied to the window.
+  bool ShouldAddDWMBackdrop();
+
+  void ClearBackgroundPaintBrush();
 
   std::unique_ptr<HWNDMessageHandler> message_handler_;
   std::unique_ptr<aura::client::FocusClient> focus_client_;
@@ -345,9 +348,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // True if the window is allow to take screenshots, by default is true.
   bool allow_screenshots_ = true;
 
-  // A Windows.Ui.Composition visual tree that represents the window backdrop.
-  std::unique_ptr<gfx::WUCBackdrop> wuc_backdrop_;
-
   // Visibility of the cursor. On Windows we can have multiple root windows and
   // the implementation of ::ShowCursor() is based on a counter, so making this
   // member static ensures that ::ShowCursor() is always called exactly once
@@ -370,6 +370,10 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // The z-order level of the window; the window exhibits "always on top"
   // behavior if > 0.
   ui::ZOrderLevel z_order_ = ui::ZOrderLevel::kNormal;
+
+  // Optional brush for filling the window background if the redirection surface
+  // is present.
+  HBRUSH background_paint_brush_ = nullptr;
 };
 
 }  // namespace views

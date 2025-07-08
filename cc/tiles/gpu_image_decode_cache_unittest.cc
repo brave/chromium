@@ -140,7 +140,7 @@ class FakeDiscardableManager {
   std::map<GLuint, int32_t> textures_;
   size_t live_textures_count_ = 0;
   size_t cached_textures_limit_ = std::numeric_limits<size_t>::max();
-  raw_ptr<viz::TestGLES2Interface, DanglingUntriaged> gl_ = nullptr;
+  raw_ptr<viz::TestGLES2Interface> gl_ = nullptr;
 };
 
 class FakeGPUImageDecodeTestGLES2Interface : public viz::TestGLES2Interface,
@@ -449,6 +449,15 @@ class GpuImageDecodeCacheTest
     color_type_ = std::get<0>(GetParam());
     use_transfer_cache_ = std::get<1>(GetParam());
     do_yuv_decode_ = std::get<2>(GetParam());
+  }
+
+  void TearDown() override {
+    // Clear raw_ptrs in helpers that reference context_provider_ internals
+    // before context_provider_ is destroyed, to avoid dangling pointers. We
+    // can't just reorder the member variables because context_provider_
+    // references discardable_manager_ and transfer_cache_helper_.
+    transfer_cache_helper_.SetGrContext(nullptr);
+    discardable_manager_.SetGLES2Interface(nullptr);
   }
 
   std::unique_ptr<GpuImageDecodeCache> CreateCache(

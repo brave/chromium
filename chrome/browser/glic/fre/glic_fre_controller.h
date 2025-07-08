@@ -8,9 +8,11 @@
 #include <memory>
 
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/glic/fre/glic_fre.mojom.h"
 #include "chrome/browser/glic/host/auth_controller.h"
+#include "chrome/browser/glic/host/glic.mojom.h"
 #include "chrome/browser/shell_integration.h"
 #include "components/tabs/public/tab_interface.h"
 #include "ui/views/widget/widget.h"
@@ -33,6 +35,20 @@ class Widget;
 namespace glic {
 
 class GlicFreDialogView;
+
+// This enum is used to record the reason for the FRE error state.
+// These values are persisted to logs.
+// LINT.IfChange(FreErrorStateReason)
+enum class FreErrorStateReason {
+  // Sign-in is required.
+  kSignInRequired = 0,
+  // Error while re-syncing cookies before showing FRE.
+  kErrorResyncingCookies = 1,
+  // Timeout exceeded during loading error.
+  kTimeoutExceeded = 2,
+  kMaxValue = kTimeoutExceeded,
+};
+// LINT.ThenChange(tools/metrics/histograms/metadata/glic/enums.xml:FreErrorStateReason)
 
 // This class owns and manages the glic FRE modal dialog, and is owned by a
 // GlicWindowController.
@@ -68,11 +84,12 @@ class GlicFreController {
 
   // Open the new tab page in the browser and show the FRE in that tab if
   // possible.
-  void OpenFreDialogInNewTab(BrowserWindowInterface* bwi);
+  void OpenFreDialogInNewTab(BrowserWindowInterface* bwi,
+                             mojom::InvocationSource source);
 
   // Shows the FRE dialog. This should only be called if `ShouldShowFreDialog`
   // and `CanShowFreDialog` are both satisfied.
-  void ShowFreDialog(Browser* browser);
+  void ShowFreDialog(Browser* browser, mojom::InvocationSource source);
 
   // Closes the FRE dialog if it is open on the active tab of `browser`.
   void DismissFreIfOpenOnActiveTab(Browser* browser);
@@ -82,7 +99,7 @@ class GlicFreController {
   void AcceptFre();
 
   // Closes the FRE dialog.
-  void DismissFre();
+  void DismissFre(mojom::FreWebUiState panel);
 
   // Used when the native window is closed directly.
   void CloseWithReason(views::Widget::ClosedReason reason);
@@ -90,11 +107,11 @@ class GlicFreController {
   // Re-sync cookies to FRE webview.
   void PrepareForClient(base::OnceCallback<void(bool)> callback);
 
+  // Loading timeout was exceeded.
+  void ExceededTimeoutError();
+
   // Notify FRE controller that the user clicked on a link.
   void OnLinkClicked(const GURL& url);
-
-  // Notify FRE controller that the user clicked "no thanks" in the FRE.
-  void OnNoThanksClicked();
 
   // Attempts to warm the FRE web contents.
   void TryPreload();
@@ -112,6 +129,8 @@ class GlicFreController {
 
   bool IsShowingDialog() const;
 
+  bool IsShowingDialogAndStateInitialized() const;
+
   gfx::Size GetFreInitialSize();
 
   void UpdateFreWidgetSize(const gfx::Size& new_size);
@@ -127,7 +146,8 @@ class GlicFreController {
  private:
   FRIEND_TEST_ALL_PREFIXES(GlicFreControllerTest,
                            UpdateLauncherOnFreCompletion);
-  void ShowFreDialogAfterAuthCheck(base::WeakPtr<Browser> browser);
+  void ShowFreDialogAfterAuthCheck(base::WeakPtr<Browser> browser,
+                                   mojom::InvocationSource source);
   static void OnCheckIsDefaultBrowserFinished(
       version_info::Channel channel,
       shell_integration::DefaultWebClientState state);

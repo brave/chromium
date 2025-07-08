@@ -33,7 +33,6 @@ GIN_EXPORT BASE_DECLARE_FEATURE(kV8ConcurrentMarkingHighPriorityThreads);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8DecommitPooledPages);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8ExperimentalRegexpEngine);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8ExternalMemoryAccountedInGlobalLimit);
-GIN_EXPORT BASE_DECLARE_FEATURE(kV8GCSpeedUsesCounters);
 GIN_EXPORT extern const base::FeatureParam<int> kV8FlushBytecodeOldAge;
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8FlushBaselineCode);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8FlushBytecode);
@@ -41,6 +40,9 @@ GIN_EXPORT BASE_DECLARE_FEATURE(kV8FlushCodeBasedOnTabVisibility);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8FlushCodeBasedOnTime);
 GIN_EXPORT extern const base::FeatureParam<int> kV8FlushCodeOldTime;
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8FlushEmbeddedBlobICache);
+GIN_EXPORT BASE_DECLARE_FEATURE(kV8HighEndAndroid);
+GIN_EXPORT extern const base::FeatureParam<int>
+    kV8HighEndAndroidMemoryThreshold;
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8IncrementalMarkingStartUserVisible);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8IdleGcOnContextDisposal);
 GIN_EXPORT BASE_DECLARE_FEATURE(kV8IgnitionElideRedundantTdzChecks);
@@ -90,8 +92,6 @@ GIN_EXPORT BASE_DECLARE_FEATURE(kJavaScriptRegExpModifiers);
 GIN_EXPORT BASE_DECLARE_FEATURE(kJavaScriptImportAttributes);
 GIN_EXPORT BASE_DECLARE_FEATURE(kJavaScriptRegExpDuplicateNamedGroups);
 GIN_EXPORT BASE_DECLARE_FEATURE(kJavaScriptPromiseTry);
-GIN_EXPORT BASE_DECLARE_FEATURE(kWebAssemblyDeopt);
-GIN_EXPORT BASE_DECLARE_FEATURE(kWebAssemblyInliningCallIndirect);
 
 }  // namespace features
 

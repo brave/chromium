@@ -23,10 +23,6 @@ enum class AuthenticationOperation {
   // Operation to start a sign-in only operation. The user is presented with
   // the consistency web sign-in dialog.
   kSigninOnly,
-  // Operation to add a secondary account. The user is presented with the
-  // SSOAUth sign-in page. This command can only be used if there is a primary
-  // account.
-  kAddAccount,
   // Operation to trigger sign-in only operation, without presenting UI if an
   // identity is selected in `-ShowSigninCommand.identity`. Otherwise,
   // a dialog to choose an identity is presented and the user is signed in as
@@ -110,10 +106,9 @@ enum class AuthenticationOperation {
     changeProfileContinuationProvider:
         (const ChangeProfileContinuationProvider&)provider;
 
-// If YES, the sign-in command will not be presented and ignored if there is
-// any dialog already presented on the NTP.
-// Default value: NO.
-@property(nonatomic, assign) BOOL skipIfUINotAvailable;
+// Replaces `self.completion` by a function calling both `self.completion` and
+// `completion`.
+- (void)addSigninCompletion:(SigninCoordinatorCompletionCallback)completion;
 
 // Whether the history opt in sync should always be shown when the user hasn't
 // approved it before. Default: YES
@@ -153,6 +148,10 @@ enum class AuthenticationOperation {
 // The action to execute after a change of profile. Can be accessed only once.
 @property(nonatomic, readonly)
     const ChangeProfileContinuationProvider& changeProfileContinuationProvider;
+
+// Whether the identity snackbar must be displayed after a successful
+// HistorySyncSigninCoordinator. Default value: false.
+@property(nonatomic, assign) BOOL showSnackbar;
 
 @end
 

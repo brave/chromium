@@ -5,9 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_GAP_DATA_LIST_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_GAP_DATA_LIST_H_
 
-#include <algorithm>
-
 #include "third_party/blink/renderer/core/style/gap_data.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 
 namespace blink {
 
@@ -17,6 +16,8 @@ namespace blink {
 // https://drafts.csswg.org/css-gaps-1/#color-style-width
 template <typename T>
 class CORE_EXPORT GapDataList {
+  DISALLOW_NEW();
+
   using VectorType = ValueRepeater<T>::VectorType;
 
  public:
@@ -43,6 +44,12 @@ class CORE_EXPORT GapDataList {
 
   explicit GapDataList(const T& value) {
     gap_data_list_.emplace_back(GapData<T>(value));
+  }
+
+  explicit GapDataList(Vector<Length>& lengths) {
+    for (const auto& length : lengths) {
+      gap_data_list_.emplace_back(GapData<int>(length.Pixels()));
+    }
   }
 
   void Trace(Visitor* visitor) const {

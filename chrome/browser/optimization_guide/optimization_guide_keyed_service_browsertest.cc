@@ -32,8 +32,11 @@
 #include "chrome/test/base/profile_waiter.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
-#include "components/optimization_guide/core/command_line_top_host_provider.h"
 #include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
+#include "components/optimization_guide/core/filters/optimization_hints_component_update_listener.h"
+#include "components/optimization_guide/core/filters/test_hints_component_creator.h"
+#include "components/optimization_guide/core/hints/command_line_top_host_provider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_store.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features_controller.h"
@@ -42,11 +45,7 @@
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_prefs.h"
-#include "components/optimization_guide/core/optimization_guide_store.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
-#include "components/optimization_guide/core/optimization_guide_test_util.h"
-#include "components/optimization_guide/core/optimization_hints_component_update_listener.h"
-#include "components/optimization_guide/core/test_hints_component_creator.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/optimization_guide/proto/model_quality_service.pb.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -1268,19 +1267,6 @@ class OptimizationGuideKeyedServicePermissionsCheckDisabledTest
   ~OptimizationGuideKeyedServicePermissionsCheckDisabledTest() override =
       default;
 
-  void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kRemoteOptimizationGuideFetching);
-
-    OptimizationGuideKeyedServiceBrowserTest::SetUp();
-  }
-
-  void TearDown() override {
-    OptimizationGuideKeyedServiceBrowserTest::TearDown();
-
-    scoped_feature_list_.Reset();
-  }
-
   void SetUpCommandLine(base::CommandLine* cmd) override {
     OptimizationGuideKeyedServiceBrowserTest::SetUpCommandLine(cmd);
 
@@ -1290,9 +1276,6 @@ class OptimizationGuideKeyedServicePermissionsCheckDisabledTest
     cmd->AppendSwitch(
         switches::kDisableFetchingHintsAtNavigationStartForTesting);
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(

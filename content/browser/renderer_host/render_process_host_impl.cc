@@ -55,6 +55,7 @@
 #include "base/process/process_handle.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
 #include "base/system/sys_info.h"
@@ -271,12 +272,6 @@
 #include "content/browser/renderer_host/plugin_registry_impl.h"
 #endif
 
-#if BUILDFLAG(ENABLE_PPAPI)
-#include "content/browser/plugin_service_impl.h"
-#include "content/browser/renderer_host/pepper/pepper_renderer_connection.h"
-#include "ppapi/shared_impl/ppapi_switches.h"  // nogncheck
-#endif
-
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 #include "ipc/ipc_logging.h"
 #endif
@@ -287,10 +282,6 @@
 
 #if BUILDFLAG(CLANG_PROFILING_INSIDE_SANDBOX)
 #include "content/public/common/profiling_utils.h"
-#endif
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-#include "content/public/browser/browser_message_filter.h"
 #endif
 
 // VLOG additional statements in Fuchsia release builds.
@@ -2011,13 +2002,6 @@ void RenderProcessHostImpl::ResetChannelProxy() {
 
 void RenderProcessHostImpl::CreateMessageFilters() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-#if BUILDFLAG(ENABLE_PPAPI)
-  pepper_renderer_connection_ = base::MakeRefCounted<PepperRendererConnection>(
-      GetDeprecatedID(), PluginServiceImpl::GetInstance(), GetBrowserContext(),
-      GetStoragePartition());
-  AddFilter(pepper_renderer_connection_.get());
-#endif
-
   // TODO(crbug.com/40169214): Move this initialization out of
   // CreateMessageFilters().
   p2p_socket_dispatcher_host_ =
@@ -3151,6 +3135,15 @@ void RenderProcessHostImpl::AddExpectedNavigationToSite(
   if (!ShouldTrackProcessForSite(site_info))
     return;
 
+  // If an RPH is being prepared for a new navigation, it should no longer be
+  // considered an "empty" process available for general reuse. Remove it
+  // from the empty tracker if it's there.
+  if (IsEmptyRendererProcessesReuseAllowed()) {
+    SiteProcessCountTracker::GetInstance(browser_context,
+                                         kEmptySiteProcessCountTrackerKey)
+        ->ClearProcessForAllSites(render_process_host->GetID());
+  }
+
   SiteProcessCountTracker* tracker = SiteProcessCountTracker::GetInstance(
       browser_context, kPendingSiteProcessCountTrackerKey);
   tracker->IncrementSiteProcessCount(site_info, render_process_host->GetID());
@@ -3509,7 +3502,6 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
       switches::kFileUrlPathAlias,
       switches::kForceDeviceScaleFactor,
       switches::kForceDisplayColorProfile,
-      switches::kForceGpuMemAvailableMb,
       switches::kForceHighContrast,
       switches::kForceRasterColorProfile,
       switches::kForceVideoOverlays,
@@ -3525,11 +3517,9 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
       switches::kNoZygote,
       switches::kOverrideLanguageDetection,
       switches::kPerfettoDisableInterning,
-      switches::kPpapiInProcess,
       switches::kProfilingAtStart,
       switches::kProfilingFile,
       switches::kProfilingFlush,
-      switches::kRegisterPepperPlugins,
       switches::kRemoteDebuggingPipe,
       switches::kRemoteDebuggingPort,
       switches::kRendererStartupDialog,
@@ -3537,6 +3527,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
       switches::kStatsCollectionController,
       switches::kSkiaFontCacheLimitMb,
       switches::kSkiaResourceCacheLimitMb,
+      switches::kTargetDeviceScaleForTesting,
       switches::kTestType,
       switches::kTouchEventFeatureDetection,
       switches::kTraceToConsole,
@@ -3551,6 +3542,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
       switches::kWebViewDrawFunctorUsesVulkan,
       switches::kWebglAntialiasingMode,
       switches::kWebglMSAASampleCount,
+      switches::kWebSettingsForTesting,
       // Please keep these in alphabetical order.
       blink::switches::kAllowPreCommitInput,
       blink::switches::kBlinkSettings,
@@ -3558,14 +3550,13 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
       blink::switches::kDefaultTileWidth,
       blink::switches::kDefaultTileHeight,
       blink::switches::kDisableImageAnimationResync,
-      blink::switches::kDisableLowResTiling,
       blink::switches::kDisablePreferCompositingToLCDText,
       blink::switches::kDisableRGBA4444Textures,
       blink::switches::kEnableLeakDetectionHeapSnapshot,
-      blink::switches::kEnableLowResTiling,
       blink::switches::kEnablePreferCompositingToLCDText,
       blink::switches::kEnableRGBA4444Textures,
       blink::switches::kEnableRasterSideDarkModeForImages,
+      blink::switches::kForceGpuMemAvailableMb,
       blink::switches::kMinHeightForGpuRasterTile,
       blink::switches::kMaxUntiledLayerWidth,
       blink::switches::kMaxUntiledLayerHeight,
@@ -3598,9 +3589,6 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
 
       network::switches::kForcePermissionPolicyUnloadDefaultEnabled,
 
-#if BUILDFLAG(ENABLE_PPAPI)
-      switches::kEnablePepperTesting,
-#endif
       switches::kWebRtcMaxCaptureFramerate,
       switches::kEnableLowEndDeviceMode,
       switches::kDisableLowEndDeviceMode,
@@ -4355,12 +4343,6 @@ RenderProcessHostImpl::StartRtpDump(bool incoming,
 IPC::ChannelProxy* RenderProcessHostImpl::GetChannel() {
   return channel_.get();
 }
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-void RenderProcessHostImpl::AddFilter(BrowserMessageFilter* filter) {
-  channel_->AddFilter(filter->GetFilter());
-}
-#endif
 
 bool RenderProcessHostImpl::FastShutdownStarted() {
   return fast_shutdown_started_;

@@ -28,6 +28,7 @@ class WebContents;
 
 namespace password_manager {
 class PasswordFeatureManager;
+class PasswordManagerSettingsService;
 }
 
 class ChromePasswordChangeService
@@ -46,6 +47,7 @@ class ChromePasswordChangeService
   ChromePasswordChangeService(
       affiliations::AffiliationService* affiliation_service,
       OptimizationGuideKeyedService* optimization_keyed_service,
+      password_manager::PasswordManagerSettingsService* settings_service,
       std::unique_ptr<password_manager::PasswordFeatureManager>
           feature_manager);
   ~ChromePasswordChangeService() override;
@@ -67,7 +69,9 @@ class ChromePasswordChangeService
 
   // PasswordChangeServiceInterface implementation.
   bool IsPasswordChangeAvailable() override;
-  bool IsPasswordChangeSupported(const GURL& url) override;
+  bool IsPasswordChangeSupported(
+      const GURL& url,
+      const autofill::LanguageCode& page_language) override;
 
  private:
   // PasswordChangeDelegate::Observer impl.
@@ -78,6 +82,8 @@ class ChromePasswordChangeService
 
   const raw_ptr<affiliations::AffiliationService> affiliation_service_;
   const raw_ptr<OptimizationGuideKeyedService> optimization_keyed_service_;
+  const raw_ptr<password_manager::PasswordManagerSettingsService>
+      settings_service_;
   std::unique_ptr<password_manager::PasswordFeatureManager> feature_manager_;
 
   std::vector<std::unique_ptr<PasswordChangeDelegate>>

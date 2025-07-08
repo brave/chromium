@@ -22,18 +22,19 @@ bitflags = "2"
 bytes = "1"
 cxx = "1"
 fend-core = "1"
-font-types = "0.8"
+font-types = "0.9"
 hex = "0.4"
 lazy_static = "1"
 libc = "0.2"
 png = "=0.18.0-rc"
 proc-macro2 = "1"
-prost = "0.13.3"
+prost = "0.14.1"
 qr_code = "2"
 quote = "1"
-read-fonts = "0.27.3"
+read-fonts = "0.30.1"
 rustc-demangle-capi = "0.1"
-skrifa = "0.29"
+serde = "1.0.219"
+skrifa = "0.32"
 small_ctor = "0.1"
 static_assertions = "1"
 
@@ -82,7 +83,7 @@ version = "2.0.0"
 default-features = false
 
 [dependencies.llguidance]
-version = "0.7.13"
+version = "1.0.0"
 default-features = false
 features = ["lark"]
 
@@ -111,10 +112,10 @@ version = "2"
 features = ["full"]
 
 [dependencies.temporal_capi]
-version = "0.0.8"
+version = "0.0.10"
 features = ["compiled_data"]
 
 [dependencies.zip]
-version = "3.0.0"
+version = "4.1.0"
 default-features = false
 features = ["deflate-flate2"]

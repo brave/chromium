@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_CHANGE_CHANGE_PASSWORD_FORM_WAITER_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_CHANGE_CHANGE_PASSWORD_FORM_WAITER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/timer/timer.h"
 #include "components/password_manager/core/browser/password_form_cache.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -24,6 +25,7 @@ class ChangePasswordFormWaiter
     : public password_manager::PasswordFormManagerObserver,
       public content::WebContentsObserver {
  public:
+  // Timeout for change password form await time after the page is loaded.
   static constexpr base::TimeDelta kChangePasswordFormWaitingTimeout =
       base::Seconds(2);
   using PasswordFormFoundCallback =
@@ -45,7 +47,7 @@ class ChangePasswordFormWaiter
   void OnTimeout();
 
   base::OneShotTimer timeout_timer_;
-  base::WeakPtr<content::WebContents> web_contents_;
+  const raw_ptr<content::WebContents> web_contents_;
   PasswordFormFoundCallback callback_;
 
   base::WeakPtrFactory<ChangePasswordFormWaiter> weak_ptr_factory_{this};

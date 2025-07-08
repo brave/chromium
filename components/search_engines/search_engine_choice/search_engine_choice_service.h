@@ -7,8 +7,6 @@
 
 #include <optional>
 
-#include "base/debug/stack_trace.h"
-#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -105,11 +103,15 @@ class SearchEngineChoiceService : public KeyedService {
   // such that if a non-eligible condition is returned, it would take at least a
   // restart for the state to change. So this state can be checked and cached
   // ahead of showing a choice screen.
-  // TODO(b/318801987): Remove `is_regular_profile` after fixing tests.
   SearchEngineChoiceScreenConditions GetStaticChoiceScreenConditions(
       const policy::PolicyService& policy_service,
-      bool is_regular_profile,
       const TemplateURLService& template_url_service);
+
+  // Records the specified choice screen condition at profile initialization.
+  void RecordStaticEligibility(SearchEngineChoiceScreenConditions condition);
+
+  // Records the specified choice screen condition for relevant navigations.
+  void RecordDynamicEligibility(SearchEngineChoiceScreenConditions condition);
 
   // Returns key information needed to show a search engine choice screen, like
   // the template URLs for the engines to show. See
@@ -172,10 +174,10 @@ class SearchEngineChoiceService : public KeyedService {
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
  private:
-  // Checks if the search engine choice should be prompted again, based on
-  // experiment parameters. If a reprompt is needed, some preferences related to
-  // the choice are cleared, which triggers a reprompt on the next page load.
-  void PreprocessPrefsForReprompt();
+  // Checks if the search engine choice should be invalidated, based on pref
+  // inconsistencies, command line args, or experiment parameters. Returns a
+  // wipe reason if the choice should be cleared, or nullopt otherwise.
+  std::optional<SearchEngineChoiceWipeReason> CheckPrefsForWipeReason();
 
   void ProcessPendingChoiceScreenDisplayState();
 
@@ -192,9 +194,10 @@ class SearchEngineChoiceService : public KeyedService {
   // in runtime (different runs can still return different values, though).
   std::optional<int> country_id_cache_;
 
-  // Used to track caller of `MaybeRecordChoiceScreenDisplayState()` to debug
-  // some unmet expectations, see b/344899110.
-  std::unique_ptr<base::debug::StackTrace> display_state_record_caller_;
+  // Used to track whether `MaybeRecordChoiceScreenDisplayState()` has already
+  // been called for this profile, to monitor the prevalence of some unexpected
+  // behaviour, see crbug.com/390272573.
+  bool has_recorded_display_state_ = false;
 
   base::WeakPtrFactory<SearchEngineChoiceService> weak_ptr_factory_{this};
 };

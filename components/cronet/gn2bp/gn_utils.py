@@ -79,6 +79,19 @@ def _remove_out_prefix(label):
   return re.sub('^//out/.+?/(gen|obj)/', '', label)
 
 
+def _filter_defines(defines):
+  # These C++ defines are not actually used in code; Chromium only uses them to
+  # force rebuilds on rolls of certain dependencies. They don't hurt, per se,
+  # but they do create annoying diff noise on Android.bp files, so we drop them
+  # for aesthetic/convenience reasons.
+  EXCLUDED_DEFINES = {
+      "CR_CLANG_REVISION", "CR_LIBCXX_REVISION", "ANDROID_NDK_VERSION_ROLL"
+  }
+  return (define for define in defines if not any(
+      define.startswith(f"{excluded_define}=")
+      for excluded_define in EXCLUDED_DEFINES))
+
+
 class GnParser:
   """A parser with some cleverness for GN json desc files
 
@@ -122,6 +135,7 @@ class GnParser:
         self.args = []
         self.response_file_contents = ''
         self.rust_flags = list()
+        self.libs = set()
 
     def __init__(self, name, gn_type):
       self.name = name  # e.g. //src/ipc:ipc
@@ -149,9 +163,6 @@ class GnParser:
       # These are valid only for gn_type == 'action'
       self.script = ''
 
-      # These variables are propagated up when encountering a dependency
-      # on a source_set target.
-      self.libs = set()
       self.proto_deps = set()
       self.rtti = False
 
@@ -201,6 +212,10 @@ class GnParser:
     @property
     def outputs(self):
       return self.arch['common'].outputs
+
+    @property
+    def libs(self):
+      return self.arch['common'].libs
 
     @outputs.setter
     def outputs(self, val):
@@ -281,11 +296,11 @@ class GnParser:
 
     def update(self, other, arch):
       for key in ('cflags', 'defines', 'deps', 'include_dirs', 'ldflags',
-                  'proto_deps', 'libs', 'proto_paths'):
+                  'proto_deps', 'proto_paths'):
         getattr(self, key).update(getattr(other, key, []))
 
       for key_in_arch in ('cflags', 'defines', 'include_dirs', 'deps',
-                          'ldflags'):
+                          'ldflags', 'libs'):
         getattr(self.arch[arch],
                 key_in_arch).update(getattr(other.arch[arch], key_in_arch, []))
 
@@ -333,7 +348,7 @@ class GnParser:
 
       for key in ('sources', 'cflags', 'defines', 'include_dirs', 'deps',
                   'inputs', 'outputs', 'args', 'response_file_contents',
-                  'ldflags', 'rust_flags'):
+                  'ldflags', 'rust_flags', 'libs'):
         self._finalize_attribute(key)
 
     def get_target_name(self):
@@ -609,9 +624,9 @@ class GnParser:
     target.build_file_path = _get_build_path_from_label(target_name)
     target.arch[arch].cflags.update(
         desc.get('cflags', []) + desc.get('cflags_cc', []))
-    target.libs.update(desc.get('libs', []))
+    target.arch[arch].libs.update(desc.get('libs', []))
     target.arch[arch].ldflags.update(desc.get('ldflags', []))
-    target.arch[arch].defines.update(desc.get('defines', []))
+    target.arch[arch].defines.update(_filter_defines(desc.get('defines', [])))
     target.arch[arch].include_dirs.update(desc.get('include_dirs', []))
     target.output_name = desc.get('output_name', None)
     target.crate_name = desc.get("crate_name", None)

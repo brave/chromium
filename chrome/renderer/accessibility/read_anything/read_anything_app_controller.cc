@@ -19,7 +19,6 @@
 
 #include "base/check_deref.h"
 #include "base/containers/fixed_flat_map.h"
-#include "base/debug/stack_trace.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/notreached.h"
@@ -42,7 +41,6 @@
 #include "content/public/renderer/render_thread.h"
 #include "gin/converter.h"
 #include "gin/dictionary.h"
-#include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -72,7 +70,9 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/url_util.h"
+#include "v8/include/cppgc/allocation.h"
 #include "v8/include/v8-context.h"
+#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-typed-array.h"
 
@@ -392,7 +392,8 @@ std::optional<T> ToEnum(int value) {
 
 // static
 gin::WrapperInfo ReadAnythingAppController::kWrapperInfo = {
-    gin::kEmbedderNativeGin};
+    {gin::kEmbedderNativeGin},
+    gin::kReadAnythingAppController};
 
 // static
 ReadAnythingAppController* ReadAnythingAppController::Install(
@@ -411,16 +412,17 @@ ReadAnythingAppController* ReadAnythingAppController::Install(
   v8::Context::Scope context_scope(context);
 
   ReadAnythingAppController* controller =
-      new ReadAnythingAppController(render_frame);
-  gin::Handle<ReadAnythingAppController> handle =
-      gin::CreateHandle(isolate, controller);
-  if (handle.IsEmpty()) {
+      cppgc::MakeGarbageCollected<ReadAnythingAppController>(
+          isolate->GetCppHeap()->GetAllocationHandle(), render_frame);
+
+  v8::Local<v8::Value> controller_v8;
+  if (!controller->GetWrapper(isolate).ToLocal(&controller_v8)) {
     return nullptr;
   }
 
   v8::Local<v8::Object> chrome =
       content::GetOrCreateChromeObject(isolate, context);
-  chrome->Set(context, gin::StringToV8(isolate, "readingMode"), handle.ToV8())
+  chrome->Set(context, gin::StringToV8(isolate, "readingMode"), controller_v8)
       .Check();
   return controller;
 }
@@ -450,6 +452,8 @@ ReadAnythingAppController::ReadAnythingAppController(
   }
 
   model_observer_.Observe(&model_);
+
+  self_ = this;
 }
 
 ReadAnythingAppController::~ReadAnythingAppController() {
@@ -458,7 +462,7 @@ ReadAnythingAppController::~ReadAnythingAppController() {
 }
 
 void ReadAnythingAppController::OnDestruct() {
-  delete this;
+  self_.Clear();
 }
 
 void ReadAnythingAppController::OnNodeDataChanged(
@@ -612,6 +616,7 @@ void ReadAnythingAppController::OnActiveAXTreeIDChanged(
     ukm::SourceId ukm_source_id,
     bool is_pdf) {
   if (tree_id == model_.active_tree_id() && !is_pdf) {
+    VLOG(1) << "On active tree changed with same id: " << tree_id;
     return;
   }
   RecordNumSelections();
@@ -726,6 +731,8 @@ void ReadAnythingAppController::OnAXTreeDistilled(
   // model causes issues for read aloud.
   if (IsReadAloudEnabled() && !model_.distillation_in_progress() &&
       tree_id == ui::AXTreeIDUnknown() && content_node_ids.empty()) {
+    VLOG(1) << "Distillation terminated after the main content extractor "
+               "disconnected";
     return;
   }
   // If speech is playing, we don't want to redraw and disrupt speech. We will
@@ -733,6 +740,7 @@ void ReadAnythingAppController::OnAXTreeDistilled(
   if (read_aloud_model_.speech_playing()) {
     model_.set_requires_distillation(true);
     model_.set_distillation_in_progress(false);
+    VLOG(1) << "Distillation terminated because speech is playing";
     return;
   }
   // Reset state, including the current side panel selection so we can update
@@ -752,6 +760,20 @@ void ReadAnythingAppController::OnAXTreeDistilled(
   if (tree_id != model_.active_tree_id() ||
       model_.active_tree_id() == ui::AXTreeIDUnknown() ||
       !model_.ContainsTree(tree_id) || tree_id == ui::AXTreeIDUnknown()) {
+    // VLOG statements added to help with debugging issues with distillation
+    // on non-dev builds.
+    if (tree_id != model_.active_tree_id()) {
+      VLOG(1) << "Distillation terminated because not on active tree";
+    }
+    if (model_.active_tree_id() == ui::AXTreeIDUnknown()) {
+      VLOG(1) << "Distillation terminated because active tree is unknown";
+    }
+    if (!model_.ContainsTree(tree_id)) {
+      VLOG(1) << "Distillation terminated because current tree is missing";
+    }
+    if (tree_id == ui::AXTreeIDUnknown()) {
+      VLOG(1) << "Distillation terminated because current tree is unknown";
+    }
     return;
   }
 
@@ -907,6 +929,10 @@ void ReadAnythingAppController::ScreenAIServiceReady() {
     model_.SetScreenAIServiceReadyForDataCollection();
   }
   distiller_->ScreenAIServiceReady();
+}
+
+const gin::WrapperInfo* ReadAnythingAppController::wrapper_info() const {
+  return &kWrapperInfo;
 }
 
 gin::ObjectTemplateBuilder ReadAnythingAppController::GetObjectTemplateBuilder(
@@ -1872,10 +1898,8 @@ void ReadAnythingAppController::SetLanguageCode(const std::string& code) {
 
 #if BUILDFLAG(IS_CHROMEOS)
 void ReadAnythingAppController::OnDeviceLocked() {
-  if (IsReadAloudEnabled() && read_aloud_model_.speech_playing()) {
-    read_aloud_model_.LogSpeechStop(
-        ReadAloudAppModel::ReadAloudStopSource::kLockChromeosDevice);
-  }
+  read_aloud_model_.LogSpeechStop(
+      ReadAloudAppModel::ReadAloudStopSource::kLockChromeosDevice);
   // Signal to the WebUI that the device has been locked. We'll only receive
   // this callback on ChromeOS.
   ExecuteJavaScript("chrome.readingMode.onLockScreen();");
@@ -1888,18 +1912,14 @@ void ReadAnythingAppController::OnTtsEngineInstalled() {
 
 void ReadAnythingAppController::OnReadingModeHidden() {
   model_.set_will_hide(true);
-  if (read_aloud_model_.speech_playing()) {
-    read_aloud_model_.LogSpeechStop(
-        ReadAloudAppModel::ReadAloudStopSource::kCloseReadingMode);
-  }
+  read_aloud_model_.LogSpeechStop(
+      ReadAloudAppModel::ReadAloudStopSource::kCloseReadingMode);
 }
 
 void ReadAnythingAppController::OnTabWillDetach() {
   model_.set_will_hide(true);
-  if (read_aloud_model_.speech_playing()) {
-    read_aloud_model_.LogSpeechStop(
-        ReadAloudAppModel::ReadAloudStopSource::kCloseTabOrWindow);
-  }
+  read_aloud_model_.LogSpeechStop(
+      ReadAloudAppModel::ReadAloudStopSource::kCloseTabOrWindow);
 }
 
 void ReadAnythingAppController::OnTabMuteStateChange(bool muted) {
@@ -1947,7 +1967,7 @@ void ReadAnythingAppController::OnIsSpeechActiveChanged(bool is_speech_active) {
   if (read_aloud_model_.speech_playing() == is_speech_active) {
     return;
   }
-  read_aloud_model_.set_speech_playing(is_speech_active);
+  read_aloud_model_.SetSpeechPlaying(is_speech_active);
   if (!is_speech_active) {
     SendEventUpdates();
   }
@@ -1955,6 +1975,11 @@ void ReadAnythingAppController::OnIsSpeechActiveChanged(bool is_speech_active) {
 
 void ReadAnythingAppController::OnIsAudioCurrentlyPlayingChanged(
     bool is_audio_currently_playing) {
+  if (read_aloud_model_.audio_currently_playing() ==
+      is_audio_currently_playing) {
+    return;
+  }
+  read_aloud_model_.SetAudioCurrentlyPlaying(is_audio_currently_playing);
   page_handler_->OnReadAloudAudioStateChange(is_audio_currently_playing);
 }
 

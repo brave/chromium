@@ -25,6 +25,10 @@ struct PasswordFormGenerationData;
 struct PasswordFormFillData;
 }  // namespace autofill
 
+namespace gfx {
+class RectF;
+}  // namespace gfx
+
 namespace password_manager {
 
 class PasswordAutofillManager;
@@ -89,7 +93,10 @@ class PasswordManagerDriver {
   virtual void FillField(
       const std::u16string& value,
       autofill::AutofillSuggestionTriggerSource suggestion_source) {}
-
+  // Tells the renderer to open the suggestions popup on the login field
+  // specified in `field_id`.
+  virtual void TriggerPasswordRecoverySuggestions(
+      autofill::FieldRendererId field_id) {}
   // Tells the renderer to fill and submit a change password form, specifically
   // `password_element_id` with `old_password` and `new_password_element_id`,
   // `confirm_password_element_id` with `new_password`. Upon completion
@@ -201,6 +208,9 @@ class PasswordManagerDriver {
   // corresponding HTML attributes. It is used only for debugging.
   virtual void AnnotateFieldsWithParsingResult(
       const autofill::ParsingResult& parsing_result) {}
+
+  virtual gfx::RectF TransformToRootCoordinates(
+      const gfx::RectF& bounds_in_frame_coordinates) = 0;
 
   // Get a WeakPtr to the instance.
   virtual base::WeakPtr<PasswordManagerDriver> AsWeakPtr() = 0;

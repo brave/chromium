@@ -914,7 +914,6 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   }
 
   void SetSourceURL(ukm::SourceId source_id, const GURL& url);
-  base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForDroppedFramesUkm();
 
   void SetRenderFrameObserver(
@@ -941,8 +940,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   std::vector<ViewTransitionRequest::ViewTransitionCaptureCallback>
   TakeViewTransitionCallbacksForTesting();
 
-  // Returns a percentage of dropped frames of the last second.
-  double GetPercentDroppedFrames() const;
+  // Returns a percentage of dropped frames as measured by the FrameSorter.
+  double GetAverageThroughput() const;
 
   // TODO(szager): Remove these once threaded compositing is enabled for all
   // web_tests.

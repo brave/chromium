@@ -606,7 +606,6 @@ Anders sal die ingeboude raakpaneel binne <ph name="TIMEOUT_SECONDS" /> geherakt
 <translation id="3033545621352269033">Aan</translation>
 <translation id="3033912566804961911">Kombineer met <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Maak lêers oop</translation>
-<translation id="3038571455154067151">Voer jou Family Link-ouertoegangskode in om aan te meld</translation>
 <translation id="3039939407102840004">Stilusbattery is op <ph name="PERCENTAGE" /> persent.</translation>
 <translation id="304097922505898963">Maak Kortpadsleutels-app oop</translation>
 <translation id="304417730895741346">Jou vasgespelde en geopende apps is op die rak. Regsklik ’n app of tik met twee vingers op jou raakpaneel om ’n app op die rak vas te speld.</translation>
@@ -1015,6 +1014,7 @@ Sommige kenmerke is beperk om die batterylewe te verleng.</translation>
 <translation id="4305817255990598646">Skakel oor</translation>
 <translation id="4307713728991152670">Stel jou foon op om jou onlangse foto’s, media en apps te bekyk</translation>
 <translation id="4312840429157639164">Kamera is geglip na hoek bo regs. Konflik met stelseloppervlak.</translation>
+<translation id="4312935606722154789">Groepeer of ongroepeer twee vensters langs mekaar</translation>
 <translation id="4316910396681052118">ALLE PROGRAMME</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Versteek alle Chrome-blaaiervoorstelle</translation>
@@ -1583,7 +1583,6 @@ Geen toestelle is gekoppel nie.</translation>
 <translation id="6095425951508823973">Voeg verbinding met <ph name="PROVIDER" /> by</translation>
 <translation id="6099678161144790572">In die afgelope maand gewysig</translation>
 <translation id="6103838137565245112">stelsel</translation>
-<translation id="610395411842312282">Groepeer twee vensters langs mekaar</translation>
 <translation id="6108952804512516814">Skep met AI</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" />-spraaklêers is afgelaai</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

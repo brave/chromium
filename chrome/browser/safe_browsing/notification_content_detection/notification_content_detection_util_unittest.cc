@@ -5,6 +5,7 @@
 #include "chrome/browser/safe_browsing/notification_content_detection/notification_content_detection_util.h"
 
 #include "base/json/json_string_value_serializer.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
@@ -42,7 +43,7 @@ class NotificationContentDetectionUtilTest : public testing::Test {
                 })));
     auto logs_uploader = std::make_unique<
         optimization_guide::TestModelQualityLogsUploaderService>(
-        manager_.local_state()->Get());
+        TestingBrowserProcess::GetGlobal()->local_state());
     mock_optimization_guide_keyed_service_
         ->SetModelQualityLogsUploaderServiceForTesting(
             std::move(logs_uploader));

@@ -13,7 +13,7 @@
 #include "media/gpu/windows/d3d12_video_encode_delegate.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 using media::SetComPointeeAndReturnOk;
 using testing::_;
@@ -59,7 +59,10 @@ class MockVideoEncoderDelegate : public D3D12VideoEncodeDelegate {
                                       const VideoEncoder::EncodeOptions&));
   MOCK_METHOD(EncoderStatus::Or<BitstreamBufferMetadata>,
               EncodeImpl,
-              (ID3D12Resource*, UINT, const VideoEncoder::EncodeOptions&),
+              (ID3D12Resource*,
+               UINT,
+               const VideoEncoder::EncodeOptions&,
+               const gfx::ColorSpace&),
               (override));
 
  protected:

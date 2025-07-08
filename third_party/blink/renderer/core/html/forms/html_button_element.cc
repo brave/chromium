@@ -61,6 +61,7 @@ LayoutObject* HTMLButtonElement::CreateLayoutObject(
   // https://html.spec.whatwg.org/C/#button-layout
   EDisplay display = style.Display();
   if (display == EDisplay::kInlineGrid || display == EDisplay::kGrid ||
+      display == EDisplay::kInlineMasonry || display == EDisplay::kMasonry ||
       display == EDisplay::kInlineFlex || display == EDisplay::kFlex ||
       display == EDisplay::kInlineLayoutCustom ||
       display == EDisplay::kLayoutCustom) {
@@ -108,15 +109,26 @@ bool HTMLButtonElement::IsPresentationAttribute(
   return HTMLFormControlElement::IsPresentationAttribute(name);
 }
 
+// static
+std::optional<HTMLButtonElement::Type> HTMLButtonElement::TypeFromString(
+    const AtomicString& string) {
+  if (EqualIgnoringASCIICase(string, "reset")) {
+    return kReset;
+  } else if (EqualIgnoringASCIICase(string, "button")) {
+    return kButton;
+  } else if (EqualIgnoringASCIICase(string, "submit")) {
+    return kSubmit;
+  } else {
+    return std::nullopt;
+  }
+}
+
 void HTMLButtonElement::ParseAttribute(
     const AttributeModificationParams& params) {
   if (params.name == html_names::kTypeAttr) {
-    if (EqualIgnoringASCIICase(params.new_value, "reset")) {
-      type_ = kReset;
-    } else if (EqualIgnoringASCIICase(params.new_value, "button")) {
-      type_ = kButton;
-    } else if (EqualIgnoringASCIICase(params.new_value, "submit")) {
-      type_ = kSubmit;
+    if (std::optional<HTMLButtonElement::Type> type =
+            TypeFromString(params.new_value)) {
+      SetTypeInternal(*type);
     } else {
       if (!params.new_value.IsNull()) {
         if (params.new_value.empty()) {
@@ -126,30 +138,35 @@ void HTMLButtonElement::ParseAttribute(
           UseCounter::Count(GetDocument(), WebFeature::kButtonTypeAttrInvalid);
         }
       }
-      if (RuntimeEnabledFeatures::HTMLCommandAttributesEnabled() &&
-          (FastHasAttribute(html_names::kCommandAttr) ||
-           FastHasAttribute(html_names::kCommandforAttr))) {
+      if (FastHasAttribute(html_names::kCommandAttr) ||
+          FastHasAttribute(html_names::kCommandforAttr)) {
         UseCounter::Count(
             GetDocument(),
             WebFeature::kButtonTypeAttrInvalidWithCommandOrCommandfor);
-        type_ = kButton;
+        SetTypeInternal(kButton);
       } else {
-        type_ = kSubmit;
+        SetTypeInternal(kSubmit);
       }
     }
-    UpdateWillValidateCache();
     if (formOwner() && isConnected()) {
       formOwner()->InvalidateDefaultButtonStyle();
     }
   } else if (params.name == html_names::kCommandAttr ||
              params.name == html_names::kCommandforAttr) {
     bool has_type = FastHasAttribute(html_names::kTypeAttr);
-    bool type_is_button = EqualIgnoringASCIICase(
-        FastGetAttribute(html_names::kTypeAttr), "button");
+    auto type = TypeFromString(FastGetAttribute(html_names::kTypeAttr));
+    bool type_is_button = type && *type == kButton;
     if ((!has_type || !type_is_button)) {
       UseCounter::Count(
           GetDocument(),
           WebFeature::kButtonTypeAttrInvalidWithCommandOrCommandfor);
+    }
+
+    if (!params.new_value.IsNull() && !type) {
+      // https://html.spec.whatwg.org/multipage/form-elements.html#dom-button-type
+      // Type, as reflected in the IDL, must be "button" if there are command
+      // attributes without an explicit valid type attribute set.
+      SetTypeInternal(kButton);
     }
   } else {
     if (params.name == html_names::kFormactionAttr) {
@@ -159,11 +176,15 @@ void HTMLButtonElement::ParseAttribute(
   }
 }
 
-Element* HTMLButtonElement::commandForElement() const {
-  if (!RuntimeEnabledFeatures::HTMLCommandAttributesEnabled()) {
-    return nullptr;
+void HTMLButtonElement::SetTypeInternal(Type type) {
+  type_ = type;
+  UpdateWillValidateCache();
+  if (formOwner() && isConnected()) {
+    formOwner()->InvalidateDefaultButtonStyle();
   }
+}
 
+Element* HTMLButtonElement::commandForElement() const {
   if (!IsInTreeScope() || IsDisabledFormControl() ||
       (Form() && FastHasAttribute(html_names::kTypeAttr) && type_ == kSubmit)) {
     return nullptr;
@@ -178,7 +199,6 @@ void HTMLButtonElement::setCommand(const AtomicString& type) {
 }
 
 AtomicString HTMLButtonElement::command() const {
-  CHECK(RuntimeEnabledFeatures::HTMLCommandAttributesEnabled());
   const AtomicString& action = FastGetAttribute(html_names::kCommandAttr);
   CommandEventType type = GetCommandEventType(action);
   switch (type) {
@@ -227,6 +247,19 @@ CommandEventType HTMLButtonElement::GetCommandEventType(
   if (RuntimeEnabledFeatures::HTMLCommandRequestCloseEnabled() &&
       EqualIgnoringASCIICase(action, keywords::kRequestClose)) {
     return CommandEventType::kRequestClose;
+  }
+
+  // Menu Cases
+  if (RuntimeEnabledFeatures::MenuElementsEnabled()) {
+    if (EqualIgnoringASCIICase(action, keywords::kToggleMenu)) {
+      return CommandEventType::kToggleMenu;
+    }
+    if (EqualIgnoringASCIICase(action, keywords::kShowMenu)) {
+      return CommandEventType::kShowMenu;
+    }
+    if (EqualIgnoringASCIICase(action, keywords::kHideMenu)) {
+      return CommandEventType::kHideMenu;
+    }
   }
 
   // V2 commands go below this point
@@ -290,8 +323,7 @@ void HTMLButtonElement::DefaultEventHandler(Event& event) {
     bool potentialCommand = (FastHasAttribute(html_names::kCommandforAttr) ||
                              FastHasAttribute(html_names::kCommandAttr));
     if (!IsDisabledFormControl()) {
-      if (Form() && RuntimeEnabledFeatures::HTMLCommandAttributesEnabled() &&
-          type_ == kButton) {
+      if (Form() && type_ == kButton) {
         if (!EqualIgnoringASCIICase(FastGetAttribute(html_names::kTypeAttr),
                                     "button")) {
           DCHECK(type_ == kButton);

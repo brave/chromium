@@ -17,6 +17,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
@@ -118,12 +119,9 @@ void SharedTabGroupFeedbackController::MaybeShowIPH(
     return;
   }
 
-  BrowserUserEducationInterface* browser_user_education_interface =
-      browser_window_interface->GetUserEducationInterface();
-  CHECK(browser_user_education_interface);
-
-  browser_user_education_interface->MaybeShowFeaturePromo(
-      feature_engagement::kIPHTabGroupsSharedTabFeedbackFeature);
+  BrowserUserEducationInterface::From(browser_window_interface)
+      ->MaybeShowFeaturePromo(
+          feature_engagement::kIPHTabGroupsSharedTabFeedbackFeature);
 }
 
 void SharedTabGroupFeedbackController::OnInitialized() {

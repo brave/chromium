@@ -221,7 +221,6 @@
 <translation id="181434555916624618">現時点では、人物が含まれる結果は表示されません。別のプロンプトをお試しください。</translation>
 <translation id="1815850098929213707">選択したキーは <ph name="KEYS" /> です。コントロールを編集するにはボタンをタップします</translation>
 <translation id="1818174214124933000">[送信] を選択すると、フィードバックとコンテンツ（以下に表示）が Google に送信され、人間による確認が行われます。また、<ph name="LINK_POLICY_BEGIN" />プライバシー ポリシー<ph name="LINK_POLICY_END" />と <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google 利用規約<ph name="LINK_TERMS_OF_SERVICE_END" />に沿って、プロダクトおよびサービスのトレーニングや改善の目的で使用されます。</translation>
-<translation id="1821075635029692203">教師がサポートされていないリソースを送信しました。伝える必要があります。</translation>
 <translation id="1823120442877418684">キャラクター</translation>
 <translation id="1827738518074806965">アート ギャラリー</translation>
 <translation id="183287940576828840">不適切 / 危険</translation>
@@ -328,9 +327,10 @@
 <translation id="2240366984605217732">レイアウトの切り替え</translation>
 <translation id="224421911978987610">長時間露光</translation>
 <translation id="2244834438220057800">緑色</translation>
+<translation id="2248689665683494517">黒色の背景でガラスの花瓶に入った数本のケシの花のミニマルな静物画</translation>
 <translation id="225692081236532131">起動状態</translation>
 <translation id="2267285889943769271">スクリーンショットを追加</translation>
-<translation id="2268044343513325586">絞り込み</translation>
+<translation id="2268044343513325586">修正</translation>
 <translation id="2271469253353559191">ダークモードのスケジュールを設定する</translation>
 <translation id="2276999893457278469">関連するヘルプ コンテンツ</translation>
 <translation id="2277631741861284101">音声を簡単に録音して共有</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">シフォン</translation>
 <translation id="4310735698903592804">Google AI を活用した最近の壁紙</translation>
 <translation id="4320904097188876154">ネオンピンク</translation>
+<translation id="432961742358282111">右クリックまたは長押しすると、定義、翻訳、単位変換を取得できます。左右矢印キーでこの機能を管理できます。</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> キーを押しました</translation>
 <translation id="4334293042716981313"><ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />独自のプロンプトを記述する<ph name="END_LINK_FREEFORM_SUBPAGE" />こともできます</translation>
 <translation id="4354430579665871434">キー</translation>
@@ -949,7 +950,7 @@
 <translation id="5145331109270917438">更新日</translation>
 <translation id="5154917547274118687">メモリ</translation>
 <translation id="5160857336552977725"><ph name="DEVICE_TYPE" /> にログインしてください</translation>
-<translation id="5168185087976003268">電池の状態</translation>
+<translation id="5168185087976003268">バッテリー ヘルス</translation>
 <translation id="5170568018924773124">フォルダを開く</translation>
 <translation id="517075088756846356">更新プロセスを続行するには、<ph name="DEVICE_NAME" /> の電源ケーブルを取り外してから、もう一度差し込んでください</translation>
 <translation id="5180108905184566358">バオバブの木々</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Chromebook ヘルプ フォーラムのエキスパートに問い合わせる</translation>
-<translation id="7309823890857024809">黒色の背景でガラスの花瓶に入った数本のケシの茎のミニマルな静物画</translation>
 <translation id="7311368985037279727">キーボードの色</translation>
 <translation id="7317831949569936035">教育機関の登録</translation>
 <translation id="7319430975418800333">A3</translation>

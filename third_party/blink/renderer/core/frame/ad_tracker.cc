@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/platform/bindings/thread_debugger.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
@@ -58,7 +59,7 @@ v8_inspector::V8DebuggerId GetDebuggerIdForContext(
   }
   int contextId = v8_inspector::V8ContextInfo::executionContextId(v8_context);
   ThreadDebugger* thread_debugger =
-      ThreadDebugger::From(v8_context->GetIsolate());
+      ThreadDebugger::From(v8::Isolate::GetCurrent());
   DCHECK(thread_debugger);
   v8_inspector::V8Inspector* inspector = thread_debugger->GetV8Inspector();
   DCHECK(inspector);
@@ -148,51 +149,43 @@ void AdTracker::WillExecuteScript(ExecutionContext* execution_context,
                                   const String& script_url,
                                   int script_id,
                                   bool top_level_execution) {
-  bool is_ad = false;
-
-  // We track scripts with no URL (i.e. dynamically inserted scripts with no
-  // src) by IDs instead. We also check the stack as they are executed
-  // immediately and should be tagged based on the script inserting them.
-  bool should_track_with_id =
+  bool is_inline_script =
       script_url.empty() && script_id != v8::Message::kNoScriptIdInfo;
-  if (should_track_with_id) {
-    // This primarily checks if |execution_context| is a known ad context as we
-    // don't need to keep track of scripts in ad contexts. However, two scripts
-    // with identical text content can be assigned the same ID.
-    String fake_url = GenerateFakeUrlFromScriptId(script_id);
+
+  String url =
+      is_inline_script ? GenerateFakeUrlFromScriptId(script_id) : script_url;
+
+  bool is_ad = IsKnownAdScript(execution_context, url);
+
+  // On first run of a script we do some additional checks and bookkeeping.
+  if (top_level_execution) {
+    // For inline scripts, this is our opportunity to check the stack to see if
+    // an ad created it since inline scripts are run immediately.
     std::optional<AdScriptIdentifier> ancestor_ad_script;
-    if (IsKnownAdScript(execution_context, fake_url)) {
-      is_ad = true;
-    } else if (top_level_execution &&
-               IsAdScriptInStackHelper(StackType::kBottomAndTop,
-                                       &ancestor_ad_script)) {
+    if (!is_ad && is_inline_script &&
+        IsAdScriptInStackHelper(StackType::kBottomAndTop,
+                                &ancestor_ad_script)) {
       std::unique_ptr<AdProvenance> ad_provenance;
       if (ancestor_ad_script.has_value()) {
         ad_provenance =
             std::make_unique<AdAncestorProvenance>(*ancestor_ad_script);
       } else {
-        // This can happen if the async script check (`DidCreateAsyncTask`)
-        // occurred within an ad execution context. In such case,
-        // `running_ad_async_tasks_` will be greater than 0, but
-        // `bottom_most_async_ad_script_` remains null.
-        // TODO(crbug.com/421164512): Add tests to confirm this scenario.
+        // This can happen if the script originates from an ad context without
+        // further traceable script (crbug.com/421202278).
         ad_provenance = std::make_unique<NoAdProvenance>();
       }
 
-      AppendToKnownAdScripts(*execution_context, fake_url,
-                             std::move(ad_provenance));
-      OnScriptIdAvailableForKnownAdScript(execution_context, v8_context,
-                                          fake_url, script_id);
+      AppendToKnownAdScripts(*execution_context, url, std::move(ad_provenance));
       is_ad = true;
     }
-  }
 
-  if (!should_track_with_id) {
-    is_ad = IsKnownAdScript(execution_context, script_url);
-    if (top_level_execution && is_ad && !script_url.empty() &&
+    // Since this is our first time running the script, this is the first we've
+    // seen of its script id. Record the id so that we can refer to the script
+    // by id rather than string.
+    if (is_ad && !url.empty() &&
         !IsKnownAdExecutionContext(execution_context)) {
-      OnScriptIdAvailableForKnownAdScript(execution_context, v8_context,
-                                          script_url, script_id);
+      OnScriptIdAvailableForKnownAdScript(execution_context, v8_context, url,
+                                          script_id);
     }
   }
 
@@ -381,9 +374,20 @@ bool AdTracker::IsAdScriptInStackHelper(
     return false;
 
   // If we're in an ad context, then no matter what the executing script is it's
-  // considered an ad.
-  if (IsKnownAdExecutionContext(execution_context))
+  // considered an ad. To enhance traceability, we attempt to return the
+  // identifier of the ad script that created the targeted ad frame. Note that
+  // this may still return `nullopt`; refer to `LocalFrame::CreationAdScript`
+  // for details.
+  if (IsKnownAdExecutionContext(execution_context)) {
+    if (out_ad_script) {
+      if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
+        if (LocalFrame* frame = window->GetFrame()) {
+          *out_ad_script = frame->CreationAdScript();
+        }
+      }
+    }
     return true;
+  }
 
   if (stack_type == StackType::kBottomOnly)
     return false;

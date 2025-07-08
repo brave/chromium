@@ -382,7 +382,8 @@ class CORE_EXPORT LocalFrameView final
   // detached frame and need special handling of the frame.
   // Frame throttling is not allowed by default. Normally we don't want to
   // throttle frames for printing.
-  void UpdateLifecyclePhasesForPrinting();
+  // Returns whether the lifecycle was successfully updated to pre-paint clean.
+  bool UpdateLifecyclePhasesForPrinting();
 
   // Computes the style, layout, and compositing inputs lifecycle stages if
   // needed. After calling this method, all frames will be in a lifecycle state
@@ -415,7 +416,7 @@ class CORE_EXPORT LocalFrameView final
   // disallows layout invalidation within the containing scope. If layout
   // invalidation takes place while the scoper is active a DCHECK will be
   // triggered.
-  class InvalidationDisallowedScope {
+  class CORE_EXPORT InvalidationDisallowedScope {
     STACK_ALLOCATED();
 
    public:
@@ -467,7 +468,7 @@ class CORE_EXPORT LocalFrameView final
   void DestroyPaginationLayout();
 
   // Updates the fragment anchor element based on URL's fragment identifier.
-  // Updates corresponding ':target' CSS pseudo class on the anchor element.
+  // Updates corresponding ':target' CSS pseudo-class on the anchor element.
   // If |should_scroll| is passed it can be used to prevent scrolling/focusing
   // while still performing all related side-effects like setting :target (used
   // for e.g. in history restoration to override the scroll offset). The scroll
@@ -501,13 +502,8 @@ class CORE_EXPORT LocalFrameView final
   void AddAnimatingScrollableArea(PaintLayerScrollableArea*);
   void RemoveAnimatingScrollableArea(PaintLayerScrollableArea*);
 
-  // Used when ScrollableAreaOptimization is disabled.
-  void AddUserScrollableArea(PaintLayerScrollableArea&);
-  void RemoveUserScrollableArea(PaintLayerScrollableArea&);
-  // Used when ScrollableAreaOptimization is enabled.
   void AddScrollableArea(PaintLayerScrollableArea&);
   // Removes the scrollable area from all scrollable area sets/maps.
-  // Used regardless of ScrollableAreaOptimization.
   void RemoveScrollableArea(PaintLayerScrollableArea&);
   const ScrollableAreaMap& ScrollableAreas() const { return scrollable_areas_; }
 
@@ -729,7 +725,10 @@ class CORE_EXPORT LocalFrameView final
   void SetVisualViewportOrOverlayNeedsRepaint();
   bool VisualViewportOrOverlayNeedsRepaintForTesting() const;
 
-  LayoutUnit CaretWidth() const;
+  LayoutUnit BarCaretWidth() const;
+  // Returns the max value between the given float value of width and viewpoint
+  // scale in LayoutUnit.
+  LayoutUnit ScaleCssPixelForCaret(float width) const;
 
   size_t PaintFrameCount() const { return paint_frame_count_; }
 
@@ -1125,8 +1124,7 @@ class CORE_EXPORT LocalFrameView final
   // Needed for calculating scroll anchoring.
   ScrollableAreaSet scroll_anchoring_scrollable_areas_;
   ScrollableAreaSet animating_scrollable_areas_;
-  // All scrollable areas in the frame's document,
-  // or user-scrollable ones if ScrollableAreaOptimization is disabled.
+  // All scrollable areas in the frame's document.
   ScrollableAreaMap scrollable_areas_;
   ScrollableAreaSet scrollable_areas_with_scroll_node_;
 

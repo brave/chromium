@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <array>
 #include <memory>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -39,12 +35,16 @@ namespace {
 
 const char kMsg1[] = "\0hello!\xff";
 const int kLen1 = std::size(kMsg1);
+const auto kMsg1Span = base::byte_span_with_nul_from_cstring(kMsg1);
 const char kMsg2[] = "\0a2345678\0";
 const int kLen2 = std::size(kMsg2);
+const auto kMsg2Span = base::byte_span_with_nul_from_cstring(kMsg2);
 const char kMsg3[] = "bye!";
 const int kLen3 = std::size(kMsg3);
+const auto kMsg3Span = base::byte_span_with_nul_from_cstring(kMsg3);
 const char kMsg4[] = "supercalifragilisticexpialidocious";
 const int kLen4 = std::size(kMsg4);
+const auto kMsg4Span = base::byte_span_with_nul_from_cstring(kMsg4);
 
 // Helper class for starting the next operation operation reentrantly after the
 // previous operation completed asynchronously. When OnIOComplete is called,
@@ -124,7 +124,7 @@ class ReentrantHelper {
                                           std::move(second_callback_)));
     } else {
       auto write_buf = base::MakeRefCounted<IOBufferWithSize>(second_len_);
-      memcpy(write_buf->data(), second_write_data_, second_len_);
+      UNSAFE_TODO(memcpy(write_buf->data(), second_write_data_, second_len_));
       ASSERT_EQ(second_rv_, socket_->Write(write_buf.get(), second_len_,
                                            std::move(second_callback_),
                                            TRAFFIC_ANNOTATION_FOR_TESTS));
@@ -320,7 +320,7 @@ void SequencedSocketDataTest::AssertWriteReturns(const char* data,
                                                  int len,
                                                  int rv) {
   auto buf = base::MakeRefCounted<IOBufferWithSize>(len);
-  memcpy(buf->data(), data, len);
+  UNSAFE_TODO(memcpy(buf->data(), data, len));
 
   if (rv == ERR_IO_PENDING) {
     ASSERT_EQ(rv, sock_->Write(buf.get(), len, write_callback_.callback(),
@@ -369,7 +369,7 @@ void SequencedSocketDataTest::ReentrantAsyncWriteCallback(
     int rv) {
   EXPECT_EQ(expected_rv, rv);
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(len);
-  memcpy(write_buf->data(), data, len);
+  UNSAFE_TODO(memcpy(write_buf->data(), data, len));
   EXPECT_THAT(sock_->Write(write_buf.get(), len, std::move(callback),
                            TRAFFIC_ANNOTATION_FOR_TESTS),
               IsError(ERR_IO_PENDING));
@@ -383,7 +383,7 @@ void SequencedSocketDataTest::FailingCompletionCallback(int rv) {
 
 TEST_F(SequencedSocketDataTest, SingleSyncRead) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -392,13 +392,10 @@ TEST_F(SequencedSocketDataTest, SingleSyncRead) {
 
 TEST_F(SequencedSocketDataTest, MultipleSyncReads) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockRead(SYNCHRONOUS, kMsg2, kLen2, 1),
-      MockRead(SYNCHRONOUS, kMsg3, kLen3, 2),
-      MockRead(SYNCHRONOUS, kMsg3, kLen3, 3),
-      MockRead(SYNCHRONOUS, kMsg2, kLen2, 4),
-      MockRead(SYNCHRONOUS, kMsg3, kLen3, 5),
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 6),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span), MockRead(SYNCHRONOUS, 1, kMsg2Span),
+      MockRead(SYNCHRONOUS, 2, kMsg3Span), MockRead(SYNCHRONOUS, 3, kMsg3Span),
+      MockRead(SYNCHRONOUS, 4, kMsg2Span), MockRead(SYNCHRONOUS, 5, kMsg3Span),
+      MockRead(SYNCHRONOUS, 6, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -414,7 +411,7 @@ TEST_F(SequencedSocketDataTest, MultipleSyncReads) {
 
 TEST_F(SequencedSocketDataTest, SingleAsyncRead) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0),
+      MockRead(ASYNC, 0, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -424,13 +421,10 @@ TEST_F(SequencedSocketDataTest, SingleAsyncRead) {
 
 TEST_F(SequencedSocketDataTest, MultipleAsyncReads) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0),
-      MockRead(ASYNC, kMsg2, kLen2, 1),
-      MockRead(ASYNC, kMsg3, kLen3, 2),
-      MockRead(ASYNC, kMsg3, kLen3, 3),
-      MockRead(ASYNC, kMsg2, kLen2, 4),
-      MockRead(ASYNC, kMsg3, kLen3, 5),
-      MockRead(ASYNC, kMsg1, kLen1, 6),
+      MockRead(ASYNC, 0, kMsg1Span), MockRead(ASYNC, 1, kMsg2Span),
+      MockRead(ASYNC, 2, kMsg3Span), MockRead(ASYNC, 3, kMsg3Span),
+      MockRead(ASYNC, 4, kMsg2Span), MockRead(ASYNC, 5, kMsg3Span),
+      MockRead(ASYNC, 6, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -446,13 +440,10 @@ TEST_F(SequencedSocketDataTest, MultipleAsyncReads) {
 
 TEST_F(SequencedSocketDataTest, MixedReads) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockRead(ASYNC, kMsg2, kLen2, 1),
-      MockRead(SYNCHRONOUS, kMsg3, kLen3, 2),
-      MockRead(ASYNC, kMsg3, kLen3, 3),
-      MockRead(SYNCHRONOUS, kMsg2, kLen2, 4),
-      MockRead(ASYNC, kMsg3, kLen3, 5),
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 6),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span), MockRead(ASYNC, 1, kMsg2Span),
+      MockRead(SYNCHRONOUS, 2, kMsg3Span), MockRead(ASYNC, 3, kMsg3Span),
+      MockRead(SYNCHRONOUS, 4, kMsg2Span), MockRead(ASYNC, 5, kMsg3Span),
+      MockRead(SYNCHRONOUS, 6, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -468,7 +459,8 @@ TEST_F(SequencedSocketDataTest, MixedReads) {
 
 TEST_F(SequencedSocketDataTest, SyncReadFromCompletionCallback) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0), MockRead(SYNCHRONOUS, kMsg2, kLen2, 1),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(SYNCHRONOUS, 1, kMsg2Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -487,10 +479,10 @@ TEST_F(SequencedSocketDataTest, SyncReadFromCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, ManyReentrantReads) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0),
-      MockRead(ASYNC, kMsg2, kLen2, 1),
-      MockRead(ASYNC, kMsg3, kLen3, 2),
-      MockRead(ASYNC, kMsg4, kLen4, 3),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(ASYNC, 1, kMsg2Span),
+      MockRead(ASYNC, 2, kMsg3Span),
+      MockRead(ASYNC, 3, kMsg4Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -520,7 +512,8 @@ TEST_F(SequencedSocketDataTest, ManyReentrantReads) {
 
 TEST_F(SequencedSocketDataTest, AsyncReadFromCompletionCallback) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0), MockRead(ASYNC, kMsg2, kLen2, 1),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(ASYNC, 1, kMsg2Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -540,7 +533,7 @@ TEST_F(SequencedSocketDataTest, AsyncReadFromCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, SingleSyncReadTooEarly) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 1),
+      MockRead(SYNCHRONOUS, 1, kMsg1Span),
   };
 
   MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, 0)};
@@ -554,7 +547,7 @@ TEST_F(SequencedSocketDataTest, SingleSyncReadTooEarly) {
 
 TEST_F(SequencedSocketDataTest, SingleSyncReadSmallBuffer) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -564,12 +557,12 @@ TEST_F(SequencedSocketDataTest, SingleSyncReadSmallBuffer) {
   AssertReadBufferEquals(kMsg1, kLen1 - 1);
   // Then read the second chunk.
   AssertReadReturns(1, 1);
-  AssertReadBufferEquals(kMsg1 + kLen1 - 1, 1);
+  AssertReadBufferEquals(UNSAFE_TODO(kMsg1 + kLen1 - 1), 1);
 }
 
 TEST_F(SequencedSocketDataTest, SingleSyncReadLargeBuffer) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -580,7 +573,7 @@ TEST_F(SequencedSocketDataTest, SingleSyncReadLargeBuffer) {
 
 TEST_F(SequencedSocketDataTest, SingleAsyncReadLargeBuffer) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0),
+      MockRead(ASYNC, 0, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -614,7 +607,7 @@ TEST_F(SequencedSocketDataTest, HangingRead) {
 
 TEST_F(SequencedSocketDataTest, SingleSyncWriteTooEarly) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 1),
+      MockWrite(SYNCHRONOUS, 1, kMsg1Span),
   };
 
   MockRead reads[] = {MockRead(SYNCHRONOUS, 0, 0)};
@@ -629,7 +622,7 @@ TEST_F(SequencedSocketDataTest, SingleSyncWriteTooEarly) {
 
 TEST_F(SequencedSocketDataTest, SingleSyncWriteTooSmall) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -663,16 +656,18 @@ TEST_F(SequencedSocketDataTest, SingleSyncWriteTooSmall) {
   for (int i = 0; i < gtest_failures.size(); ++i) {
     const ::testing::TestPartResult& result =
         gtest_failures.GetTestPartResult(i);
-    EXPECT_TRUE(strstr(result.message(), kExpectedFailures[i]) != nullptr);
+    UNSAFE_TODO(
+        EXPECT_TRUE(strstr(result.message(), kExpectedFailures[i]) != nullptr));
   }
 
   set_expect_eof(false);
 }
 
 TEST_F(SequencedSocketDataTest, SingleSyncPartialWrite) {
+  size_t split = base::checked_cast<size_t>(kLen1 - 1);
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1 - 1, 0),
-      MockWrite(SYNCHRONOUS, kMsg1 + kLen1 - 1, 1, 1),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span.first(split)),
+      MockWrite(SYNCHRONOUS, 1, kMsg1Span.subspan(split)),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -680,12 +675,12 @@ TEST_F(SequencedSocketDataTest, SingleSyncPartialWrite) {
   // Attempt to write all of the message, but only some will be written.
   AssertSyncWriteEquals(kMsg1, kLen1 - 1);
   // Write the rest of the message.
-  AssertSyncWriteEquals(kMsg1 + kLen1 - 1, 1);
+  AssertSyncWriteEquals(UNSAFE_TODO(kMsg1 + kLen1 - 1), 1);
 }
 
 TEST_F(SequencedSocketDataTest, SingleSyncWrite) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -695,13 +690,13 @@ TEST_F(SequencedSocketDataTest, SingleSyncWrite) {
 
 TEST_F(SequencedSocketDataTest, MultipleSyncWrites) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockWrite(SYNCHRONOUS, kMsg2, kLen2, 1),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 2),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 3),
-      MockWrite(SYNCHRONOUS, kMsg2, kLen2, 4),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 5),
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 6),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span),
+      MockWrite(SYNCHRONOUS, 1, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 2, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 3, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 4, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 5, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 6, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -717,7 +712,7 @@ TEST_F(SequencedSocketDataTest, MultipleSyncWrites) {
 
 TEST_F(SequencedSocketDataTest, SingleAsyncWrite) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0),
+      MockWrite(ASYNC, 0, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -727,13 +722,10 @@ TEST_F(SequencedSocketDataTest, SingleAsyncWrite) {
 
 TEST_F(SequencedSocketDataTest, MultipleAsyncWrites) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0),
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
-      MockWrite(ASYNC, kMsg3, kLen3, 2),
-      MockWrite(ASYNC, kMsg3, kLen3, 3),
-      MockWrite(ASYNC, kMsg2, kLen2, 4),
-      MockWrite(ASYNC, kMsg3, kLen3, 5),
-      MockWrite(ASYNC, kMsg1, kLen1, 6),
+      MockWrite(ASYNC, 0, kMsg1Span), MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(ASYNC, 2, kMsg3Span), MockWrite(ASYNC, 3, kMsg3Span),
+      MockWrite(ASYNC, 4, kMsg2Span), MockWrite(ASYNC, 5, kMsg3Span),
+      MockWrite(ASYNC, 6, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -749,13 +741,10 @@ TEST_F(SequencedSocketDataTest, MultipleAsyncWrites) {
 
 TEST_F(SequencedSocketDataTest, MixedWrites) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 2),
-      MockWrite(ASYNC, kMsg3, kLen3, 3),
-      MockWrite(SYNCHRONOUS, kMsg2, kLen2, 4),
-      MockWrite(ASYNC, kMsg3, kLen3, 5),
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 6),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span), MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 2, kMsg3Span), MockWrite(ASYNC, 3, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 4, kMsg2Span), MockWrite(ASYNC, 5, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 6, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -771,14 +760,14 @@ TEST_F(SequencedSocketDataTest, MixedWrites) {
 
 TEST_F(SequencedSocketDataTest, SyncWriteFromCompletionCallback) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0),
-      MockWrite(SYNCHRONOUS, kMsg2, kLen2, 1),
+      MockWrite(ASYNC, 0, kMsg1Span),
+      MockWrite(SYNCHRONOUS, 1, kMsg2Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   ASSERT_EQ(
       ERR_IO_PENDING,
       sock_->Write(
@@ -792,13 +781,14 @@ TEST_F(SequencedSocketDataTest, SyncWriteFromCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, AsyncWriteFromCompletionCallback) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0), MockWrite(ASYNC, kMsg2, kLen2, 1),
+      MockWrite(ASYNC, 0, kMsg1Span),
+      MockWrite(ASYNC, 1, kMsg2Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   ASSERT_EQ(ERR_IO_PENDING,
             sock_->Write(
                 write_buf.get(), kLen1,
@@ -813,10 +803,10 @@ TEST_F(SequencedSocketDataTest, AsyncWriteFromCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, ManyReentrantWrites) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0),
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
-      MockWrite(ASYNC, kMsg3, kLen3, 2),
-      MockWrite(ASYNC, kMsg4, kLen4, 3),
+      MockWrite(ASYNC, 0, kMsg1Span),
+      MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(ASYNC, 2, kMsg3Span),
+      MockWrite(ASYNC, 3, kMsg4Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -835,7 +825,7 @@ TEST_F(SequencedSocketDataTest, ManyReentrantWrites) {
   helper.SetInvokeWrite(kMsg2, kLen2, ERR_IO_PENDING, helper2.callback());
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   sock_->Write(write_buf.get(), kLen1, helper.callback(),
                TRAFFIC_ANNOTATION_FOR_TESTS);
 
@@ -846,13 +836,13 @@ TEST_F(SequencedSocketDataTest, ManyReentrantWrites) {
 
 TEST_F(SequencedSocketDataTest, MixedSyncOperations) {
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockRead(SYNCHRONOUS, kMsg2, kLen2, 3),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
+      MockRead(SYNCHRONOUS, 3, kMsg2Span),
   };
 
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg2, kLen2, 1),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 2),
+      MockWrite(SYNCHRONOUS, 1, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 2, kMsg3Span),
   };
 
   Initialize(reads, writes);
@@ -865,11 +855,13 @@ TEST_F(SequencedSocketDataTest, MixedSyncOperations) {
 
 TEST_F(SequencedSocketDataTest, MixedAsyncOperations) {
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0), MockRead(ASYNC, kMsg2, kLen2, 3),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(ASYNC, 3, kMsg2Span),
   };
 
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg2, kLen2, 1), MockWrite(ASYNC, kMsg3, kLen3, 2),
+      MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(ASYNC, 2, kMsg3Span),
   };
 
   Initialize(reads, writes);
@@ -883,11 +875,13 @@ TEST_F(SequencedSocketDataTest, MixedAsyncOperations) {
 TEST_F(SequencedSocketDataTest, InterleavedAsyncOperations) {
   // Order of completion is read, write, write, read.
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0), MockRead(ASYNC, kMsg2, kLen2, 3),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(ASYNC, 3, kMsg2Span),
   };
 
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg2, kLen2, 1), MockWrite(ASYNC, kMsg3, kLen3, 2),
+      MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(ASYNC, 2, kMsg3Span),
   };
 
   Initialize(reads, writes);
@@ -921,15 +915,15 @@ TEST_F(SequencedSocketDataTest, InterleavedAsyncOperations) {
 TEST_F(SequencedSocketDataTest, InterleavedMixedOperations) {
   // Order of completion is read, write, write, read.
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
-      MockRead(ASYNC, kMsg2, kLen2, 3),
-      MockRead(ASYNC, kMsg3, kLen3, 5),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
+      MockRead(ASYNC, 3, kMsg2Span),
+      MockRead(ASYNC, 5, kMsg3Span),
   };
 
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
-      MockWrite(SYNCHRONOUS, kMsg3, kLen3, 2),
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 4),
+      MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 2, kMsg3Span),
+      MockWrite(SYNCHRONOUS, 4, kMsg1Span),
   };
 
   Initialize(reads, writes);
@@ -966,17 +960,17 @@ TEST_F(SequencedSocketDataTest, InterleavedMixedOperations) {
 
 TEST_F(SequencedSocketDataTest, AsyncReadFromWriteCompletionCallback) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0),
+      MockWrite(ASYNC, 0, kMsg1Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg2, kLen2, 1),
+      MockRead(ASYNC, 1, kMsg2Span),
   };
 
   Initialize(reads, writes);
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   ASSERT_EQ(
       ERR_IO_PENDING,
       sock_->Write(
@@ -992,11 +986,11 @@ TEST_F(SequencedSocketDataTest, AsyncReadFromWriteCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, AsyncWriteFromReadCompletionCallback) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
+      MockWrite(ASYNC, 1, kMsg2Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0),
+      MockRead(ASYNC, 0, kMsg1Span),
   };
 
   Initialize(reads, writes);
@@ -1016,11 +1010,13 @@ TEST_F(SequencedSocketDataTest, AsyncWriteFromReadCompletionCallback) {
 
 TEST_F(SequencedSocketDataTest, MixedReentrantOperations) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0), MockWrite(ASYNC, kMsg3, kLen3, 2),
+      MockWrite(ASYNC, 0, kMsg1Span),
+      MockWrite(ASYNC, 2, kMsg3Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg2, kLen2, 1), MockRead(ASYNC, kMsg4, kLen4, 3),
+      MockRead(ASYNC, 1, kMsg2Span),
+      MockRead(ASYNC, 3, kMsg4Span),
   };
 
   Initialize(reads, writes);
@@ -1042,7 +1038,7 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperations) {
                        helper2.callback());
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   sock_->Write(write_buf.get(), kLen1, helper.callback(),
                TRAFFIC_ANNOTATION_FOR_TESTS);
 
@@ -1051,11 +1047,13 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperations) {
 
 TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousRead) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg1, kLen1, 0), MockWrite(ASYNC, kMsg3, kLen3, 2),
+      MockWrite(ASYNC, 0, kMsg1Span),
+      MockWrite(ASYNC, 2, kMsg3Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg2, kLen2, 1), MockRead(SYNCHRONOUS, kMsg4, kLen4, 3),
+      MockRead(ASYNC, 1, kMsg2Span),
+      MockRead(SYNCHRONOUS, 3, kMsg4Span),
   };
 
   Initialize(reads, writes);
@@ -1076,7 +1074,7 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousRead) {
                        helper2.callback());
 
   auto write_buf = base::MakeRefCounted<IOBufferWithSize>(kLen1);
-  memcpy(write_buf->data(), kMsg1, kLen1);
+  UNSAFE_TODO(memcpy(write_buf->data(), kMsg1, kLen1));
   ASSERT_EQ(ERR_IO_PENDING,
             sock_->Write(write_buf.get(), kLen1, helper.callback(),
                          TRAFFIC_ANNOTATION_FOR_TESTS));
@@ -1087,12 +1085,13 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousRead) {
 
 TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousWrite) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, kMsg2, kLen2, 1),
-      MockWrite(SYNCHRONOUS, kMsg4, kLen4, 3),
+      MockWrite(ASYNC, 1, kMsg2Span),
+      MockWrite(SYNCHRONOUS, 3, kMsg4Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, kMsg1, kLen1, 0), MockRead(ASYNC, kMsg3, kLen3, 2),
+      MockRead(ASYNC, 0, kMsg1Span),
+      MockRead(ASYNC, 2, kMsg3Span),
   };
 
   Initialize(reads, writes);
@@ -1121,7 +1120,8 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousWrite) {
 // Test the basic case where a read is paused.
 TEST_F(SequencedSocketDataTest, PauseAndResume_PauseRead) {
   MockRead reads[] = {
-      MockRead(ASYNC, ERR_IO_PENDING, 0), MockRead(ASYNC, kMsg1, kLen1, 1),
+      MockRead(ASYNC, ERR_IO_PENDING, 0),
+      MockRead(ASYNC, 1, kMsg1Span),
   };
 
   Initialize(reads, base::span<MockWrite>());
@@ -1148,11 +1148,12 @@ TEST_F(SequencedSocketDataTest, PauseAndResume_PauseRead) {
 // completes before the pause.
 TEST_F(SequencedSocketDataTest, PauseAndResume_WritePauseRead) {
   MockWrite writes[] = {
-      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockWrite(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   MockRead reads[] = {
-      MockRead(ASYNC, ERR_IO_PENDING, 1), MockRead(ASYNC, kMsg2, kLen2, 2),
+      MockRead(ASYNC, ERR_IO_PENDING, 1),
+      MockRead(ASYNC, 2, kMsg2Span),
   };
 
   Initialize(reads, writes);
@@ -1186,7 +1187,8 @@ TEST_F(SequencedSocketDataTest, PauseAndResume_WritePauseRead) {
 // Test the basic case where a write is paused.
 TEST_F(SequencedSocketDataTest, PauseAndResume_PauseWrite) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, ERR_IO_PENDING, 0), MockWrite(ASYNC, kMsg1, kLen1, 1),
+      MockWrite(ASYNC, ERR_IO_PENDING, 0),
+      MockWrite(ASYNC, 1, kMsg1Span),
   };
 
   Initialize(base::span<MockRead>(), writes);
@@ -1212,11 +1214,12 @@ TEST_F(SequencedSocketDataTest, PauseAndResume_PauseWrite) {
 // completes before the pause.
 TEST_F(SequencedSocketDataTest, PauseAndResume_ReadPauseWrite) {
   MockWrite writes[] = {
-      MockWrite(ASYNC, ERR_IO_PENDING, 1), MockWrite(ASYNC, kMsg2, kLen2, 2),
+      MockWrite(ASYNC, ERR_IO_PENDING, 1),
+      MockWrite(ASYNC, 2, kMsg2Span),
   };
 
   MockRead reads[] = {
-      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
+      MockRead(SYNCHRONOUS, 0, kMsg1Span),
   };
 
   Initialize(reads, writes);

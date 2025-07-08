@@ -79,33 +79,30 @@ namespace {
 class PooledHarfBuzzBuffer {
  public:
   PooledHarfBuzzBuffer() {
-    if (RuntimeEnabledFeatures::HarfBuzzBufferPoolEnabled()) {
-      Pool& pool = GetPool();
-      if (!pool.empty()) {
-        buffer_ = std::move(pool.back());
+    Pool& pool = GetPool();
+    if (!pool.empty()) {
+      buffer_ = std::move(pool.back());
 #if EXPENSIVE_DCHECKS_ARE_ON()
-        DCHECK(buffer_);
-        DCHECK(!pool.back());
+      DCHECK(buffer_);
+      DCHECK(!pool.back());
 #endif  // EXPENSIVE_DCHECKS_ARE_ON()
-        pool.pop_back();
+      pool.pop_back();
 
-        hb_buffer_reset(buffer_);
-        return;
-      }
+      hb_buffer_reset(buffer_);
+      return;
     }
+
     buffer_ = hb::unique_ptr<hb_buffer_t>{hb_buffer_create()};
   }
 
   ~PooledHarfBuzzBuffer() {
-    if (RuntimeEnabledFeatures::HarfBuzzBufferPoolEnabled()) {
-      Pool& pool = GetPool();
-      pool.push_back(std::move(buffer_));
+    Pool& pool = GetPool();
+    pool.push_back(std::move(buffer_));
 #if EXPENSIVE_DCHECKS_ARE_ON()
-      DCHECK_LE(pool.size(), kInlineCapacity);
-      DCHECK(!buffer_);
+    DCHECK_LE(pool.size(), kInlineCapacity);
+    DCHECK(!buffer_);
 #endif  // EXPENSIVE_DCHECKS_ARE_ON()
     }
-  }
 
   hb_buffer_t* Get() const { return buffer_; }
   const hb_buffer_t* operator->() const { return Get(); }
@@ -650,7 +647,7 @@ void HarfBuzzShaper::ExtractShapeResults(
       // https://docs.microsoft.com/en-us/typography/opentype/spec/recom#glyph-0-the-notdef-glyph
       glyph_result = kNotDef;
     } else if (glyph_id == space_glyph && !IsLastFontToShape(fallback_stage) &&
-               text_[current_cluster] == kIdeographicSpaceCharacter) {
+               text_[current_cluster] == uchar::kIdeographicSpace) {
       // HarfBuzz synthesizes U+3000 IDEOGRAPHIC SPACE using the space glyph.
       // This is not desired for run-splitting, applying features, and for
       // computing `line-height`. crbug.com/1193282

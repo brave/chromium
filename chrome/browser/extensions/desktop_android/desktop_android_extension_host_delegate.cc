@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/desktop_android/desktop_android_extension_host_delegate.h"
 
 #include "base/notimplemented.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 
 namespace extensions {
@@ -17,9 +18,6 @@ DesktopAndroidExtensionHostDelegate::~DesktopAndroidExtensionHostDelegate() =
 
 void DesktopAndroidExtensionHostDelegate::OnExtensionHostCreated(
     content::WebContents* web_contents) {}
-
-void DesktopAndroidExtensionHostDelegate::OnMainFrameCreatedForBackgroundPage(
-    ExtensionHost* host) {}
 
 void DesktopAndroidExtensionHostDelegate::CreateTab(
     std::unique_ptr<content::WebContents> web_contents,

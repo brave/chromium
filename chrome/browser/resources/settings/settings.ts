@@ -44,7 +44,6 @@ export {AboutPageBrowserProxy, AboutPageBrowserProxyImpl, UpdateStatus} from './
 export {PromoteUpdaterStatus} from './about_page/about_page_browser_proxy.js';
 // </if>
 // clang-format on
-export {SettingsA11yPageElement, ToastAlertLevel} from './a11y_page/a11y_page.js';
 export {SettingsAiInfoCardElement} from './ai_page/ai_info_card.js';
 export {SettingsAiLoggingInfoBullet} from './ai_page/ai_logging_info_bullet.js';
 export {SettingsAiPageElement} from './ai_page/ai_page.js';
@@ -57,7 +56,6 @@ export {PasswordCheckReferrer, PasswordManagerImpl, PasswordManagerPage, Passwor
 export {BaseMixin} from './base_mixin.js';
 export {SettingsBasicPageElement} from './basic_page/basic_page.js';
 export {SettingsCheckboxListEntryElement} from './controls/settings_checkbox_list_entry.js';
-export {SettingsIdleLoadElement} from './controls/settings_idle_load.js';
 // <if expr="not is_chromeos">
 export {DefaultBrowserBrowserProxy, DefaultBrowserBrowserProxyImpl, DefaultBrowserInfo} from './default_browser_page/default_browser_browser_proxy.js';
 export {SettingsDefaultBrowserPageElement} from './default_browser_page/default_browser_page.js';
@@ -68,6 +66,9 @@ export {SettingsGlicPageElement, SettingsGlicPageFeaturePrefName} from './glic_p
 // </if>
 export {HatsBrowserProxy, HatsBrowserProxyImpl, SafeBrowsingSetting, SecurityPageInteraction, TrustSafetyInteraction} from './hats_browser_proxy.js';
 export {loadTimeData} from './i18n_setup.js';
+// <if expr="not is_chromeos">
+export {convertLanguageCodeForChrome, convertLanguageCodeForTranslate, getBaseLanguage, isTranslateBaseLanguage} from './languages_page/languages_util.js';
+// </if>
 export {AiPageCompareInteractions, AiPageComposeInteractions, AiPageHistorySearchInteractions, AiPageInteractions, AiPageTabOrganizationInteractions, CardBenefitsUserAction, CvcDeletionUserAction, DeleteBrowsingDataAction, MetricsBrowserProxy, MetricsBrowserProxyImpl, PrivacyElementInteractions, PrivacyGuideInteractions, PrivacyGuideSettingsStates, PrivacyGuideStepsEligibleAndReached, SafeBrowsingInteractions, SafetyCheckNotificationsModuleInteractions, SafetyCheckUnusedSitePermissionsModuleInteractions, SafetyHubCardState, SafetyHubEntryPoint, SafetyHubModuleType, SafetyHubSurfaces} from './metrics_browser_proxy.js';
 export {NtpExtension, OnStartupBrowserProxy, OnStartupBrowserProxyImpl} from './on_startup_page/on_startup_browser_proxy.js';
 export {SettingsOnStartupPageElement} from './on_startup_page/on_startup_page.js';
@@ -76,11 +77,11 @@ export {EDIT_STARTUP_URL_EVENT, SettingsStartupUrlEntryElement} from './on_start
 export {SettingsStartupUrlsPageElement} from './on_startup_page/startup_urls_page.js';
 export {StartupUrlsPageBrowserProxy, StartupUrlsPageBrowserProxyImpl} from './on_startup_page/startup_urls_page_browser_proxy.js';
 export {pageVisibility, PrivacyPageVisibility, resetPageVisibilityForTesting} from './page_visibility.js';
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 export {AccountManagerBrowserProxy, AccountManagerBrowserProxyImpl} from './people_page/account_manager_browser_proxy.js';
 // </if>
 export {SettingsPeoplePageElement} from './people_page/people_page.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 export {SettingsSyncAccountControlElement} from './people_page/sync_account_control.js';
 // </if>
 export {BATTERY_SAVER_MODE_PREF, SettingsBatteryPageElement} from './performance_page/battery_page.js';
@@ -106,10 +107,13 @@ export {ScrollableMixin} from './scrollable_mixin.js';
 export {ChoiceMadeLocation, SearchEngine, SearchEnginesBrowserProxy, SearchEnginesBrowserProxyImpl, SearchEnginesInfo, SearchEnginesInteractions} from './search_engines_page/search_engines_browser_proxy.js';
 export {SettingsSearchEngineListDialogElement} from './search_page/search_engine_list_dialog.js';
 export {SettingsSearchPageElement} from './search_page/search_page.js';
+export {SettingsSearchPageIndexElement} from './search_page/search_page_index.js';
 export {getSearchManager, SearchManager, SearchRequest, setSearchManagerForTesting} from './search_settings.js';
 export {SettingsMainElement} from './settings_main/settings_main.js';
 export {SettingsMenuElement} from './settings_menu/settings_menu.js';
+export {SearchableViewContainerMixin} from './settings_page/searchable_view_container_mixin.js';
 export {SettingsSectionElement} from './settings_page/settings_section.js';
+export {SettingsViewMixin} from './settings_page/settings_view_mixin.js';
 export {SettingsUiElement} from './settings_ui/settings_ui.js';
 export {SiteFaviconElement} from './site_favicon.js';
 export {convertDateToWindowsEpoch} from './time.js';

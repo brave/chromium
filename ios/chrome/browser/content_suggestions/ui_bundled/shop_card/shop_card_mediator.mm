@@ -12,6 +12,7 @@
 #import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_node.h"
 #import "components/commerce/core/commerce_constants.h"
@@ -129,6 +130,7 @@ int GetImpressionLimit() {
 
 - (void)reset {
   _shopCardItem = nil;
+  _shoppingDataForShopCardFound = false;
 }
 
 #pragma mark - ShopCardFaviconConsumerSource
@@ -177,6 +179,10 @@ int GetImpressionLimit() {
 
 - (void)onPriceTrackedBookmarksReceived:
     (std::vector<const bookmarks::BookmarkNode*>)subscriptions {
+  if (_shoppingDataForShopCardFound) {
+    // Prevent duplicate Magic Stack insertions.
+    return;
+  }
   // Iterate through all subscriptions, find the first recent one with a drop
   // populate item.
   for (const bookmarks::BookmarkNode* bookmark : subscriptions) {
@@ -197,6 +203,7 @@ int GetImpressionLimit() {
       continue;
     }
 
+    _shoppingDataForShopCardFound = true;
     [self populateShopCardItem:specifics bookmark:bookmark];
 
     GURL productImageUrl = GURL(meta->lead_image().url());
@@ -235,7 +242,7 @@ int GetImpressionLimit() {
   std::unique_ptr<payments::CurrencyFormatter> formatter =
       std::make_unique<payments::CurrencyFormatter>(
           specifics.previous_price().currency_code(),
-          GetApplicationContext()->GetApplicationLocale());
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get());
 
   float current_price_micros =
       static_cast<float>(specifics.current_price().amount_micros());

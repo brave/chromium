@@ -33,10 +33,6 @@ BASE_FEATURE(kSynchronizedScrolling,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
-BASE_FEATURE(kZeroCopyRBPPartialRasterWithGpuCompositor,
-             "ZeroCopyRBPPartialRasterWithGpuCompositor",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kMainRepaintScrollPrefersNewContent,
              "MainRepaintScrollPrefersNewContent",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -58,14 +54,6 @@ BASE_FEATURE(kUseDMSAAForTiles,
              base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 );
-
-BASE_FEATURE(kReclaimResourcesDelayedFlushInBackground,
-             "ReclaimResourcesDelayedFlushInBackground",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kDetectHiDpiForMsaa,
-             "DetectHiDpiForMsaa",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kReclaimPrepaintTilesWhenIdle,
              "ReclaimPrepaintTilesWhenIdle",
@@ -92,12 +80,6 @@ BASE_FEATURE(kReclaimOldPrepaintTiles,
 const base::FeatureParam<int> kReclaimDelayInSeconds{&kSmallerInterestArea,
                                                      "reclaim_delay_s", 30};
 
-// This feature can be removed once M136 hits stable as long as no issues are
-// reported that require it to be disabled in finch.
-BASE_FEATURE(kUseMapRectForPixelMovement,
-             "UseMapRectForPixelMovement",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kEvictionThrottlesDraw,
              "EvictionThrottlesDraw",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -105,10 +87,6 @@ BASE_FEATURE(kEvictionThrottlesDraw,
 BASE_FEATURE(kClearCanvasResourcesInBackground,
              "ClearCanvasResourcesInBackground",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kMetricsTracingCalculationReduction,
-             "MetricsTracingCalculationReduction",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kWaitForLateScrollEvents,
              "WaitForLateScrollEvents",
@@ -154,7 +132,7 @@ BASE_FEATURE(kTreeAnimationsInViz,
 
 BASE_FEATURE(kSendExplicitDecodeRequestsImmediately,
              "SendExplicitDecodeRequestsImmediately",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kNewContentForCheckerboardedScrolls,
              "NewContentForCheckerboardedScrolls",
@@ -206,10 +184,6 @@ BASE_FEATURE(kViewTransitionCaptureAndDisplay,
              "ViewTransitionCaptureAndDisplay",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kZeroScrollMetricsUpdate,
-             "ZeroScrollMetricsUpdate",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kViewTransitionFloorTransform,
              "ViewTransitionFloorTransform",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -231,7 +205,7 @@ BASE_FEATURE(kFastPathNoRaster,
 
 BASE_FEATURE(kExportFrameTimingAfterFrameDone,
              "ExportFrameTimingAfterFrameDone",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kInternalBeginFrameSourceOnManyDidNotProduceFrame,
              "InternalBeginFrameSourceOnManyDidNotProduceFrame",
@@ -281,4 +255,11 @@ BASE_FEATURE_PARAM(base::TimeDelta,
                    "max_animation_duration",
                    base::Milliseconds(700));
 
+BASE_FEATURE(kSlimDirectReceiverIpc,
+             "SlimDirectReceiverIpc",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kOverscrollBehaviorRespectedOnAllScrollContainers,
+             "OverscrollBehaviorRespectedOnAllScrollContainers",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 }  // namespace features

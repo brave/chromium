@@ -314,7 +314,7 @@ class ExtensionProtocolsTestBase : public testing::Test,
                    /*incognito_enabled=*/false,
                    /*notifications_disabled=*/false);
     }
-    return RequestOrLoad(extension->GetResourceURL(relative_path),
+    return RequestOrLoad(extension->ResolveExtensionURL(relative_path),
                          network::mojom::RequestDestination::kDocument);
   }
 
@@ -838,8 +838,9 @@ TEST_P(ExtensionProtocolsTest, PathsWithTrailingDotSpaceAreNotAllowed) {
 
   // Loading "/file.html." and "/file.html " should fail.
   for (const std::string suffix : {".", "%20"}) {
-    // Add the suffix manually, as `GetResourceURL` strips trailing spaces.
-    GURL url = GURL(extension->GetResourceURL("file.html").spec() + suffix);
+    // Add the suffix manually, as `ResolveExtensionURL` strips trailing spaces.
+    GURL url =
+        GURL(extension->ResolveExtensionURL("file.html").spec() + suffix);
     EXPECT_EQ(net::ERR_FILE_NOT_FOUND,
               RequestOrLoad(url, network::mojom::RequestDestination::kDocument)
                   .result());

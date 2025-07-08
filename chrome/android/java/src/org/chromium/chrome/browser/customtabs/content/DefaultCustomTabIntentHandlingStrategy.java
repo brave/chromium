@@ -69,7 +69,8 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
                             mCurrentPageVerifier,
                             mNavigationController,
                             mTabProvider.getTab().getWebContents(),
-                            mActivity);
+                            mActivity,
+                            () -> mTabProvider.getTab().isLoading());
             launchHandler.handleInitialIntent(intentDataProvider);
         }
     }
@@ -89,7 +90,7 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         boolean useSpeculation = TextUtils.equals(speculatedUrl, url);
         boolean hasCommitted = !tab.getWebContents().getLastCommittedUrl().isEmpty();
         mCustomTabObserver.trackNextPageLoadForHiddenTab(
-                useSpeculation, hasCommitted, intentDataProvider.getIntent());
+                tab.getWebContents(), useSpeculation, hasCommitted, intentDataProvider.getIntent());
 
         if (useSpeculation) return;
 
@@ -130,7 +131,8 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
                             mCurrentPageVerifier,
                             mNavigationController,
                             mTabProvider.getTab().getWebContents(),
-                            mActivity);
+                            mActivity,
+                            () -> mTabProvider.getTab().isLoading());
             launchHandler.handleNewIntent(intentDataProvider);
         } else {
             loadUrl(intentDataProvider);

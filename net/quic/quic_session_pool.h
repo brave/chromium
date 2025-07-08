@@ -52,6 +52,7 @@
 #include "net/quic/quic_connectivity_monitor.h"
 #include "net/quic/quic_context.h"
 #include "net/quic/quic_crypto_client_config_handle.h"
+#include "net/quic/quic_endpoint.h"
 #include "net/quic/quic_proxy_datagram_client_socket.h"
 #include "net/quic/quic_session_alias_key.h"
 #include "net/quic/quic_session_attempt.h"
@@ -96,6 +97,7 @@ class QuicChromiumConnectionHelper;
 class QuicCryptoClientStreamFactory;
 class QuicServerInfo;
 class QuicSessionPool;
+class QuicSessionAttemptManager;
 class QuicContext;
 class SCTAuditingDelegate;
 class SocketPerformanceWatcherFactory;
@@ -298,21 +300,6 @@ class NET_EXPORT_PRIVATE QuicSessionRequest {
   CompletionOnceCallback host_resolution_callback_;
 
   CompletionOnceCallback create_session_callback_;
-};
-
-// Represents a single QUIC endpoint and the information necessary to attempt
-// a QUIC session.
-struct NET_EXPORT_PRIVATE QuicEndpoint {
-  QuicEndpoint(quic::ParsedQuicVersion quic_version,
-               IPEndPoint ip_endpoint,
-               ConnectionEndpointMetadata metadata);
-  ~QuicEndpoint();
-
-  quic::ParsedQuicVersion quic_version = quic::ParsedQuicVersion::Unsupported();
-  IPEndPoint ip_endpoint;
-  ConnectionEndpointMetadata metadata;
-
-  base::Value::Dict ToValue() const;
 };
 
 // Manages a pool of QuicChromiumClientSessions.
@@ -549,6 +536,14 @@ class NET_EXPORT_PRIVATE QuicSessionPool
       const quic::ParsedQuicVersion& known_quic_version,
       const ConnectionEndpointMetadata& metadata,
       bool svcb_optional) const;
+
+  bool IsHappyEyeballsV3Enabled() const {
+    return host_resolver_->IsHappyEyeballsV3Enabled();
+  }
+
+  QuicSessionAttemptManager* session_attempt_manager() {
+    return session_attempt_manager_.get();
+  }
 
   struct QuicCryptoClientConfigKey;
 
@@ -928,6 +923,8 @@ class NET_EXPORT_PRIVATE QuicSessionPool
 
   quic::DeterministicConnectionIdGenerator connection_id_generator_{
       quic::kQuicDefaultConnectionIdLength};
+
+  std::unique_ptr<QuicSessionAttemptManager> session_attempt_manager_;
 
   std::optional<base::TimeDelta> time_delay_for_waiting_job_for_testing_;
 

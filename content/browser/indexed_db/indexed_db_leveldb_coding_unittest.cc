@@ -796,6 +796,8 @@ TEST(IndexedDBLevelDBCodingTest, ExtractAndCompareIDBKeys) {
 }
 
 TEST(IndexedDBLevelDBCodingTest, EncodeAndCompareIDBKeysWithSentinels) {
+  const char16_t kJunkString[] = {0xdead, 0xbeef, '\0'};
+
   auto keys = std::to_array({
       IndexedDBKey(-15, blink::mojom::IDBKeyType::Number),
       IndexedDBKey(-10, blink::mojom::IDBKeyType::Number),
@@ -813,6 +815,14 @@ TEST(IndexedDBLevelDBCodingTest, EncodeAndCompareIDBKeysWithSentinels) {
       IndexedDBKey(u"baaa"),
       IndexedDBKey(u"baab"),
       IndexedDBKey(u"c"),
+
+      // Some more adventurous strings.
+      IndexedDBKey(u"\xA2"),
+      // Valid UTF16.
+      IndexedDBKey(u"\x4f60\x597d "),
+      // Invalid UTF16. The first character is a truncated UTF-16 character.
+      IndexedDBKey(u"\xd800\x597d"),
+      IndexedDBKey(std::u16string(kJunkString)),
 
       IndexedDBKey(std::string()),
       IndexedDBKey(std::string("\x01")),
@@ -843,20 +853,24 @@ TEST(IndexedDBLevelDBCodingTest, EncodeAndCompareIDBKeysWithSentinels) {
           CreateArrayIDBKey(CreateArrayIDBKey(CreateArrayIDBKey()))),
   });
 
-  for (size_t i = 0; i < keys.size() - 1; ++i) {
+  for (size_t i = 0; i < keys.size(); ++i) {
     const IndexedDBKey& key_a = keys[i];
-    const IndexedDBKey& key_b = keys[i + 1];
+    std::string encoded_a = EncodeSortableIDBKey(key_a);
+    EXPECT_TRUE(encoded_a.size());
 
+    ASSERT_TRUE(DecodeSortableIDBKey(encoded_a).IsValid());
+    EXPECT_TRUE(DecodeSortableIDBKey(encoded_a).Equals(key_a));
+
+    if (i == keys.size() - 1) {
+      break;
+    }
+
+    const IndexedDBKey& key_b = keys[i + 1];
     SCOPED_TRACE(testing::Message() << "Comparing keys " << key_a.DebugString()
                                     << " and " << key_b.DebugString());
 
     EXPECT_TRUE(key_a.IsLessThan(key_b));
-
-    std::string encoded_a;
-    EncodeSortableIDBKey(key_a, &encoded_a);
-    EXPECT_TRUE(encoded_a.size());
-    std::string encoded_b;
-    EncodeSortableIDBKey(key_b, &encoded_b);
+    std::string encoded_b = EncodeSortableIDBKey(key_b);
     EXPECT_TRUE(encoded_b.size());
 
     auto sqlite_compare = [](const std::string& a, const std::string& b) {
@@ -876,8 +890,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeAndCompareIDBKeysWithSentinels) {
   }
   // Also test decoding by treating all test cases as one massive array key.
   const IndexedDBKey all_keys_key(std::move(keys_vec));
-  std::string encoded;
-  EncodeSortableIDBKey(all_keys_key, &encoded);
+  std::string encoded = EncodeSortableIDBKey(all_keys_key);
   IndexedDBKey decoded_value = DecodeSortableIDBKey(encoded);
   ASSERT_TRUE(decoded_value.IsValid());
   EXPECT_TRUE(all_keys_key.Equals(decoded_value))
@@ -937,13 +950,11 @@ TEST(IndexedDBLevelDBCodingTest, EncodeSortableDoubles) {
       SCOPED_TRACE(testing::Message()
                    << "Comparing " << value_a << " and " << value_b);
 
-      std::string encoded_a;
-      EncodeSortableIDBKey(
-          IndexedDBKey(value_a, blink::mojom::IDBKeyType::Number), &encoded_a);
+      std::string encoded_a = EncodeSortableIDBKey(
+          IndexedDBKey(value_a, blink::mojom::IDBKeyType::Number));
       EXPECT_TRUE(encoded_a.size());
-      std::string encoded_b;
-      EncodeSortableIDBKey(
-          IndexedDBKey(value_b, blink::mojom::IDBKeyType::Number), &encoded_b);
+      std::string encoded_b = EncodeSortableIDBKey(
+          IndexedDBKey(value_b, blink::mojom::IDBKeyType::Number));
       EXPECT_TRUE(encoded_b.size());
       EXPECT_EQ(encoded_a.size(), encoded_b.size());
 
@@ -964,8 +975,7 @@ TEST(IndexedDBLevelDBCodingTest, EncodeSortableDoubles) {
 
   for (double value : values) {
     const IndexedDBKey key(value, blink::mojom::IDBKeyType::Number);
-    std::string encoded;
-    EncodeSortableIDBKey(key, &encoded);
+    std::string encoded = EncodeSortableIDBKey(key);
     IndexedDBKey decoded_value = DecodeSortableIDBKey(encoded);
     ASSERT_TRUE(decoded_value.IsValid());
     EXPECT_TRUE(key.Equals(decoded_value))

@@ -59,6 +59,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -96,8 +97,8 @@ class FrontendMenuProvider final : public ContextMenuProvider {
   void ContextMenuItemSelected(unsigned action) override {
     if (!devtools_host_ || action >= DevToolsHost::kMaxContextMenuAction)
       return;
-    devtools_host_->EvaluateScript("DevToolsAPI.contextMenuItemSelected(" +
-                                   String::Number(action) + ")");
+    devtools_host_->EvaluateScript(StrCat(
+        {"DevToolsAPI.contextMenuItemSelected(", String::Number(action), ")"}));
   }
 
  private:
@@ -169,8 +170,8 @@ String DevToolsHost::platform() const {
 void DevToolsHost::sendMessageToEmbedder(const String& message) {
   if (client_) {
     // Strictly convert, as we expect message to be serialized JSON.
-    auto value = base::JSONReader::ReadDict(
-        message.Utf8(WTF::Utf8ConversionMode::kStrict));
+    auto value =
+        base::JSONReader::ReadDict(message.Utf8(Utf8ConversionMode::kStrict));
     if (!value) {
       ScriptState* script_state = ToScriptStateForMainWorld(frontend_frame_);
       if (!script_state)

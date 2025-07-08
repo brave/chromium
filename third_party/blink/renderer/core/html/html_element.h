@@ -114,7 +114,7 @@ class CORE_EXPORT HTMLElement : public Element {
     return HasLocalName(name.LocalName());
   }
 
-  const char* NameInHeapSnapshot() const override;
+  const char* GetHumanReadableName() const override;
 
   String title() const final;
 
@@ -179,6 +179,12 @@ class CORE_EXPORT HTMLElement : public Element {
             const_cast<const Element*>(element)));
   }
 
+  // https://html.spec.whatwg.org/multipage/dom.html#directionality-of-the-attribute
+  // direction_result is the resulting directionality; it is set only
+  // when the return value is not null.
+  const AtomicString& GetDirectionalAttribute(const QualifiedName& attr_name,
+                                              TextDirection& direction_result);
+
   virtual bool IsHTMLBodyElement() const { return false; }
   // TODO(crbug.com/1123606): Remove this virtual method once the fenced frame
   // origin trial is over.
@@ -217,9 +223,10 @@ class CORE_EXPORT HTMLElement : public Element {
 
   virtual String AltText() const { return String(); }
 
-  // unclosedOffsetParent doesn't return Elements which are closed shadow hidden
-  // from this element. offsetLeftForBinding and offsetTopForBinding have their
-  // values adjusted for this as well.
+  // unclosedScrollParent and unclosedOffsetParent don't return Elements which
+  // are closed shadow hidden from this element. offsetLeftForBinding and
+  // offsetTopForBinding have their values adjusted for this as well.
+  Element* unclosedScrollParent();
   Element* unclosedOffsetParent();
   int offsetLeftForBinding();
   int offsetTopForBinding();
@@ -244,7 +251,9 @@ class CORE_EXPORT HTMLElement : public Element {
 
   // Popover API related functions.
   void UpdatePopoverAttribute(const AtomicString&);
-  bool HasPopoverAttribute() const;
+  // IsPopover returns true if the element has popover data (i.e. has the
+  // popover attribute or is the menulist element).
+  bool IsPopover() const;
   PopoverValueType PopoverType() const;
   bool popoverOpen() const;
   // IsPopoverReady returns true if the popover is in a state where it can be

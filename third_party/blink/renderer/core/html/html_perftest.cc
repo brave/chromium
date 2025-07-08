@@ -14,6 +14,7 @@
 
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
+#include "base/strings/string_view_util.h"
 #include "testing/perf/perf_result_reporter.h"
 #include "testing/perf/perf_test.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -65,7 +66,7 @@ TEST(HTMLParsePerfTest, Speedometer) {
     for (int i = 0; i < html_parse_iterations; ++i) {
       for (const base::Value& html : json->GetList()) {
         WTF::String html_wtf(html.GetString());
-        document.body()->setInnerHTML(html_wtf);
+        document.body()->SetInnerHTMLWithoutTrustedTypes(html_wtf);
       }
     }
     base::TimeDelta html_time = html_timer.Elapsed();

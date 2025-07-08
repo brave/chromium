@@ -1031,19 +1031,20 @@ experimental domain Audits
       # Additional information about the Partitioning Blob URL issue.
       PartitioningBlobURLInfo partitioningBlobURLInfo
 
-  type SelectElementAccessibilityIssueReason extends string
+  type ElementAccessibilityIssueReason extends string
     enum
       DisallowedSelectChild
       DisallowedOptGroupChild
       NonPhrasingContentOptionChild
       InteractiveContentOptionChild
       InteractiveContentLegendChild
+      InteractiveContentSummaryDescendant
 
-  # This issue warns about errors in the select element content model.
-  type SelectElementAccessibilityIssueDetails extends object
+  # This issue warns about errors in the select or summary element content model.
+  type ElementAccessibilityIssueDetails extends object
     properties
       DOM.BackendNodeId nodeId
-      SelectElementAccessibilityIssueReason selectElementAccessibilityIssueReason
+      ElementAccessibilityIssueReason elementAccessibilityIssueReason
       boolean hasDisallowedAttributes
 
   type StyleSheetLoadingIssueReason extends string
@@ -1120,7 +1121,7 @@ experimental domain Audits
       FederatedAuthUserInfoRequestIssue
       PropertyRuleIssue
       SharedDictionaryIssue
-      SelectElementAccessibilityIssue
+      ElementAccessibilityIssue
       SRIMessageSignatureIssue
       UserReidentificationIssue
 
@@ -1151,7 +1152,7 @@ experimental domain Audits
       optional PropertyRuleIssueDetails propertyRuleIssueDetails
       optional FederatedAuthUserInfoRequestIssueDetails federatedAuthUserInfoRequestIssueDetails
       optional SharedDictionaryIssueDetails sharedDictionaryIssueDetails
-      optional SelectElementAccessibilityIssueDetails selectElementAccessibilityIssueDetails
+      optional ElementAccessibilityIssueDetails elementAccessibilityIssueDetails
       optional SRIMessageSignatureIssueDetails sriMessageSignatureIssueDetails
       optional UserReidentificationIssueDetails userReidentificationIssueDetails
 
@@ -3385,6 +3386,8 @@ domain DOM
       optional BackendNodeId backendNodeId
       # JavaScript object id of the node wrapper.
       optional Runtime.RemoteObjectId objectId
+      # Include all shadow roots. Equals to false if not specified.
+      experimental optional boolean includeShadowDOM
     returns
       # Outer HTML markup.
       string outerHTML
@@ -3517,7 +3520,8 @@ domain DOM
         # Get the popover target for a given element. In this case, this given
         # element can only be an HTMLFormControlElement (<input>, <button>).
         PopoverTarget
-        # Get the interest target for a given element.
+        # Get the interestfor target (the attribute used to be named
+        # `interesttarget`) for for a given element.
         InterestTarget
         # Get the commandfor target for a given element. In this case, this given
         # element can only be an HTMLButtonElement.
@@ -4489,6 +4493,9 @@ domain Emulation
       boolean mobile
       optional string bitness
       optional boolean wow64
+      # Used to specify User Agent form-factor values.
+      # See https://wicg.github.io/ua-client-hints/#sec-ch-ua-form-factors
+      optional array of string formFactors
 
   # Used to specify sensor types to emulate.
   # See https://w3c.github.io/sensors/#automation for more information.
@@ -4700,6 +4707,11 @@ domain Emulation
         protanopia
         tritanopia
 
+  # Emulates the given OS text scale.
+  command setEmulatedOSTextScale
+    parameters
+      optional number scale
+
   # Overrides the Geolocation Position or Error. Omitting latitude, longitude or
   # accuracy emulates position unavailable.
   command setGeolocationOverride
@@ -4863,6 +4875,13 @@ domain Emulation
     parameters
       # Image types to disable.
       array of DisabledImageType imageTypes
+
+
+  # Override the value of navigator.connection.saveData
+  experimental command setDataSaverOverride
+    parameters
+      # Override value. Omitting the parameter disables the override.
+      optional boolean dataSaverEnabled
 
   experimental command setHardwareConcurrencyOverride
     parameters
@@ -6914,6 +6933,9 @@ domain Network
     properties
       # The outer response of signed HTTP exchange which was received from network.
       Response outerResponse
+      # Whether network response for the signed exchange was accompanied by
+      # extra headers.
+      boolean hasExtraInfo
       # Information about the signed exchange header.
       optional SignedExchangeHeader header
       # Security details for the signed exchange header.
@@ -7658,7 +7680,7 @@ domain Network
 
   experimental type IPAddressSpace extends string
     enum
-      Local
+      Loopback
       Private
       Public
       Unknown
@@ -8240,7 +8262,6 @@ experimental domain Overlay
       searchForNode
       searchForUAShadowDOM
       captureAreaScreenshot
-      showDistances
       none
 
   # Disables domain notifications.
@@ -8514,15 +8535,30 @@ domain Page
       AdFrameType adFrameType
       optional array of AdFrameExplanation explanations
 
-  # Identifies the bottom-most script which caused the frame to be labelled
-  # as an ad.
+  # Identifies the script which caused a script or frame to be labelled as an
+  # ad.
   experimental type AdScriptId extends object
     properties
-      # Script Id of the bottom-most script which caused the frame to be labelled
-      # as an ad.
+      # Script Id of the script which caused a script or frame to be labelled as
+      # an ad.
       Runtime.ScriptId scriptId
-      # Id of adScriptId's debugger.
+      # Id of scriptId's debugger.
       Runtime.UniqueDebuggerId debuggerId
+
+  # Encapsulates the script ancestry and the root script filterlist rule that
+  # caused the frame to be labelled as an ad. Only created when `ancestryChain`
+  # is not empty.
+  experimental type AdScriptAncestry extends object
+    properties
+      # A chain of `AdScriptId`s representing the ancestry of an ad script that
+      # led to the creation of a frame. The chain is ordered from the script
+      # itself (lower level) up to its root ancestor that was flagged by
+      # filterlist.
+      array of AdScriptId ancestryChain
+      # The filterlist rule that caused the root (last) script in
+      # `ancestryChain` to be ad-tagged. Only populated if the rule is
+      # available.
+      optional string rootScriptFilterlistRule
 
   # Indicates whether the frame is a secure context and why it is the case.
   experimental type SecureContextType extends string
@@ -8621,6 +8657,7 @@ domain Page
       join-ad-interest-group
       keyboard-map
       language-detector
+      language-model
       local-fonts
       local-network-access
       magnetometer
@@ -9291,15 +9328,16 @@ domain Page
       # Recommendation for manifest's id attribute to match current id computed from start_url
       optional string recommendedId
 
-  experimental command getAdScriptAncestryIds
+  experimental command getAdScriptAncestry
     parameters
       FrameId frameId
     returns
       # The ancestry chain of ad script identifiers leading to this frame's
-      # creation, ordered from the most immediate script (in the frame creation
+      # creation, along with the root script's filterlist rule. The ancestry
+      # chain is ordered from the most immediate script (in the frame creation
       # stack) to more distant ancestors (that created the immediately preceding
       # script). Only sent if frame is labelled as an ad and ids are available.
-      array of AdScriptId adScriptAncestryIds
+      optional AdScriptAncestry adScriptAncestry
 
   # Returns present frame tree structure.
   command getFrameTree
@@ -9692,25 +9730,25 @@ domain Page
   # Clears seeded compilation cache.
   experimental command clearCompilationCache
 
-  # Enum of possible auto-response for permission / prompt dialogs.
-  experimental type AutoResponseMode extends string
-    enum
-      none
-      autoAccept
-      autoReject
-      autoOptOut
-
   # Sets the Secure Payment Confirmation transaction mode.
   # https://w3c.github.io/secure-payment-confirmation/#sctn-automation-set-spc-transaction-mode
   experimental command setSPCTransactionMode
     parameters
-      AutoResponseMode mode
+      enum mode
+        none
+        autoAccept
+        autoChooseToAuthAnotherWay
+        autoReject
+        autoOptOut
 
   # Extensions for Custom Handlers API:
   # https://html.spec.whatwg.org/multipage/system-state.html#rph-automation
   experimental command setRPHRegistrationMode
     parameters
-      AutoResponseMode mode
+      enum mode
+        none
+        autoAccept
+        autoReject
 
   # Generates a report for testing.
   experimental command generateTestReport
@@ -10032,6 +10070,7 @@ domain Page
       BroadcastChannel
       WebXR
       SharedWorker
+      SharedWorkerMessage
       WebLocks
       WebHID
       WebShare
@@ -10607,10 +10646,6 @@ experimental domain ServiceWorker
       string tag
 
   command enable
-
-  command inspectWorker
-    parameters
-      string versionId
 
   command setForceUpdateOnPageLoad
     parameters
@@ -11509,6 +11544,14 @@ experimental domain Storage
       object body
       AttributionReportingReportResult result
       # If result is `sent`, populated with net/HTTP status.
+      optional integer netError
+      optional string netErrorName
+      optional integer httpStatusCode
+
+  experimental event attributionReportingVerboseDebugReportSent
+    parameters
+      string url
+      optional array of object body
       optional integer netError
       optional string netErrorName
       optional integer httpStatusCode
@@ -13393,15 +13436,30 @@ experimental domain PWA
       integer badgeCount
       array of FileHandler fileHandlers
 
-  # Installs the given manifest identity, optionally using the given install_url
-  # or IWA bundle location.
+  # Installs the given manifest identity, optionally using the given installUrlOrBundleUrl
   #
-  # TODO(crbug.com/337872319) Support IWA to meet the following specific
-  # requirement.
-  # IWA-specific install description: If the manifest_id is isolated-app://,
-  # install_url_or_bundle_url is required, and can be either an http(s) URL or
-  # file:// URL pointing to a signed web bundle (.swbn). The .swbn file's
-  # signing key must correspond to manifest_id. If Chrome is not in IWA dev
+  # IWA-specific install description:
+  # manifestId corresponds to isolated-app:// + web_package::SignedWebBundleId
+  #
+  # File installation mode:
+  # The installUrlOrBundleUrl can be either file:// or http(s):// pointing
+  # to a signed web bundle (.swbn). In this case SignedWebBundleId must correspond to
+  # The .swbn file's signing key.
+  #
+  # Dev proxy installation mode:
+  # installUrlOrBundleUrl must be http(s):// that serves dev mode IWA.
+  # web_package::SignedWebBundleId must be of type dev proxy.
+  #
+  # The advantage of dev proxy mode is that all changes to IWA
+  # automatically will be reflected in the running app without
+  # reinstallation.
+  #
+  # To generate bundle id for proxy mode:
+  # 1. Generate 32 random bytes.
+  # 2. Add a specific suffix 0x00 at the end.
+  # 3. Encode the entire sequence using Base32 without padding.
+  #
+  # If Chrome is not in IWA dev
   # mode, the installation will fail, regardless of the state of the allowlist.
   command install
     parameters

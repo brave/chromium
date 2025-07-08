@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Rezultati sa ljudima se trenutno ne prikazuju. Probajte sa drugim upitom.</translation>
 <translation id="1815850098929213707">Izabrani taster je <ph name="KEYS" />. Dodirnite dugme da biste izmenili kontrolu</translation>
 <translation id="1818174214124933000">Kada izaberete Pošalji, povratne informacije i sadržaj (prikazano u nastavku) šalju se Google-u, pregledaju ih ljudi i koriste se za obuku ili poboljšanje naših proizvoda i usluga u skladu sa <ph name="LINK_POLICY_BEGIN" />politikom privatnosti<ph name="LINK_POLICY_END" /> i <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google uslovima korišćenja usluge<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Nastavnik je poslao resurs koji nije podržan. Obavestite ga o tome.</translation>
 <translation id="1823120442877418684">Znakovi</translation>
 <translation id="1827738518074806965">Likovna galerija</translation>
 <translation id="183287940576828840">Uvredljivo ili nije bezbedno</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Prekidač rasporeda</translation>
 <translation id="224421911978987610">duga ekspozicija</translation>
 <translation id="2244834438220057800">zelene</translation>
+<translation id="2248689665683494517">minimalistička mrtva priroda sa nekoliko cvetova bulke u staklenoj vazi na crnoj pozadini</translation>
 <translation id="225692081236532131">Status aktivacije</translation>
 <translation id="2267285889943769271">Dodaj snimak ekrana</translation>
 <translation id="2268044343513325586">Preciziraj</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">šifona</translation>
 <translation id="4310735698903592804">Nedavne pozadine koje omogućava Google AI</translation>
 <translation id="4320904097188876154">fluorescentno roze</translation>
+<translation id="432961742358282111">Kliknite desnim tasterom ili pritisnite i zadržite da biste dobili definicije, prevode ili konverzije jedinica. Koristite taster sa strelicom nalevo ili nadesno da biste upravljali ovom funkcijom.</translation>
 <translation id="4333390807948134856">Taster <ph name="KEY_NAME" /> je pritisnut</translation>
 <translation id="4334293042716981313">Možete i da <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />napišete svoj upit<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">taster</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Pitajte stručnjake na Chromebook forumu pomoći</translation>
-<translation id="7309823890857024809">minimalistička mrtva priroda sa nekoliko stabljika bulke u staklenoj vazi na crnoj pozadini</translation>
 <translation id="7311368985037279727">boja tastature</translation>
 <translation id="7317831949569936035">Registracija za školu</translation>
 <translation id="7319430975418800333">A3</translation>

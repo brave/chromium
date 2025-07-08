@@ -202,6 +202,18 @@ Rankings::ScopedRankingsBlock::ScopedRankingsBlock(Rankings* rankings,
                                                    CacheRankingsBlock* node)
     : std::unique_ptr<CacheRankingsBlock>(node), rankings_(rankings) {}
 
+Rankings::ScopedRankingsBlock::~ScopedRankingsBlock() {
+  rankings_->FreeRankingsBlock(get());
+}
+
+// scoped_ptr::reset will delete `p`.
+void Rankings::ScopedRankingsBlock::reset(CacheRankingsBlock* p) {
+  if (p != get()) {
+    rankings_->FreeRankingsBlock(get());
+  }
+  std::unique_ptr<CacheRankingsBlock>::reset(p);
+}
+
 Rankings::Iterator::Iterator() = default;
 
 void Rankings::Iterator::Reset() {
@@ -614,7 +626,7 @@ bool Rankings::GetRanking(CacheRankingsBlock* rankings) {
   }
 
   // Note that we should not leave this module without deleting rankings first.
-  rankings->SetData(entry->rankings()->Data());
+  rankings->SetData(entry->rankings()->AllData());
 
   return true;
 }

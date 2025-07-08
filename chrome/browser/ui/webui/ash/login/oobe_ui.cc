@@ -76,6 +76,7 @@
 #include "chrome/browser/ui/webui/ash/login/family_link_notice_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/fingerprint_setup_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/fjord_oobe_util.h"
+#include "chrome/browser/ui/webui/ash/login/fjord_touch_controller_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_info_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gemini_intro_screen_handler.h"
@@ -331,8 +332,6 @@ void CreateAndAddOobeUIDataSource(Profile* profile,
                      features::IsBootAnimationEnabled());
   source->AddBoolean("isOobeAssistantEnabled",
                      !features::IsOobeSkipAssistantEnabled());
-  source->AddBoolean("isOobeGaiaInfoScreenEnabled",
-                     features::IsOobeGaiaInfoScreenEnabled());
   source->AddBoolean("isChoobeEnabled", features::IsOobeChoobeEnabled());
   source->AddBoolean("isSoftwareUpdateEnabled",
                      features::IsOobeSoftwareUpdateEnabled());
@@ -345,6 +344,7 @@ void CreateAndAddOobeUIDataSource(Profile* profile,
 
   source->AddBoolean("isDrivePinningEnabled",
                      drive::util::IsOobeDrivePinningScreenEnabled());
+  source->AddBoolean("isFjordOobeEnabled", fjord_util::ShouldShowFjordOobe());
 
   // Whether the timings in oobe_trace.js will be output to the console.
   source->AddBoolean(
@@ -580,9 +580,7 @@ void OobeUI::ConfigureOobeDisplay() {
     AddScreenHandler(std::make_unique<TouchpadScrollScreenHandler>());
   }
 
-  if (features::IsOobeGaiaInfoScreenEnabled()) {
-    AddScreenHandler(std::make_unique<GaiaInfoScreenHandler>());
-  }
+  AddScreenHandler(std::make_unique<GaiaInfoScreenHandler>());
 
   if (features::IsOobeDisplaySizeEnabled()) {
     AddScreenHandler(std::make_unique<DisplaySizeScreenHandler>());
@@ -610,6 +608,10 @@ void OobeUI::ConfigureOobeDisplay() {
   }
 
   AddScreenHandler(std::make_unique<RemoteActivityNotificationScreenHandler>());
+
+  if (fjord_util::ShouldShowFjordOobe()) {
+    AddScreenHandler(std::make_unique<FjordTouchControllerScreenHandler>());
+  }
 
   Profile* const profile = Profile::FromWebUI(web_ui());
   // Set up the chrome://theme/ source, for Chrome logo.

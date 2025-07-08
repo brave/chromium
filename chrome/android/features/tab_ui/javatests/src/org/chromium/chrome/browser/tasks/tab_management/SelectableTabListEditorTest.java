@@ -51,7 +51,6 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -98,9 +97,10 @@ import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.BookmarkTestUtil;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
@@ -133,13 +133,9 @@ public class SelectableTabListEditorTest {
     private static final String PAGE_WITH_NO_CANONICAL_URL =
             "/chrome/test/data/android/share/link_share_no_canonical.html";
 
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -147,8 +143,8 @@ public class SelectableTabListEditorTest {
     public ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_MOBILE_TAB_SWITCHER)
-                    .setRevision(11)
-                    .setDescription("Border radius update.")
+                    .setRevision(12)
+                    .setDescription("Toolbar string update.")
                     .build();
 
     @Mock private Callback<RecyclerViewPosition> mSetRecyclerViewPosition;
@@ -169,10 +165,12 @@ public class SelectableTabListEditorTest {
     private BookmarkModel mBookmarkModel;
     private AppHeaderCoordinator mAppHeaderStateProvider;
     private ObservableSupplierImpl<EdgeToEdgeController> mEdgeToEdgeSupplier;
+    private WebPageStation mPage;
 
     @Before
     public void setUp() throws Exception {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        mPage = mActivityTestRule.startOnBlankPage();
+        ChromeTabbedActivity cta = mPage.getActivity();
         // Eagerly inflate the tab switcher.
 
         boolean isTabSwitcherReady =
@@ -201,7 +199,7 @@ public class SelectableTabListEditorTest {
                                     .getCurrentTabGroupModelFilterSupplier();
                     mAppHeaderStateProvider =
                             (AppHeaderCoordinator)
-                                    sActivityTestRule
+                                    mActivityTestRule
                                             .getActivity()
                                             .getRootUiCoordinatorForTesting()
                                             .getDesktopWindowStateManager();
@@ -224,7 +222,9 @@ public class SelectableTabListEditorTest {
                                     mModalDialogManager,
                                     mAppHeaderStateProvider,
                                     mEdgeToEdgeSupplier,
-                                    CreationMode.FULL_SCREEN);
+                                    CreationMode.FULL_SCREEN,
+                                    /* undoBarExplicitTrigger= */ null,
+                                    /* componentName= */ null);
 
                     mTabListEditorController = mTabListEditorCoordinator.getController();
                     mTabListEditorLayout =
@@ -237,7 +237,7 @@ public class SelectableTabListEditorTest {
     @After
     public void tearDown() {
         if (mTabListEditorCoordinator != null) {
-            if (sActivityTestRule.getActivity().findViewById(R.id.app_menu_list) != null) {
+            if (mActivityTestRule.getActivity().findViewById(R.id.app_menu_list) != null) {
                 Espresso.pressBack();
             }
 
@@ -249,11 +249,11 @@ public class SelectableTabListEditorTest {
                         mTabListEditorCoordinator.destroy();
                     });
 
-            if (sActivityTestRule
+            if (mActivityTestRule
                     .getActivity()
                     .getLayoutManager()
                     .isLayoutVisible(LayoutType.TAB_SWITCHER)) {
-                TabUiTestHelper.leaveTabSwitcher(sActivityTestRule.getActivity());
+                TabUiTestHelper.leaveTabSwitcher(mActivityTestRule.getActivity());
             }
         }
         ThreadUtils.runOnUiThreadBlocking(
@@ -268,17 +268,17 @@ public class SelectableTabListEditorTest {
         for (int i = 0; i < num - 1; i++) {
             ChromeTabUtils.newTabFromMenu(
                     InstrumentationRegistry.getInstrumentation(),
-                    sActivityTestRule.getActivity(),
+                    mActivityTestRule.getActivity(),
                     isIncognito,
                     true);
-            sActivityTestRule.loadUrl("about:blank");
+            mActivityTestRule.loadUrl("about:blank");
         }
     }
 
     private void createNewTab(@TabLaunchType int launchType, boolean isIncognito) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    sActivityTestRule
+                    mActivityTestRule
                             .getActivity()
                             .getTabCreator(isIncognito)
                             .createNewTab(new LoadUrlParams("about:blank"), launchType, null);
@@ -287,9 +287,11 @@ public class SelectableTabListEditorTest {
 
     private void prepareBlankTabWithThumbnail(int num, boolean isIncognito) {
         if (isIncognito) {
-            TabUiTestHelper.prepareTabsWithThumbnail(sActivityTestRule, 0, num, "about:blank");
+            TabUiTestHelper.prepareTabsWithThumbnail(
+                    mActivityTestRule.getActivityTestRule(), 0, num, "about:blank");
         } else {
-            TabUiTestHelper.prepareTabsWithThumbnail(sActivityTestRule, num, 0, "about:blank");
+            TabUiTestHelper.prepareTabsWithThumbnail(
+                    mActivityTestRule.getActivityTestRule(), num, 0, "about:blank");
         }
     }
 
@@ -303,10 +305,10 @@ public class SelectableTabListEditorTest {
         for (String url : urls) {
             ChromeTabUtils.newTabFromMenu(
                     InstrumentationRegistry.getInstrumentation(),
-                    sActivityTestRule.getActivity(),
+                    mActivityTestRule.getActivity(),
                     isIncognito,
                     true);
-            sActivityTestRule.loadUrl(url);
+            mActivityTestRule.loadUrl(url);
         }
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -337,14 +339,14 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
                                     IconPosition.START));
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
                                     IconPosition.START));
@@ -356,7 +358,7 @@ public class SelectableTabListEditorTest {
                 .verifyToolbarActionViewDisabled(R.id.tab_list_editor_group_menu_item)
                 .verifyToolbarActionViewWithText(R.id.tab_list_editor_group_menu_item, "Group tabs")
                 .verifyToolbarSelectionTextWithResourceId(
-                        R.string.tab_selection_editor_toolbar_select_tabs)
+                        R.string.tab_selection_editor_toolbar_select_items)
                 .verifyAdapterHasItemCount(tabs.size())
                 .verifyHasAtLeastNItemVisible(1);
         mRobot.actionRobot.clickToolbarMenuButton();
@@ -367,25 +369,26 @@ public class SelectableTabListEditorTest {
     @Test
     @RequiresApi(Build.VERSION_CODES.R)
     @EnableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
-    @Restriction({DeviceFormFactor.TABLET, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
+    @Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     @Feature("DesktopWindow")
     @SmallTest
     public void testMarginWithAppHeaders() {
         // Height to apply as top margin.
         int appHeaderHeight =
-                sActivityTestRule
+                mActivityTestRule
                         .getActivity()
                         .getResources()
                         .getDimensionPixelSize(R.dimen.tab_strip_height);
         Rect windowRect = new Rect();
-        sActivityTestRule.getActivity().getWindow().getDecorView().getGlobalVisibleRect(windowRect);
+        mActivityTestRule.getActivity().getWindow().getDecorView().getGlobalVisibleRect(windowRect);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Trigger desktop window - set app headers
                     Rect widestUnoccludedRect =
                             new Rect(windowRect.left, 0, windowRect.right, appHeaderHeight);
                     var state = new AppHeaderState(windowRect, widestUnoccludedRect, true);
-                    mAppHeaderStateProvider.setStateForTesting(true, state);
+                    mAppHeaderStateProvider.setStateForTesting(
+                            /* isInDesktopWindow= */ true, state, /* isFocused= */ true);
                 });
 
         prepareBlankTab(2, false);
@@ -398,7 +401,8 @@ public class SelectableTabListEditorTest {
                 () -> {
                     // Exit desktop window.
                     var state = new AppHeaderState(windowRect, new Rect(), false);
-                    mAppHeaderStateProvider.setStateForTesting(false, state);
+                    mAppHeaderStateProvider.setStateForTesting(
+                            /* isInDesktopWindow= */ false, state, /* isFocused= */ true);
                 });
 
         // Verify margin is reset.
@@ -418,13 +422,13 @@ public class SelectableTabListEditorTest {
         mRobot.actionRobot.clickItemAtAdapterPosition(0);
         mRobot.resultRobot
                 .verifyItemSelectedAtAdapterPosition(0)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
 
         mRobot.actionRobot.clickItemAtAdapterPosition(0);
         mRobot.resultRobot
                 .verifyItemNotSelectedAtAdapterPosition(0)
                 .verifyToolbarSelectionTextWithResourceId(
-                        R.string.tab_selection_editor_toolbar_select_tabs);
+                        R.string.tab_selection_editor_toolbar_select_items);
     }
 
     @Test
@@ -440,23 +444,23 @@ public class SelectableTabListEditorTest {
         mRobot.actionRobot.clickActionButtonAdapterPosition(0, R.id.action_button);
         mRobot.resultRobot
                 .verifyItemSelectedAtAdapterPosition(0)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
 
         mRobot.actionRobot.clickActionButtonAdapterPosition(1, R.id.action_button);
         mRobot.resultRobot
                 .verifyItemSelectedAtAdapterPosition(1)
-                .verifyToolbarSelectionText("2 tabs");
+                .verifyToolbarSelectionText("2 items");
 
         mRobot.actionRobot.clickActionButtonAdapterPosition(1, R.id.action_button);
         mRobot.resultRobot
                 .verifyItemNotSelectedAtAdapterPosition(1)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
 
         mRobot.actionRobot.clickActionButtonAdapterPosition(0, R.id.action_button);
         mRobot.resultRobot
                 .verifyItemNotSelectedAtAdapterPosition(0)
                 .verifyToolbarSelectionTextWithResourceId(
-                        R.string.tab_selection_editor_toolbar_select_tabs);
+                        R.string.tab_selection_editor_toolbar_select_items);
     }
 
     @Test
@@ -505,7 +509,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -531,7 +535,7 @@ public class SelectableTabListEditorTest {
     @Test
     @MediumTest
     public void testUndoToolbarGroup() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareBlankTab(2, false);
         prepareBlankTabGroup(2, false);
         List<Tab> tabs = getTabsInCurrentTabGroupModelFilter();
@@ -542,7 +546,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -576,13 +580,13 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
                                     IconPosition.START));
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
@@ -631,7 +635,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
                                     IconPosition.START));
@@ -663,7 +667,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
                                     IconPosition.START));
@@ -681,7 +685,7 @@ public class SelectableTabListEditorTest {
 
         mRobot.resultRobot
                 .verifyToolbarActionViewEnabled(closeId)
-                .verifyToolbarSelectionText("5 tabs");
+                .verifyToolbarSelectionText("3 items");
 
         View close = mTabListEditorLayout.getToolbar().findViewById(closeId);
         assertEquals("Close 5 selected tabs", close.getContentDescription());
@@ -706,7 +710,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -726,7 +730,7 @@ public class SelectableTabListEditorTest {
 
         mRobot.resultRobot
                 .verifyToolbarActionViewEnabled(groupId)
-                .verifyToolbarSelectionText("5 tabs");
+                .verifyToolbarSelectionText("4 items");
 
         View close = mTabListEditorLayout.getToolbar().findViewById(groupId);
         assertEquals("Group 5 selected tabs", close.getContentDescription());
@@ -745,7 +749,8 @@ public class SelectableTabListEditorTest {
         prepareBlankTabGroup(3, false);
         prepareBlankTabGroup(1, false);
         prepareBlankTabGroup(2, false);
-        TabUiTestHelper.createTabsWithThumbnail(sActivityTestRule, 1, "about:blank", false);
+        TabUiTestHelper.createTabsWithThumbnail(
+                mActivityTestRule.getActivityTestRule(), 1, "about:blank", false);
         List<Tab> tabs = getTabsInCurrentTabGroupModelFilter();
         List<Tab> beforeTabOrder = getTabsInCurrentTabModel();
 
@@ -757,15 +762,15 @@ public class SelectableTabListEditorTest {
         assertEquals(selectedTab, mTabModelSelector.getCurrentTab());
 
         // Enter tab switcher to get all thumbnails.
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
         TabUiTestHelper.verifyAllTabsHaveThumbnail(
-                sActivityTestRule.getActivity().getCurrentTabModel());
+                mActivityTestRule.getActivity().getCurrentTabModel());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -787,7 +792,7 @@ public class SelectableTabListEditorTest {
 
         mRobot.resultRobot
                 .verifyToolbarActionViewEnabled(groupId)
-                .verifyToolbarSelectionText("9 tabs");
+                .verifyToolbarSelectionText("6 items");
 
         View group = mTabListEditorLayout.getToolbar().findViewById(groupId);
         assertEquals("Group 9 selected tabs", group.getContentDescription());
@@ -809,10 +814,10 @@ public class SelectableTabListEditorTest {
         mRobot.actionRobot.clickToolbarActionView(groupId);
 
         mRobot.resultRobot.verifyTabListEditorIsHidden();
-        TabUiTestHelper.verifyTabSwitcherCardCount(sActivityTestRule.getActivity(), 1);
+        TabUiTestHelper.verifyTabSwitcherCardCount(mActivityTestRule.getActivity(), 1);
 
         CriteriaHelper.pollInstrumentationThread(TabUiTestHelper::verifyUndoBarShowingAndClickUndo);
-        TabUiTestHelper.verifyTabSwitcherCardCount(sActivityTestRule.getActivity(), 6);
+        TabUiTestHelper.verifyTabSwitcherCardCount(mActivityTestRule.getActivity(), 6);
 
         assertEquals(selectedTab, mTabModelSelector.getCurrentTab());
         List<Tab> finalTabs = getTabsInCurrentTabModel();
@@ -834,7 +839,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
                                     IconPosition.START));
@@ -864,15 +869,15 @@ public class SelectableTabListEditorTest {
         List<Tab> tabs = getTabsInCurrentTabModel();
 
         final String httpsCanonicalUrl =
-                sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
-        sActivityTestRule.loadUrl(httpsCanonicalUrl);
+                mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
+        mActivityTestRule.loadUrl(httpsCanonicalUrl);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorShareAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -888,7 +893,7 @@ public class SelectableTabListEditorTest {
 
         mRobot.resultRobot
                 .verifyToolbarActionViewEnabled(shareId)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
 
         View share = mTabListEditorLayout.getToolbar().findViewById(shareId);
         assertEquals("Share 1 selected tab", share.getContentDescription());
@@ -899,7 +904,7 @@ public class SelectableTabListEditorTest {
                 () ->
                         Criteria.checkThat(
                                 "Share sheet was not shown.",
-                                sActivityTestRule
+                                mActivityTestRule
                                         .getActivity()
                                         .getRootUiCoordinatorForTesting()
                                         .getBottomSheetController(),
@@ -925,15 +930,15 @@ public class SelectableTabListEditorTest {
         List<Tab> tabs = getTabsInCurrentTabModel();
 
         final String httpsCanonicalUrl =
-                sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
-        sActivityTestRule.loadUrl(httpsCanonicalUrl);
+                mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
+        mActivityTestRule.loadUrl(httpsCanonicalUrl);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorShareAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -960,10 +965,10 @@ public class SelectableTabListEditorTest {
     @RequiresRestart("Share sheet is sometimes persistent when calling pressBack to retract")
     public void testToolbarMenuItem_ShareActionGroupsOnly() {
         ArrayList<String> urls = new ArrayList<>();
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL));
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
 
         prepareTabGroupWithUrls(urls, false);
         prepareBlankTabGroup(2, false);
@@ -981,7 +986,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorShareAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1010,14 +1015,14 @@ public class SelectableTabListEditorTest {
         prepareBlankTab(2, false);
 
         final String httpsCanonicalUrl =
-                sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
-        sActivityTestRule.loadUrl(httpsCanonicalUrl);
+                mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
+        mActivityTestRule.loadUrl(httpsCanonicalUrl);
 
         prepareBlankTabGroup(2, false);
 
         ArrayList<String> urls = new ArrayList<>();
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
         prepareTabGroupWithUrls(urls, false);
 
         List<Tab> tabs = getTabsInCurrentTabGroupModelFilter();
@@ -1034,7 +1039,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorShareAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1071,7 +1076,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorShareAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1083,7 +1088,7 @@ public class SelectableTabListEditorTest {
         mRobot.actionRobot.clickItemAtAdapterPosition(0).clickItemAtAdapterPosition(1);
         mRobot.resultRobot
                 .verifyToolbarActionViewDisabled(shareId)
-                .verifyToolbarSelectionText("2 tabs");
+                .verifyToolbarSelectionText("2 items");
     }
 
     @Test
@@ -1094,8 +1099,8 @@ public class SelectableTabListEditorTest {
         prepareBlankTab(1, false);
 
         final String httpsCanonicalUrl =
-                sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
-        sActivityTestRule.loadUrl(httpsCanonicalUrl);
+                mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
+        mActivityTestRule.loadUrl(httpsCanonicalUrl);
 
         List<Tab> tabs = getTabsInCurrentTabModel();
 
@@ -1104,7 +1109,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorBookmarkAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1148,7 +1153,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorBookmarkAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1191,12 +1196,12 @@ public class SelectableTabListEditorTest {
     @DisabledTest(message = "crbug.com/378827528")
     public void testToolbarMenuItem_BookmarkActionTabsWithGroups() {
         final String httpsCanonicalUrl =
-                sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
-        sActivityTestRule.loadUrl(httpsCanonicalUrl);
+                mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTPS_CANONICAL_URL);
+        mActivityTestRule.loadUrl(httpsCanonicalUrl);
 
         ArrayList<String> urls = new ArrayList<>();
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
-        urls.add(sActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_HTTP_CANONICAL_URL));
+        urls.add(mActivityTestRule.getTestServer().getURL(PAGE_WITH_NO_CANONICAL_URL));
 
         prepareTabGroupWithUrls(urls, false);
         List<Tab> tabs = getTabsInCurrentTabGroupModelFilter();
@@ -1206,7 +1211,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorBookmarkAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1222,7 +1227,7 @@ public class SelectableTabListEditorTest {
 
         mRobot.resultRobot
                 .verifyToolbarActionViewEnabled(bookmarkId)
-                .verifyToolbarSelectionText("3 tabs");
+                .verifyToolbarSelectionText("2 items");
 
         View bookmark = mTabListEditorLayout.getToolbar().findViewById(bookmarkId);
         assertEquals("Bookmark 3 selected tabs", bookmark.getContentDescription());
@@ -1257,7 +1262,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorSelectionAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1298,15 +1303,15 @@ public class SelectableTabListEditorTest {
         List<Tab> tabs = getTabsInCurrentTabModel();
 
         // Enter tab switcher to get all thumbnails.
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
         TabUiTestHelper.verifyAllTabsHaveThumbnail(
-                sActivityTestRule.getActivity().getCurrentTabModel());
+                mActivityTestRule.getActivity().getCurrentTabModel());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -1337,15 +1342,15 @@ public class SelectableTabListEditorTest {
         List<Tab> tabs = getTabsInCurrentTabModel();
 
         // Enter tab switcher to get all thumbnails.
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
         TabUiTestHelper.verifyAllTabsHaveThumbnail(
-                sActivityTestRule.getActivity().getCurrentTabModel());
+                mActivityTestRule.getActivity().getCurrentTabModel());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -1378,15 +1383,15 @@ public class SelectableTabListEditorTest {
         List<Tab> tabs = getTabsInCurrentTabModel();
 
         // Enter tab switcher to get all thumbnails.
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
         TabUiTestHelper.verifyAllTabsHaveThumbnail(
-                sActivityTestRule.getActivity().getCurrentTabModel());
+                mActivityTestRule.getActivity().getCurrentTabModel());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorSelectionAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.ICON_AND_TEXT,
                                     IconPosition.END));
@@ -1406,7 +1411,7 @@ public class SelectableTabListEditorTest {
                 .verifyItemSelectedAtAdapterPosition(0)
                 .verifyItemSelectedAtAdapterPosition(1)
                 .verifyItemSelectedAtAdapterPosition(2)
-                .verifyToolbarSelectionText("3 tabs");
+                .verifyToolbarSelectionText("3 items");
         TabListRecyclerView tabListRecyclerView =
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
@@ -1424,7 +1429,7 @@ public class SelectableTabListEditorTest {
                 .verifyItemNotSelectedAtAdapterPosition(0)
                 .verifyItemNotSelectedAtAdapterPosition(1)
                 .verifyItemNotSelectedAtAdapterPosition(2)
-                .verifyToolbarSelectionText("Select tabs");
+                .verifyToolbarSelectionText("Select items");
         TabUiTestHelper.waitForThumbnailsToFetch(tabListRecyclerView);
 
         ChromeRenderTestRule.sanitize(mTabListEditorLayout);
@@ -1444,7 +1449,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -1485,7 +1490,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -1514,7 +1519,7 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
@@ -1630,13 +1635,13 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorSelectionAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
                                     IconPosition.START));
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
                                     IconPosition.START));
@@ -1670,13 +1675,13 @@ public class SelectableTabListEditorTest {
                     List<TabListEditorAction> actions = new ArrayList<>();
                     actions.add(
                             TabListEditorCloseAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     ShowMode.IF_ROOM,
                                     ButtonType.TEXT,
                                     IconPosition.START));
                     actions.add(
                             TabListEditorLegacyGroupAction.createAction(
-                                    sActivityTestRule.getActivity(),
+                                    mActivityTestRule.getActivity(),
                                     mCreationDialogManager,
                                     ShowMode.MENU_ONLY,
                                     ButtonType.TEXT,
@@ -1784,7 +1789,7 @@ public class SelectableTabListEditorTest {
         mRobot.resultRobot
                 .verifyAdapterHasItemCount(2)
                 .verifyItemSelectedAtAdapterPosition(0)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -1794,7 +1799,7 @@ public class SelectableTabListEditorTest {
         mRobot.resultRobot
                 .verifyAdapterHasItemCount(2)
                 .verifyItemNotSelectedAtAdapterPosition(0)
-                .verifyToolbarSelectionText("Select tabs");
+                .verifyToolbarSelectionText("Select items");
 
         mRobot.actionRobot.clickActionButtonAdapterPosition(0, R.id.action_button);
         mRobot.resultRobot.verifyAdapterHasItemCount(1).verifyItemNotSelectedAtAdapterPosition(0);
@@ -1807,13 +1812,13 @@ public class SelectableTabListEditorTest {
         mRobot.resultRobot
                 .verifyAdapterHasItemCount(1)
                 .verifyItemSelectedAtAdapterPosition(0)
-                .verifyToolbarSelectionText("1 tab");
+                .verifyToolbarSelectionText("1 item");
     }
 
     @Test
     @MediumTest
     public void testAddToGroupAction_noExistingGroups() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareBlankTab(4, false);
         List<Tab> tabs = getTabsInCurrentTabModel();
 
@@ -1846,7 +1851,7 @@ public class SelectableTabListEditorTest {
     @Test
     @MediumTest
     public void testAddToGroupAction_existingGroups() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareBlankTab(4, false);
         prepareBlankTabGroup(2, false);
         List<Tab> tabs = getTabsInCurrentTabModel();

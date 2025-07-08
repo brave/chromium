@@ -255,7 +255,8 @@ class AttributesCollector {
 
 }  // namespace
 
-gin::WrapperInfo WebAXObjectProxy::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo WebAXObjectProxy::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 WebAXObjectProxy::WebAXObjectProxy(const blink::WebAXObject& object,
                                    WebAXObjectProxy::Factory* factory)
@@ -281,7 +282,8 @@ ui::AXNodeData WebAXObjectProxy::GetAXNodeData() const {
 
 gin::ObjectTemplateBuilder WebAXObjectProxy::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<WebAXObjectProxy>::GetObjectTemplateBuilder(isolate)
+  return gin::DeprecatedWrappable<WebAXObjectProxy>::GetObjectTemplateBuilder(
+             isolate)
       .SetProperty("role", &WebAXObjectProxy::Role)
       .SetProperty("stringValue", &WebAXObjectProxy::StringValue)
       .SetProperty("language", &WebAXObjectProxy::Language)
@@ -2032,21 +2034,6 @@ bool WebAXObjectProxy::HasNonIdentityTransform() {
   gfx::Transform transform;
   accessibility_object_.GetRelativeBounds(container, bounds, transform);
   return !transform.IsIdentity();
-}
-
-RootWebAXObjectProxy::RootWebAXObjectProxy(const blink::WebAXObject& object,
-                                           Factory* factory)
-    : WebAXObjectProxy(object, factory) {}
-
-v8::Local<v8::Object> RootWebAXObjectProxy::GetChildAtIndex(unsigned index) {
-  if (index)
-    return v8::Local<v8::Object>();
-
-  return factory()->GetOrCreate(accessibility_object());
-}
-
-bool RootWebAXObjectProxy::IsRoot() const {
-  return true;
 }
 
 WebAXObjectProxyList::WebAXObjectProxyList(v8::Isolate* isolate,

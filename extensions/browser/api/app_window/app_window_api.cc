@@ -157,7 +157,7 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
       return RespondNow(Error(app_window_constants::kInvalidUrlParameter));
     }
   } else {
-    url = extension()->GetResourceURL(params->url);
+    url = extension()->ResolveExtensionURL(params->url);
     if (!url.is_valid()) {
       return RespondNow(Error(app_window_constants::kInvalidUrlParameter));
     }

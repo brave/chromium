@@ -14,7 +14,6 @@ import org.jni_zero.CalledByNative;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
-import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.R;
@@ -27,7 +26,7 @@ public class DeviceFormFactor {
     /**
      * Desktop form factor.
      *
-     * <p>Based on gn build argument, as identified by <code>isDesktop() == true</code>.
+     * <p>As identified by <code>DeviceInfo.isDesktop() == true</code>.
      */
     public static final String DESKTOP = "Desktop";
 
@@ -43,13 +42,10 @@ public class DeviceFormFactor {
      * Tablet or desktop form factor, including {@code #LARGETABLET} below.
      *
      * <p>Based on screen size of the device, as identified by <code>
-     * isNonMultiDisplayContextOnTablet() == true</code>.
-     *
-     * <p>TODO(crbug.com/415126396): Change to mean <code>
      * isNonMultiDisplayContextOnTablet() == true &&
      * isDesktop() == false</code>.
      */
-    public static final String TABLET = "Tablet";
+    public static final String ONLY_TABLET = "Tablet";
 
     /**
      * Tablet or desktop form factor, including {@code #LARGETABLET} below.
@@ -73,15 +69,6 @@ public class DeviceFormFactor {
 
     /** See {@link #setIsTabletForTesting(boolean)}. */
     private static @Nullable Boolean sIsTabletForTesting;
-
-    /**
-     * Only devices built with IS_DESKTOP_ANDROID will return true.
-     *
-     * @return Whether the device is a Desktop.
-     */
-    public static boolean isDesktop() {
-        return BuildConfig.IS_DESKTOP_ANDROID;
-    }
 
     /**
      * Each activity could be on a different display, and this will just tell you whether the

@@ -35,6 +35,7 @@
 #include "third_party/ink/src/ink/strokes/input/stroke_input_batch.h"
 #include "third_party/ink/src/ink/strokes/stroke.h"
 #include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/transform.h"
 
 static_assert(BUILDFLAG(ENABLE_PDF_INK2), "ENABLE_PDF_INK2 not set to true");
 
@@ -332,13 +333,17 @@ class PdfInkModule {
     SkRect clip_rect;
   };
 
-  // Returns whether the event was handled or not.
+  // Event handlers. Returns whether the event was handled or not.
   bool OnMouseDown(const blink::WebMouseEvent& event);
   bool OnMouseUp(const blink::WebMouseEvent& event);
   bool OnMouseMove(const blink::WebMouseEvent& event);
   bool OnTouchStart(const blink::WebTouchEvent& event);
   bool OnTouchEnd(const blink::WebTouchEvent& event);
   bool OnTouchMove(const blink::WebTouchEvent& event);
+
+  // Helper for event handlers above that deals with potentially missing events.
+  // Can only be called when is_drawing_stroke() returns true.
+  void MaybeFinishStrokeForMissingMouseUpEvent();
 
   // Return values have the same semantics as On{Mouse,Touch}*() above.
   bool StartStroke(const gfx::PointF& position,
@@ -444,11 +449,10 @@ class PdfInkModule {
   }
 
   // Returns true when the user is using a highlighter over selectable text at
-  // `position`.
+  // `position`. Can only be called when is_drawing_stroke() returns true.
   //
   // - Only returns true when the text highlighting feature is enabled.
-  bool IsHighlightingTextAtPosition(const DrawingStrokeState& state,
-                                    const gfx::PointF& position) const;
+  bool IsHighlightingTextAtPosition(const gfx::PointF& position) const;
 
   // Returns the current brush. Must be in a drawing stroke state.
   PdfInkBrush& GetDrawingBrush();
@@ -464,16 +468,15 @@ class PdfInkModule {
   std::vector<ink::InProgressStroke> CreateInProgressStrokeSegmentsFromInputs()
       const;
 
-  // Wrapper around EventPositionToCanonicalPosition(). `page_index` is the page
-  // that `position` is on. The page must be visible.
-  gfx::PointF ConvertEventPositionToCanonicalPosition(
-      const gfx::PointF& position,
-      int page_index);
+  // Wrapper around GetEventToCanonicalTransform(). `page_index` is the page
+  // that the to-be-transformed position is on. The page must be visible.
+  gfx::Transform GetEventToCanonicalTransformForPage(int page_index);
 
   // Helper to convert `position` to a canonical position and record it into
   // `current_tool_state_` for the indicated `timestamp` and `tool_type`.
-  // Can only be called when drawing.
-  void RecordStrokePosition(const gfx::PointF& position,
+  // Can only be called when drawing. Returns whether the operation succeeded or
+  // not.
+  bool RecordStrokePosition(const gfx::PointF& position,
                             base::TimeTicks timestamp,
                             ink::StrokeInput::ToolType tool_type);
 
@@ -528,8 +531,6 @@ class PdfInkModule {
   // Handles the callback for PDF thumbnail generation requests. Sends
   // `thumbnail` to the WebUI.
   void OnGotThumbnail(int page_index, Thumbnail thumbnail);
-
-  void SendContentFocusedMessage();
 
   const raw_ref<PdfInkModuleClient> client_;
 

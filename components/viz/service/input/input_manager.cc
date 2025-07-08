@@ -12,6 +12,7 @@
 
 #include <utility>
 
+#include "base/json/values_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/viz/service/input/render_input_router_delegate_impl.h"
@@ -56,6 +57,11 @@ void ForwardVizInputTransferToken(
       surface_handle, viz_input_token_java);
 }
 
+void DestroyReceiverData(
+    std::unique_ptr<input::InputReceiverData> receiver_data) {
+  receiver_data.reset();
+}
+
 #endif  // BUILDFLAG(IS_ANDROID)
 
 bool IsFrameMetadataAvailable(CompositorFrameSinkSupport* support) {
@@ -95,7 +101,7 @@ constexpr char kStateProcessingResultHistogram[] =
 enum class CreateAndroidInputReceiverResult {
   kSuccessfullyCreated = 0,
   kFailedUnknown = 1,
-  kFailedNullSurfaceControl = 2,
+  // kFailedNullSurfaceControl = 2,
   kFailedNullLooper = 3,
   kFailedNullInputTransferToken = 4,
   kFailedNullCallbacks = 5,
@@ -106,7 +112,9 @@ enum class CreateAndroidInputReceiverResult {
   kRootCompositorFrameSinkDestroyed = 10,
   kFailedChoreographerNotSupported = 11,
   kFailedNullChoreographer = 12,
-  kMaxValue = kFailedNullChoreographer,
+  kFailedNullParentSurfaceControl = 13,
+  kFailedNullChildSurfaceControl = 14,
+  kMaxValue = kFailedNullChildSurfaceControl,
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/android/enums.xml:CreateAndroidInputReceiverResult)
 
@@ -153,6 +161,8 @@ void InputManager::SetupRenderInputRouter(
     const FrameSinkId& frame_sink_id,
     mojo::PendingRemote<blink::mojom::RenderInputRouterClient> rir_client,
     bool force_enable_zoom) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kSetupRenderInputRouter, frame_sink_id);
   // TODO(382291983): Setup RenderInputRouter's mojo connections to renderer.
   render_input_router->SetFlingScheduler(
       MakeFlingScheduler(render_input_router, frame_sink_id));
@@ -177,6 +187,8 @@ void InputManager::OnCreateCompositorFrameSink(
     input::mojom::RenderInputRouterConfigPtr render_input_router_config,
     bool create_input_receiver,
     gpu::SurfaceHandle surface_handle) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kOnCreateCompositorFrameSink, frame_sink_id);
   TRACE_EVENT("viz", "InputManager::OnCreateCompositorFrameSink",
               "config_is_null", !render_input_router_config, "frame_sink_id",
               frame_sink_id);
@@ -186,11 +198,14 @@ void InputManager::OnCreateCompositorFrameSink(
 #if BUILDFLAG(IS_ANDROID)
   if (create_input_receiver) {
     CHECK(is_root);
+    auto cancellable_task =
+        std::make_unique<base::CancelableOnceClosure>(base::BindOnce(
+            &InputManager::CreateOrReuseAndroidInputReceiver,
+            weak_ptr_factory_.GetWeakPtr(), frame_sink_id, surface_handle));
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&InputManager::CreateOrReuseAndroidInputReceiver,
-                       weak_ptr_factory_.GetWeakPtr(), frame_sink_id,
-                       surface_handle));
+        FROM_HERE, cancellable_task->callback());
+    pending_create_input_receiver_callback_.emplace(
+        std::make_pair(frame_sink_id, std::move(cancellable_task)));
     return;
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -244,11 +259,34 @@ void InputManager::OnCreateCompositorFrameSink(
 
 void InputManager::OnDestroyedCompositorFrameSink(
     const FrameSinkId& frame_sink_id) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kOnDestroyedCompositorFrameSink, frame_sink_id);
   TRACE_EVENT("viz", "InputManager::OnDestroyedCompositorFrameSink",
               "frame_sink_id", frame_sink_id);
 #if BUILDFLAG(IS_ANDROID)
-  if (receiver_data_) {
-    receiver_data_->OnDestroyedCompositorFrameSink(frame_sink_id);
+  auto callback_itr =
+      pending_create_input_receiver_callback_.find(frame_sink_id);
+  if (callback_itr != pending_create_input_receiver_callback_.end()) {
+    std::unique_ptr<base::CancelableOnceClosure>& callback =
+        callback_itr->second;
+    callback->Cancel();
+    pending_create_input_receiver_callback_.erase(callback_itr);
+
+    UMA_HISTOGRAM_ENUMERATION(
+        kInputReceiverCreationResultHistogram,
+        CreateAndroidInputReceiverResult::kRootCompositorFrameSinkDestroyed);
+
+    return;
+  }
+
+  if (receiver_data_ && receiver_data_->root_frame_sink_id() == frame_sink_id) {
+    receiver_data_->OnDestroyedCompositorFrameSink();
+    if (base::android::android_info::sdk_int() >=
+        base::android::android_info::SdkVersion::SDK_VERSION_BAKLAVA) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&DestroyReceiverData, std::move(receiver_data_)));
+    }
   }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -290,6 +328,9 @@ void InputManager::OnDestroyedCompositorFrameSink(
 void InputManager::OnRegisteredFrameSinkHierarchy(
     const FrameSinkId& parent_frame_sink_id,
     const FrameSinkId& child_frame_sink_id) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kOnRegisteredFrameSinkHierarchy,
+      child_frame_sink_id);
   // Either the `child_frame_sink_id` corresponds to a layer tree frame sink, or
   // the OnCreateCompositorFrameSink call hasn't came in yet. We don't care
   // about the former case in InputManager, for the later correct construction
@@ -317,6 +358,9 @@ void InputManager::OnRegisteredFrameSinkHierarchy(
 void InputManager::OnUnregisteredFrameSinkHierarchy(
     const FrameSinkId& parent_frame_sink_id,
     const FrameSinkId& child_frame_sink_id) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kOnUnregisteredFrameSinkHierarchy,
+      child_frame_sink_id);
   auto it = frame_sink_metadata_map_.find(child_frame_sink_id);
   if (it == frame_sink_metadata_map_.end()) {
     return;
@@ -410,7 +454,6 @@ RenderInputRouterSupportBase* InputManager::GetParentRenderInputRouterSupport(
   if (it != frame_sink_metadata_map_.end()) {
     return it->second.rir_support.get();
   }
-  DUMP_WILL_BE_NOTREACHED();
   return nullptr;
 }
 
@@ -421,6 +464,7 @@ RenderInputRouterSupportBase* InputManager::GetRootRenderInputRouterSupport(
   FrameSinkId current_id = frame_sink_id;
 
   while (
+      parent_frame_sink_id.is_valid() &&
       !frame_sink_manager_->IsFrameSinkIdInRootSinkMap(parent_frame_sink_id)) {
     current_id = parent_frame_sink_id;
     parent_frame_sink_id = frame_sink_manager_->GetOldestParentByChildFrameId(
@@ -428,11 +472,10 @@ RenderInputRouterSupportBase* InputManager::GetRootRenderInputRouterSupport(
   }
 
   auto it = frame_sink_metadata_map_.find(current_id);
-  if (it != frame_sink_metadata_map_.end()) {
+  if (it != frame_sink_metadata_map_.end() &&
+      !it->second.rir_support->IsRenderInputRouterSupportChildFrame()) {
     return it->second.rir_support.get();
   }
-
-  DUMP_WILL_BE_NOTREACHED();
   return nullptr;
 }
 
@@ -475,6 +518,9 @@ std::optional<bool> InputManager::IsDelegatedInkHovering(
 
 void InputManager::StateOnTouchTransfer(
     input::mojom::TouchTransferStatePtr state) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kStateOnTouchTransfer,
+      state->root_widget_frame_sink_id);
 #if BUILDFLAG(IS_ANDROID)
   auto iter = frame_sink_metadata_map_.find(state->root_widget_frame_sink_id);
   if (iter == frame_sink_metadata_map_.end()) {
@@ -664,6 +710,29 @@ void InputManager::SetBeginFrameSource(const FrameSinkId& frame_sink_id,
   itr->second->SetBeginFrameSourceForFlingScheduler(begin_frame_source);
 }
 
+void InputManager::AddOperation(const Operation& operation) {
+  base::TimeTicks earliest_time = base::TimeTicks::Now() - base::Seconds(5);
+  RemoveOlderOperations(earliest_time);
+  operations_.push_back(operation);
+}
+
+void InputManager::FillOperations(base::TimeTicks browser_request_time,
+                                  base::Value::Dict& dict) {
+  RemoveOlderOperations(browser_request_time);
+
+  base::Value::List operations_list;
+  for (const auto& op : operations_) {
+    base::Value::Dict operation_dict;
+    operation_dict.Set("type", static_cast<int>(op.type));
+    operation_dict.Set("duration", base::TimeDeltaToValue(op.duration));
+    if (op.frame_sink_id) {
+      operation_dict.Set("sink", op.frame_sink_id->ToStringMinimal());
+    }
+    operations_list.Append(std::move(operation_dict));
+  }
+  dict.Set("operations", std::move(operations_list));
+}
+
 void InputManager::MaybeRecreateRootRenderInputRouterSupports(
     const FrameSinkId& root_frame_sink_id) {
   TRACE_EVENT_INSTANT(
@@ -700,6 +769,17 @@ void InputManager::RecreateRenderInputRouterSupport(
       frame_sink_metadata.is_mobile_optimized);
 }
 
+void InputManager::RemoveOlderOperations(base::TimeTicks earliest_time) {
+  while (operations_.size()) {
+    base::TimeTicks op_end_time =
+        operations_.front().start_time + operations_.front().duration;
+    if (op_end_time > earliest_time) {
+      break;
+    }
+    operations_.pop_front();
+  }
+}
+
 std::unique_ptr<RenderInputRouterSupportBase>
 InputManager::MakeRenderInputRouterSupport(input::RenderInputRouter* rir,
                                            const FrameSinkId& frame_sink_id) {
@@ -728,7 +808,12 @@ void InputManager::OnRIRDelegateClientDisconnected(
 void InputManager::CreateOrReuseAndroidInputReceiver(
     const FrameSinkId& frame_sink_id,
     const gpu::SurfaceHandle& surface_handle) {
+  input::InputManagerScopedOperation operation(
+      *this, Operation::Type::kCreateOrReuseAndroidInputReceiver,
+      frame_sink_id);
   CHECK(base::AndroidInputReceiverCompat::IsSupportAvailable());
+
+  pending_create_input_receiver_callback_.erase(frame_sink_id);
 
   if (receiver_data_ && receiver_data_->root_frame_sink_id().is_valid()) {
     // Only allow input receiver "creation" for single root compositor frame
@@ -739,12 +824,7 @@ void InputManager::CreateOrReuseAndroidInputReceiver(
     return;
   }
 
-  if (!frame_sink_manager_->IsFrameSinkIdInRootSinkMap(frame_sink_id)) {
-    UMA_HISTOGRAM_ENUMERATION(
-        kInputReceiverCreationResultHistogram,
-        CreateAndroidInputReceiverResult::kRootCompositorFrameSinkDestroyed);
-    return;
-  }
+  CHECK(frame_sink_manager_->IsFrameSinkIdInRootSinkMap(frame_sink_id));
 
   // This results in a sync binder to Browser, the same call is made on
   // CompositorGpu thread as well but to keep the code simple and not having to
@@ -778,13 +858,20 @@ void InputManager::CreateOrReuseAndroidInputReceiver(
     return;
   }
 
+  if (!parent_input_surface->surface()) {
+    UMA_HISTOGRAM_ENUMERATION(
+        kInputReceiverCreationResultHistogram,
+        CreateAndroidInputReceiverResult::kFailedNullParentSurfaceControl);
+    return;
+  }
+
   scoped_refptr<gfx::SurfaceControl::Surface> input_surface =
       base::MakeRefCounted<gfx::SurfaceControl::Surface>(*parent_input_surface,
                                                          kInputSCName);
-  if (!parent_input_surface->surface() || !input_surface->surface()) {
+  if (!input_surface->surface()) {
     UMA_HISTOGRAM_ENUMERATION(
         kInputReceiverCreationResultHistogram,
-        CreateAndroidInputReceiverResult::kFailedNullSurfaceControl);
+        CreateAndroidInputReceiverResult::kFailedNullChildSurfaceControl);
     return;
   }
 
@@ -816,7 +903,7 @@ void InputManager::CreateOrReuseAndroidInputReceiver(
 
   std::unique_ptr<input::AndroidInputCallback> android_input_callback =
       std::make_unique<input::AndroidInputCallback>(
-          frame_sink_id, &android_state_transfer_handler_);
+          frame_sink_id, &android_state_transfer_handler_, *this);
   // Destructor of |ScopedInputReceiverCallbacks| will call
   // |AInputReceiverCallbacks_release|, so we don't have to explicitly unset the
   // motion event callback we set below using

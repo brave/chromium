@@ -606,7 +606,6 @@ Kung hindi naman, ie-enable ulit ang naka-built in na touchpad sa loob ng <ph na
 <translation id="3033545621352269033">Naka-on</translation>
 <translation id="3033912566804961911">Isama sa <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Buksan ang Mga File</translation>
-<translation id="3038571455154067151">Para mag-sign in, ilagay ang iyong access code ng magulang sa Family Link</translation>
 <translation id="3039939407102840004">Nasa <ph name="PERCENTAGE" /> (na) porsyento ang baterya ng stylus.</translation>
 <translation id="304097922505898963">Buksan ang Key Shortcuts app</translation>
 <translation id="304417730895741346">Nasa shelf ang iyong mga naka-pin at nakabukas na app. Para mag-pin ng app sa shelf, mag-right click sa isang app o i-tap ang iyong touchpad gamit ang dalawang daliri.</translation>
@@ -1014,6 +1013,7 @@ Limitado ang ilang feature para mapatagal ang baterya.</translation>
 <translation id="4305817255990598646">Lumipat</translation>
 <translation id="4307713728991152670">I-set up ang pagtingin sa mga kamakailang larawan, media, at app ng iyong telepono</translation>
 <translation id="4312840429157639164">Nag-snap ang camera sa kanang sulok sa itaas. Pagsasalungat sa surface ng system.</translation>
+<translation id="4312935606722154789">Igrupo o i-ungroup ang dalawang magkatabing window</translation>
 <translation id="4316910396681052118">LAHAT NG APP</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">I-hide ang lahat ng suhestyon sa Chrome browser</translation>
@@ -1582,7 +1582,6 @@ Walang nakakonektang device.</translation>
 <translation id="6095425951508823973">Magdagdag ng koneksyon sa <ph name="PROVIDER" /></translation>
 <translation id="6099678161144790572">Na-edit sa nakalipas na buwan</translation>
 <translation id="6103838137565245112">system</translation>
-<translation id="610395411842312282">Igrupo ang dalawang magkatabing window</translation>
 <translation id="6108952804512516814">Gumawa gamit ang AI</translation>
 <translation id="6114505516289286752">Na-download na ang mga <ph name="LANGUAGE" /> na speech file</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

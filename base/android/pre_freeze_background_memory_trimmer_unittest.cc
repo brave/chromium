@@ -10,6 +10,7 @@
 
 #include <optional>
 
+#include "base/android/self_compaction_manager.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_file.h"
@@ -133,13 +134,11 @@ class PreFreezeBackgroundMemoryTrimmerTest : public testing::Test {
 
 class PreFreezeSelfCompactionTest : public testing::Test {
  public:
-  void SetUp() override {
-    PreFreezeBackgroundMemoryTrimmer::ResetCompactionForTesting();
-  }
+  void SetUp() override { SelfCompactionManager::ResetCompactionForTesting(); }
 
   bool ShouldContinueCompaction(base::TimeTicks compaction_started_at) {
-    return PreFreezeBackgroundMemoryTrimmer::Instance()
-        .ShouldContinueCompaction(compaction_started_at);
+    return SelfCompactionManager::Instance().ShouldContinueCompaction(
+        compaction_started_at);
   }
 
   bool CompactionIsSupported() {
@@ -200,7 +199,7 @@ class PreFreezeSelfCompactionTestWithParam
     : public PreFreezeSelfCompactionTest,
       public testing::WithParamInterface<int> {
  public:
-  std::unique_ptr<PreFreezeBackgroundMemoryTrimmer::CompactionState> GetState(
+  std::unique_ptr<SelfCompactionManager::CompactionState> GetState(
       const base::TimeTicks& triggered_at) {
     auto task_runner = task_environment_.GetMainThreadTaskRunner();
     if (UseRunningCompact()) {
@@ -926,11 +925,9 @@ TEST_P(PreFreezeSelfCompactionTestWithParam, Cancel) {
 
   {
     base::AutoLock locker(PreFreezeBackgroundMemoryTrimmer::lock());
-    PreFreezeBackgroundMemoryTrimmer::Instance().compaction_last_triggered_ =
-        triggered_at;
+    SelfCompactionManager::Instance().compaction_last_triggered_ = triggered_at;
   }
-  PreFreezeBackgroundMemoryTrimmer::Instance().StartCompaction(
-      std::move(state));
+  SelfCompactionManager::Instance().StartCompaction(std::move(state));
 
   EXPECT_EQ(task_environment_.GetPendingMainThreadTaskCount(), 1u);
 
@@ -998,11 +995,9 @@ TEST_P(PreFreezeSelfCompactionTestWithParam, TimeoutCancel) {
 
   {
     base::AutoLock locker(PreFreezeBackgroundMemoryTrimmer::lock());
-    PreFreezeBackgroundMemoryTrimmer::Instance().compaction_last_triggered_ =
-        triggered_at;
+    SelfCompactionManager::Instance().compaction_last_triggered_ = triggered_at;
   }
-  PreFreezeBackgroundMemoryTrimmer::Instance().StartCompaction(
-      std::move(state));
+  SelfCompactionManager::Instance().StartCompaction(std::move(state));
 
   EXPECT_EQ(task_environment_.GetPendingMainThreadTaskCount(), 1u);
 
@@ -1071,8 +1066,7 @@ TEST_F(PreFreezeSelfCompactionTest, NotCanceled) {
   GetMappedMemoryRegions(&state->regions_);
   ASSERT_EQ(state->regions_.size(), 4u);
 
-  PreFreezeBackgroundMemoryTrimmer::Instance().StartCompaction(
-      std::move(state));
+  SelfCompactionManager::Instance().StartCompaction(std::move(state));
 
   // We should have 4 sections here, based on the sizes mapped above.
   // |StartCompaction| doesn't run right away, but rather schedules a task.
@@ -1133,7 +1127,7 @@ TEST_P(PreFreezeSelfCompactionTestWithParam, Disabled) {
 
   auto triggered_at = base::TimeTicks::Now();
   auto state = GetState(triggered_at);
-  PreFreezeBackgroundMemoryTrimmer::Instance().CompactSelf(std::move(state));
+  SelfCompactionManager::CompactSelf(std::move(state));
 
   // Run metrics
   task_environment_.FastForwardBy(base::Seconds(60));
@@ -1170,9 +1164,8 @@ TEST_F(PreFreezeSelfCompactionTest, OnSelfFreezeCancel) {
   auto state = SelfCompactionManager::GetSelfCompactionStateForTesting(
       task_environment_.GetMainThreadTaskRunner(), TimeTicks::Now());
   {
-    base::AutoLock locker(PreFreezeBackgroundMemoryTrimmer::lock());
-    PreFreezeBackgroundMemoryTrimmer::Instance().OnTriggerCompact(
-        std::move(state));
+    base::AutoLock locker(SelfCompactionManager::lock());
+    SelfCompactionManager::Instance().OnTriggerCompact(std::move(state));
   }
   EXPECT_EQ(task_environment_.GetPendingMainThreadTaskCount(), 1u);
 

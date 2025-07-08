@@ -51,15 +51,6 @@ namespace chromeos {
 
 namespace {
 
-#if BUILDFLAG(ENABLE_PLUGINS)
-bool IsPepperPlugin(const base::FilePath& plugin_path) {
-  content::WebPluginInfo plugin_info;
-  return content::PluginService::GetInstance()->GetPluginInfoByPath(
-             plugin_path, &plugin_info) &&
-         plugin_info.is_pepper_plugin();
-}
-#endif
-
 void RebootDevice() {
   chromeos::PowerManagerClient::Get()->RequestRestart(
       power_manager::REQUEST_RESTART_OTHER, "kiosk app session");
@@ -160,7 +151,7 @@ class KioskBrowserSession::PluginHandlerDelegateImpl
   bool ShouldHandlePlugin(const base::FilePath& plugin_path) const override {
     // Note that BrowserChildProcessHostIterator in DumpPluginProcess also needs
     // to be updated when adding more plugin types here.
-    return IsPepperPlugin(plugin_path);
+    return false;
   }
   void OnPluginCrashed(const base::FilePath& plugin_path) override {
     if (owner_->is_shutting_down()) {
@@ -232,6 +223,8 @@ void KioskBrowserSession::RegisterProfilePrefs(
                              PrefRegistrySimple::NO_REGISTRATION_FLAGS);
   registry->RegisterBooleanPref(prefs::kKioskWebAppOfflineEnabled, true);
   registry->RegisterBooleanPref(prefs::kKioskChromeAppsForceAllowed, false);
+  registry->RegisterBooleanPref(prefs::kKioskApplicationLogCollectionEnabled,
+                                false);
 }
 
 void KioskBrowserSession::InitForChromeAppKiosk(const std::string& app_id) {

@@ -13,7 +13,7 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.components.signin.base.GaiaId;
+import org.chromium.google_apis.gaia.GaiaId;
 
 import java.util.List;
 
@@ -68,7 +68,7 @@ public final class ConsentAuditorBridge {
         void recordConsent(
                 ConsentAuditorBridge caller,
                 @JniType("Profile*") Profile profile,
-                GaiaId gaiaId,
+                @JniType("GaiaId") GaiaId gaiaId,
                 int feature,
                 int[] consentDescription,
                 int consentConfirmation);

@@ -89,6 +89,9 @@ class CORE_EXPORT InlineItem final : public GarbageCollected<InlineItem> {
   void SetTextType(TextItemType text_type) {
     text_type_ = static_cast<unsigned>(text_type);
   }
+  bool IsFloatingOrOutOfFlowPositioned() const {
+    return Type() == kFloating || Type() == kOutOfFlowPositioned;
+  }
   bool IsSymbolMarker() const {
     return TextType() == TextItemType::kSymbolMarker;
   }
@@ -96,6 +99,9 @@ class CORE_EXPORT InlineItem final : public GarbageCollected<InlineItem> {
     DCHECK(TextType() == TextItemType::kNormal ||
            TextType() == TextItemType::kSymbolMarker);
     SetTextType(TextItemType::kSymbolMarker);
+  }
+  bool IsOpaqueForTextProcessing() const {
+    return !Length() || Type() == kFloating || Type() == kOutOfFlowPositioned;
   }
 
   // The index in `InlineItems`. The value is valid only after `UpdateIndex()`
@@ -269,7 +275,8 @@ class CORE_EXPORT InlineItem final : public GarbageCollected<InlineItem> {
   static unsigned SetBidiLevel(InlineItems&,
                                unsigned index,
                                unsigned end_offset,
-                               UBiDiLevel);
+                               UBiDiLevel,
+                               wtf_size_t num_out_of_flow = 0);
 
   // Update `InlineItem::Index()` for the given list.
   static void UpdateIndex(base::span<Member<InlineItem>> items);

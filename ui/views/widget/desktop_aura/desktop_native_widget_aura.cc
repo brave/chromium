@@ -772,6 +772,12 @@ void DesktopNativeWidgetAura::ViewRemoved(View* view) {
   drop_helper_->ResetTargetViewIfEquals(view);
 }
 
+void DesktopNativeWidgetAura::ClientDestroyedWidget() {
+  if (desktop_window_tree_host_) {
+    desktop_window_tree_host_->ClientDestroyedWidget();
+  }
+}
+
 void DesktopNativeWidgetAura::SetNativeWindowProperty(const char* name,
                                                       void* value) {
   if (content_window_) {
@@ -854,8 +860,9 @@ void DesktopNativeWidgetAura::InitModalType(ui::mojom::ModalType modal_type) {
 }
 
 void DesktopNativeWidgetAura::OnWidgetThemeChanged(
-    ui::ColorProviderKey::ColorMode color_mode) {
-  desktop_window_tree_host_->OnWidgetThemeChanged(color_mode);
+    ui::ColorProviderKey::ColorMode color_mode,
+    std::optional<SkColor> background_color) {
+  desktop_window_tree_host_->OnWidgetThemeChanged(color_mode, background_color);
 }
 
 gfx::Rect DesktopNativeWidgetAura::GetWindowBoundsInScreen() const {

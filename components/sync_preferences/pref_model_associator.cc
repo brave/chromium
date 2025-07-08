@@ -273,6 +273,14 @@ void PrefModelAssociator::OnBrowserShutdown(syncer::DataType type) {
   Stop(/*is_browser_shutdown=*/true);
 }
 
+void PrefModelAssociator::StayStoppedAndMaybeClearData(syncer::DataType type) {
+  CHECK_EQ(type_, type);
+  CHECK(!sync_processor_);
+  if (dual_layer_user_prefs_) {
+    dual_layer_user_prefs_->DisableTypeAndClearAccountStore(type_);
+  }
+}
+
 void PrefModelAssociator::Stop(bool is_browser_shutdown) {
   models_associated_ = false;
   sync_processor_.reset();
@@ -316,7 +324,8 @@ std::optional<syncer::ModelError> PrefModelAssociator::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!models_associated_) {
-    return syncer::ModelError(FROM_HERE, "Models not yet associated.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::kPrefModelsNotAssociated);
   }
   base::AutoReset<bool> processing_changes(&processing_syncer_changes_, true);
   for (const syncer::SyncChange& sync_change : change_list) {

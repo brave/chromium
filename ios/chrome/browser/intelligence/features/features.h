@@ -7,6 +7,10 @@
 
 #import "base/feature_list.h"
 
+namespace base {
+class TimeDelta;
+}  // namespace base
+
 // Feature flag controlling whether enhanced calendar is enabled.
 BASE_DECLARE_FEATURE(kEnhancedCalendar);
 
@@ -19,7 +23,14 @@ BASE_DECLARE_FEATURE(kPageActionMenu);
 // Returns true if the page action menu is enabled.
 bool IsPageActionMenuEnabled();
 
-extern const char kBWGPromoConsentParams[];
+// Whether the omnibox entry point opens the BWG overlay immediately, skipping
+// the AI hub.
+bool IsDirectBWGEntryPoint();
+extern const char kPageActionMenuDirectEntryPointParam[];
+
+// The BWG session validity duration in minutes.
+const base::TimeDelta BWGSessionValidityDuration();
+extern const char kBWGSessionValidityDurationParam[];
 
 // Holds the variations of the BWG Promo Consent flow.
 enum class BWGPromoConsentVariations {
@@ -27,7 +38,9 @@ enum class BWGPromoConsentVariations {
   kSinglePage = 1,
   kDoublePage = 2,
   kSkipConsent = 3,
+  kForceConsent = 4,
 };
+extern const char kBWGPromoConsentParams[];
 
 // Returns the variation of the BWG Promo Consent flow.
 BWGPromoConsentVariations BWGPromoConsentVariationsParam();

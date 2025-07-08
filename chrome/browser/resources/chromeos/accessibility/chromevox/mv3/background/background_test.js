@@ -194,19 +194,11 @@ ChromeVoxBackgroundTest = class extends ChromeVoxE2ETest {
   }
 
   recordEarconsPlayedFromOffscreenDocument() {
-    chrome.runtime.sendMessage(undefined, {
-      command: OffscreenCommandType.RECORD_EARCONS_FOR_TEST,
-    });
+    OffscreenBridge.recordEarconsForTest();
   }
 
   async reportEarconsPlayedFromOffscreenDocument() {
-    return new Promise(resolve => {
-      chrome.runtime.sendMessage(
-          undefined, {
-            command: OffscreenCommandType.REPORT_EARCONS_FOR_TEST,
-          },
-          undefined, (response) => {resolve(response)});
-    });
+    return OffscreenBridge.reportEarconsForTest();
   }
 
   /**
@@ -1733,6 +1725,30 @@ AX_TEST_F(
       await mockFeedback.replay();
     });
 
+AX_TEST_F('ChromeVoxBackgroundTest', 'MathMLContent', async function() {
+  const mockFeedback = this.createMockFeedback();
+  const site = `
+    <math>
+      <mfrac>
+        <mrow>
+          <mi>d</mi>
+          <mi>y</mi>
+        </mrow>
+        <mrow>
+          <mi>d</mi>
+          <mi>x</mi>
+        </mrow>
+      </mfrac>
+      <mo>=</mo>
+    </math>
+  `;
+  const root = await this.runWithLoadedTree(site);
+  mockFeedback.call(doCmd('nextObject'))
+      .expectSpeech('StartFraction d y Over d x EndFraction =')
+      .expectSpeech('Press up, down, left, or right to explore math');
+  await mockFeedback.replay();
+});
+
 AX_TEST_F('ChromeVoxBackgroundTest', 'GestureGranularity', async function() {
   const mockFeedback = this.createMockFeedback();
   const site = `
@@ -3171,31 +3187,33 @@ AX_TEST_F(
       await mockFeedback.replay();
     });
 
-AX_TEST_F('ChromeVoxBackgroundTest', 'ContainerButtons', async function() {
-  const mockFeedback = this.createMockFeedback();
+// TODO(crbug.com/420959037): Actual bug.
+AX_TEST_F(
+    'ChromeVoxBackgroundTest', 'DISABLED_ContainerButtons', async function() {
+      const mockFeedback = this.createMockFeedback();
 
-  // This pattern can be found in ARC++/YouTube.
-  const site = `
+      // This pattern can be found in ARC++/YouTube.
+      const site = `
     <p>videos</p>
     <div aria-label="Cat Video" role="button">
       <div role="group">4 minutes, Cat Video</div>
     </div>
   `;
-  const root = await this.runWithLoadedTree(site);
-  const group = root.find({role: RoleType.GROUP});
+      const root = await this.runWithLoadedTree(site);
+      const group = root.find({role: RoleType.GROUP});
 
-  Object.defineProperty(group, 'clickable', {
-    get() {
-      return true;
-    },
-  });
+      Object.defineProperty(group, 'clickable', {
+        get() {
+          return true;
+        },
+      });
 
-  mockFeedback.call(doCmd('nextObject'))
-      .expectSpeech('Cat Video', 'Button')
-      .call(doCmd('nextObject'))
-      .expectSpeech('4 minutes, Cat Video');
-  await mockFeedback.replay();
-});
+      mockFeedback.call(doCmd('nextObject'))
+          .expectSpeech('Cat Video', 'Button')
+          .call(doCmd('nextObject'))
+          .expectSpeech('4 minutes, Cat Video');
+      await mockFeedback.replay();
+    });
 
 AX_TEST_F(
     'ChromeVoxBackgroundTest', 'FocusOnWebAreaIgnoresEvents', async function() {

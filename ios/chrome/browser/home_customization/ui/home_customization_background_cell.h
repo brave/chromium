@@ -5,10 +5,13 @@
 #ifndef IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UI_HOME_CUSTOMIZATION_BACKGROUND_CELL_H_
 #define IOS_CHROME_BROWSER_HOME_CUSTOMIZATION_UI_HOME_CUSTOMIZATION_BACKGROUND_CELL_H_
 
-#import "ios/chrome/browser/home_customization/model/background_customization_configuration.h"
+#import <UIKit/UIKit.h>
 
 @protocol LogoVendor;
 @protocol HomeCustomizationMutator;
+@protocol BackgroundCustomizationConfiguration;
+
+@class NewTabPageColorPalette;
 
 // Represents a mini preview of how the NTP will look with a particular
 // background selected. This cell is part of the background customization
@@ -25,8 +28,9 @@
 
 // Configures the cell using the given background customization configuration.
 - (void)configureWithBackgroundOption:
-            (BackgroundCustomizationConfiguration*)backgroundConfiguration
-                           logoVendor:(id<LogoVendor>)logoVendor;
+            (id<BackgroundCustomizationConfiguration>)backgroundConfiguration
+                           logoVendor:(id<LogoVendor>)logoVendor
+                         colorPalette:(NewTabPageColorPalette*)colorPalette;
 
 // Updates the background image displayed behind the cell’s content.
 - (void)updateBackgroundImage:(UIImage*)image;

@@ -555,11 +555,17 @@ For more settings that use data to improve your Chrome experience, go to <ph nam
       <message name="IDS_AUTOFILL_CARD_HOLDER_NAME" desc="Label for text input field containing the name on a credit card. [CHAR_LIMIT=32]">
         Cardholder name
       </message>
-      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_NUMBER" desc="Label for text input field containing a card number. This can be a credit, debit, or prepaid card. [CHAR_LIMIT=32]">
-        Card number
+      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_NUMBER" desc="Label for text input field containing a card number. This can be a credit, debit, or prepaid card. The asterisk '*' indicates that this field is required and should not be removed. [CHAR_LIMIT=32]">
+        Card number*
       </message>
-      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_EXPIRATION_DATE" desc="Label for text input field containing a credit card expiration date. [CHAR_LIMIT=32]">
-        Expiration date
+      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_NUMBER_CONTENT_DESCRIPTION" desc="Accessible content description and label for text input field containing a card number. This can be a credit, debit, or prepaid card. This field is required for cards. [CHAR_LIMIT=64]">
+        Card number, required
+      </message>
+      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_EXPIRATION_DATE" desc="Label for text input field containing a credit card expiration date. The asterisk '*' indicates that this field is required and should not be removed. [CHAR_LIMIT=32]">
+        Expiration date*
+      </message>
+      <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_EXPIRATION_DATE_CONTENT_DESCRIPTION" desc="Accessible content description and label for text input field containing a credit card expiration date. This field is required for cards. [CHAR_LIMIT=64]">
+        Expiration date, required
       </message>
       <message name="IDS_AUTOFILL_CREDIT_CARD_EDITOR_BILLING_ADDRESS" desc="Label for a spinner input field containing a list of billing addresses for a credit card. [CHAR_LIMIT=32]">
         Billing address
@@ -1075,7 +1081,8 @@ For more settings that use data to improve your Chrome experience, go to <ph nam
       <message name="IDS_THEME_SETTINGS" desc="Title for the Theme settings. [CHAR_LIMIT=32]">
         Theme
       </message>
-      <message name="IDS_THEMES_SYSTEM_DEFAULT_TITLE" desc="Title for the System Default option. [CHAR_LIMIT=32]">
+      <message name="IDS_THEMES_SYSTEM_DEFAULT_TITLE" desc="Title for the System
+      Default option. [CHAR_LIMIT=32]" meaning="default theme">
         System default
       </message>
       <message name="IDS_THEMES_SYSTEM_DEFAULT_SUMMARY" desc="Summary for the System Default option.">
@@ -1130,6 +1137,9 @@ For more settings that use data to improve your Chrome experience, go to <ph nam
       </message>
       <message name="IDS_CONTEXTUAL_SEARCH_SEE_BETTER_RESULTS_SUMMARY" desc="Summary for the see better results switch in Contextual Search preference.">
         By including more of a page’s text, you might see better results
+      </message>
+      <message name="IDS_CONTEXTUAL_SEARCH_CALLOUT_IPH" desc="Text shown on in-product-help bubble to inform a user that dragging up on the panel will expand it, opening the latest search results for the currently selected text.">
+        Drag up to see search results
       </message>
       <message name="IDS_DO_NOT_TRACK_TITLE" desc="Title for the 'Do Not Track' preference. Please leave the 'Do Not Track' part in English according to the glossary.">
         Send a “Do Not Track” request
@@ -1959,12 +1969,14 @@ Your Google account may have other forms of browsing history like searches and a
         other {Chrome found # reused passwords that you could improve}}
       </message>
       <message name="IDS_SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_NOTIFICATION_TITLE" desc="Title for the notification sent from Safety Hub for telling the user that some notifications have been unsubscribed.">
-        Chrome unsubscribed you from notifications
-      </message>
-      <message name="IDS_SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_NOTIFICATION_MESSAGE" desc="Message for the notification sent from Safety Hub for telling the user that some notifications have been unsubscribed.">
         {NUM_REVOKED_PERMISSIONS, plural,
-        =1 {Removed notification permissions from one site you haven’t visited recently}
-        other {Removed notification permissions from # sites you haven’t visited recently}}
+        =1 {Unsubscribed from one unused site}
+        other {Unsubscribed from # unused sites}}
+      </message>
+      <message name="IDS_SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_NOTIFICATION_MESSAGE" desc="Message for the notification sent from Safety Hub for telling the user that some notifications have been unsubscribed." meaning="This message informs about notification permissions having been revoked from one or more sites and explains that the user can review and manage [those notification permission revocations] by either clicking on this message or on the Review button below it.">
+        {NUM_REVOKED_PERMISSIONS, plural,
+        =1 {Chrome stopped notifications from this site. You can review and manage.}
+        other {Chrome stopped notifications from these sites. You can review and manage.}}
       </message>
       <message name="IDS_SAFETY_HUB_UNSUBSCRIBED_NOTIFICATIONS_NOTIFICATION_ACK" desc="Button to acknowledge the notification sent from Safety Hub for telling the user that some notifications have been unsubscribed.">
         Got it
@@ -2188,10 +2200,16 @@ Your Google account may have other forms of browsing history like searches and a
         Download anyway
       </message>
       <message name="IDS_DANGEROUS_DOWNLOAD_DIALOG_TEXT" desc="Warning message shown on a dialog to ask user to validate the download of a dangerous file.">
-        Do you want to download <ph name="FILE_NAME">%1$s<ex>malware.exe</ex></ph> anyway?
+        Do you want to download "<ph name="FILE_NAME">^1<ex>malware.exe</ex></ph>" anyway?
+      </message>
+      <message name="IDS_DANGEROUS_DOWNLOAD_DIALOG_TEXT_WITH_DOMAIN" desc="Warning message shown on a dialog to ask user to validate the download of a dangerous file, including the domain of the download.">
+        Do you want to download "<ph name="FILE_NAME">^1<ex>malware.exe</ex></ph>" from <ph name="DOWNLOAD_DOMAIN">^2<ex>badsite.com</ex></ph> anyway?
       </message>
       <message name="IDS_DANGEROUS_DOWNLOAD_DIALOG_TEXT_WITH_SIZE" desc="Warning message shown on a dialog to ask user to validate the download of a dangerous file, with size information.">
-        Do you want to download <ph name="FILE_NAME">%1$s<ex>malware.exe</ex></ph> (<ph name="FILE_SIZE">%2$s<ex>100MB</ex></ph>) anyway?
+        Do you want to download "<ph name="FILE_NAME">^1<ex>malware.exe</ex></ph>" (<ph name="FILE_SIZE">^2<ex>100MB</ex></ph>) anyway?
+      </message>
+      <message name="IDS_DANGEROUS_DOWNLOAD_DIALOG_TEXT_WITH_SIZE_AND_DOMAIN" desc="Warning message shown on a dialog to ask user to validate the download of a dangerous file, with size information and the domain of the download.">
+        Do you want to download "<ph name="FILE_NAME">^1<ex>malware.exe</ex></ph>" (<ph name="FILE_SIZE">^2<ex>100MB</ex></ph>) from <ph name="DOWNLOAD_DOMAIN">^3<ex>badsite.com</ex></ph> anyway?
       </message>
       <message name="IDS_DANGEROUS_DOWNLOAD_DIALOG_TITLE" desc="Title of the dialog for asking user to confirm a dangerous download">
         File might be harmful
@@ -2347,6 +2365,28 @@ Your Google account may have other forms of browsing history like searches and a
       </message>
       <message name="IDS_AUTO_OPEN_PDF_ENABLED_WITH_APP_DESCRIPTION" desc="Description for preference that allows another app to automatically open a pdf after download completion if the download is triggered by an external app.">
         Downloaded PDFs automatically open with <ph name="APP_NAME">%1$s<ex>Drive PDF Viewer</ex></ph>
+      </message>
+
+      <!-- Download warning bypass dialog -->
+      <message name="IDS_DOWNLOAD_WARNING_BYPASS_DIALOG_TEXT" desc="Text of the dialog for asking user to confirm that they want to bypass a download warning.">
+        This file contains malware or comes from a suspicious site
+      </message>
+      <message name="IDS_DOWNLOAD_WARNING_BYPASS_DIALOG_ACTION_DOWNLOAD" desc="Label for the button to confirm that the user wants to bypass a download warning.">
+        Download anyway
+      </message>
+      <message name="IDS_DOWNLOAD_WARNING_BYPASS_DIALOG_ACTION_LEARN_MORE" desc="Label for the button to open a help page about download warnings.">
+        Learn more
+      </message>
+      <message name="IDS_DOWNLOAD_WARNING_BYPASS_DIALOG_ACTION_LEARN_MORE_ACCESSIBILITY_DESCRIPTION" desc="Accessibility description for the button to open a help page about download warnings.">
+        Learn more about why Chrome blocks some files
+      </message>
+
+      <!-- Download Home dangerous warning -->
+      <message name="IDS_DOWNLOAD_WARNING_HEED_MENU_ACTION_DELETE" desc="Label for the menu item to heed a download warning shown in the downloads list by removing the file from download history.">
+        Delete from history
+      </message>
+      <message name="IDS_DOWNLOAD_WARNING_BYPASS_MENU_ACTION_DOWNLOAD" desc="Label for the menu item to bypass a download warning shown in the downloads list and download the dangerous file anyway.">
+        Download
       </message>
 
       <!-- About Chrome preferences -->
@@ -2565,6 +2605,9 @@ Your Google account may have other forms of browsing history like searches and a
       <message name="IDS_SYNC_BOOKMARKS" desc="Title for preference which enables sync'ing of bookmarks. [CHAR_LIMIT=32]">
         Bookmarks
       </message>
+      <message name="IDS_SYNC_EXTENSIONS" desc="Title for preference which enables sync'ing of Chrome browser extensions. [CHAR_LIMIT=32]">
+        Extensions
+      </message>
       <message name="IDS_SYNC_HISTORY" desc="Title for preference which enables sync'ing of history data. [CHAR_LIMIT=32]">
         History
       </message>
@@ -2586,6 +2629,9 @@ Your Google account may have other forms of browsing history like searches and a
       <message name="IDS_SYNC_PAYMENTS_INTEGRATION" desc="Title for preference which enables import of Google Pay data for Autofill. 'Google Pay' should not be translated as it is the product name.">
         Payment methods, offers, and addresses using Google Pay
       </message>
+      <message name="IDS_SYNC_PAYMENTS_AND_INFO_INTEGRATION" desc="Title for preference which enables import of Google Wallet data for Autofill. 'Google Wallet' should not be translated as it is the product name.">
+        Payment methods and other info from Google Wallet
+      </message>
       <message name="IDS_ACCOUNT_SETTINGS_TITLE" desc="Title for the account settings page. [CHAR_LIMIT=32]">
         Account
       </message>
@@ -2601,6 +2647,9 @@ Your Google account may have other forms of browsing history like searches and a
       <message name="IDS_ACCOUNT_SECTION_BOOKMARKS_TOGGLE" desc="Bookmarks, one of the data types that we allow syncing. Shown on next to the toggle that controls whether bookmarks should be saved in the Google Account and synced across devices.">
         Bookmarks
       </message>
+      <message name="IDS_ACCOUNT_SECTION_EXTENSIONS_TOGGLE" desc="Chrome browser extensions, one of the data types that we allow syncing. Shown on next to the toggle that controls whether extensions should be saved in the Google Account and synced across devices.">
+        Extensions
+      </message>
       <message name="IDS_ACCOUNT_SECTION_READING_LIST_TOGGLE" desc="Reading List, one of the data types that we allow syncing. Shown on next to the toggle that controls whether reading list should be saved in the Google Account and synced across devices.">
         Reading list
       </message>
@@ -2612,6 +2661,9 @@ Your Google account may have other forms of browsing history like searches and a
       </message>
       <message name="IDS_ACCOUNT_SECTION_PAYMENTS_TOGGLE" desc="Google Pay data for Autofill, one of the data types that we allow syncing. 'Google Pay' should not be translated as it is the product name. Shown on next to the toggle that controls whether Google Pay data for Autofill should be saved in the Google Account and synced across devices.">
         Payment methods, offers, and addresses using Google Pay
+      </message>
+      <message name="IDS_ACCOUNT_SECTION_PAYMENTS_AND_INFO_TOGGLE" desc="Google Wallet data for Autofill, one of the data types that we allow syncing. 'Google Wallet' should not be translated as it is the product name. Shown on next to the toggle that controls whether payments and other data from Google Wallet, for use in Autofill, should be saved in the Google Account and synced across devices.">
+        Payment methods and other info from Google Wallet
       </message>
       <message name="IDS_ACCOUNT_SECTION_SETTINGS_TOGGLE" desc="Settings, one of the data types that we allow syncing. Shown on next to the toggle that controls whether Settings should be saved in the Google Account and synced across devices.">
         Settings
@@ -2658,70 +2710,65 @@ Your Google account may have other forms of browsing history like searches and a
       <message name="IDS_SIGN_OUT" desc="Sign out button, visible if the user has authenticated. Clicking this clears authentication credentials and returns the web-app to the initial 'unauthenticated' state.">
         Sign out
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_SAVE_BUTTON" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears on button in a temporary card to inform them that there is some local data, like passwords, saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_CARD_DESCRIPTION_PASSWORD" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears in a temporary card to inform them that there is some local data (passwords) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+        {PASSWORDS_COUNT, plural,
+          =1 {1 password is saved only to this device. To use it on your other devices, save it in your Google Account.}
+          other {# passwords are saved only to this device. To use them on your other devices, save them in your Google Account.}}
+      </message>
+      <message name="IDS_BATCH_UPLOAD_CARD_DESCRIPTION_PASSWORD_AND_OTHER" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears in a temporary card to inform them that there is some local data (bookmarks, or other data) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+        {PASSWORDS_COUNT, plural,
+          =1 {1 password and other items are saved only to this device. To use them on your other devices, save them in your Google Account.}
+          other {# passwords and other items are saved only to this device. To use them on your other devices, save them in your Google Account.}}
+      </message>
+      <message name="IDS_BATCH_UPLOAD_CARD_DESCRIPTION_OTHER" desc="This message appears either in user's account settings or bookmark manager. The text appears in a temporary card to inform them that there is some local data (in case of the account settings card the local data does not include passwords, and in case of the bookmark manager card the local data does not include bookmarks) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+        {ITEMS_COUNT, plural,
+          =1 {1 item is saved only to this device. To use it on your other devices, save it in your Google Account.}
+          other {# items are saved only to this device. To use them on your other devices, save them in your Google Account.}}
+      </message>
+      <message name="IDS_BATCH_UPLOAD_CARD_SAVE_BUTTON" desc="This message appears on a button in a temporary card to inform the user that there is some local data saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         Save in account
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_DESCRIPTION_PASSWORD" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears in a temporary card to inform them that there is some local data (passwords) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' (find the corresponding string by IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_SAVE_BUTTON name) to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
-        {PASSWORDS_COUNT, plural,
-          =1 {1 password is saved only to this device. To use it on your other devices, save it in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# passwords are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
-      </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_DESCRIPTION_PASSWORD_AND_OTHER" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears in a temporary card to inform them that there is some local data (bookmarks, or other data) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' (find the corresponding string by IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_SAVE_BUTTON name) to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
-        {PASSWORDS_COUNT, plural,
-          =1 {1 password and other items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# passwords and other items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
-      </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_DESCRIPTION_OTHER" desc="This message appears in a user's settings for signing in to Chrome with their Google Account. The text appears in a temporary card to inform them that there is some local data (passwords, bookmarks, or other data) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' (find the corresponding string by IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SECTION_SAVE_BUTTON name) to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
-        {ITEMS_COUNT, plural,
-          =1 {1 item is saved only to this device. To use it on your other devices, save it in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
-      </message>
-      <message name="IDS_BOOKMARKS_LEFT_BEHIND_BOOKMARKS_BUTTON" desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (bookmarks) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
-        Save in account
-      </message>
-      <message name="IDS_BOOKMARKS_LEFT_BEHIND_BOOKMARK"  desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (bookmarks) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_CARD_DESCRIPTION_BOOKMARK"  desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (bookmarks) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         {BOOKMARKS_COUNT, plural,
-          =1 {1 bookmark is saved only to this device. To use it on your other devices, save it in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# bookmarks are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
+          =1 {1 bookmark is saved only to this device. To use it on your other devices, save it in your Google Account.}
+          other {# bookmarks are saved only to this device. To use them on your other devices, save them in your Google Account.}}
       </message>
-      <message name="IDS_BOOKMARKS_LEFT_BEHIND_BOOKMARK_AND_OTHER"  desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (bookmarks and some other data) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_CARD_DESCRIPTION_BOOKMARK_AND_OTHER"  desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (bookmarks and some other data) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         {BOOKMARKS_COUNT, plural,
-          =1 {1 bookmark and other items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# bookmarks and other items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
+          =1 {1 bookmark and other items are saved only to this device. To use them on your other devices, save them in your Google Account.}
+          other {# bookmarks and other items are saved only to this device. To use them on your other devices, save them in your Google Account.}}
       </message>
-      <message name="IDS_BOOKMARKS_LEFT_BEHIND_OTHER"  desc="This message appears in a user's bookmark manager. The text appears in a temporary card to inform them that there is some local data (something other than bookmarks) saved to their device, but the data hasn't been saved to their Google Account yet. The user can click 'Save in Account' to enter a flow where they review the data and choose to save it in their account. When data is saved to the user's Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
-        {ITEMS_COUNT, plural,
-          =1 {1 item is saved only to this device. To use it on your other devices, save it in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
-          other {# items are saved only to this device. To use them on your other devices, save them in your Google Account, <ph name="ACCOUNT_EMAIL">%2$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
-      </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_TITLE" desc="The text appears as the title of a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_TITLE" desc="The text appears as the title of a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         Save data in your Google Account
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_DESCRIPTION" desc="The text appears as a note in a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome. This note explains where the user can go to view and manage individual items. like individual bookmarks or passwords.">
-        You can also view and manage these items in your bookmarks, reading list, or password manager
+      <message name="IDS_BATCH_UPLOAD_DIALOG_DESCRIPTION" desc="The text appears as a note in a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome. This note explains where the user can go to view and manage individual items. like individual bookmarks or passwords.">
+        You can choose what data to save in your Google Account, <ph name="ACCOUNT_EMAIL">%1$s<ex>elisa.g.beckett@gmail.com</ex></ph>.\nYou can also view and manage these items in your bookmarks, reading list, or password manager.
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_BOOKMARKS" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_DESCRIPTION_NON_DISPLAYABLE_PROFILE_DATA" desc="The text appears as a note in a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome. This note explains where the user can go to view and manage individual items. like individual bookmarks or passwords.">
+        You can choose what data to save in your Google Account.\nYou can also view and manage these items in your bookmarks, reading list, or password manager.
+      </message>
+      <message name="IDS_BATCH_UPLOAD_DIALOG_BOOKMARKS" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         {ITEMS_COUNT, plural,
           =1 {1 bookmark}
           other {# bookmarks}}
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_PASSWORDS" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_PASSWORDS" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         {ITEMS_COUNT, plural,
           =1 {1 password}
           other {# passwords}}
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_READING_LIST" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_READING_LIST" desc="One of the data types that we allow uploading through a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         {ITEMS_COUNT, plural,
           =1 {1 page on your reading list}
           other {# pages on your reading list}}
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_SAVE_BUTTON" desc="The text is the primary button in a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_SAVE_BUTTON" desc="The text is the primary button in a confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         Save in account
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_DIALOG_CANCEL_BUTTON" desc="Text for the cancel button belonging to the batch upload confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
+      <message name="IDS_BATCH_UPLOAD_DIALOG_CANCEL_BUTTON" desc="Text for the cancel button belonging to the batch upload confirmation dialog where the user can choose to save some data to their Google Account. When data is saved to the Google Account, it's backed up safely and is available on any device where they're signed in to Chrome.">
         Cancel
       </message>
-      <message name="IDS_ACCOUNT_SETTINGS_BULK_UPLOAD_SAVED_SNACKBAR_MESSAGE" desc="The message appears in a small confirmation bubble with limited space after the user chose to save some data to their Google Account.">
+      <message name="IDS_BATCH_UPLOAD_SAVED_SNACKBAR_MESSAGE" desc="The message appears in a small confirmation bubble with limited space after the user chose to save some data to their Google Account.">
         {ITEMS_COUNT, plural,
           =1 {Item saved in your Google Account, <ph name="ACCOUNT_EMAIL">%1$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}
           other {Items saved in your Google Account, <ph name="ACCOUNT_EMAIL">%1$s<ex>elisa.g.beckett@gmail.com</ex></ph>.}}
@@ -2786,24 +2833,6 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_SYNC_LOADING" desc="Preference title to let the user change their encryption password. [CHAR_LIMIT=20]">
         Loading…
-      </message>
-      <message name="IDS_SYNC_IMPORT_DATA_PROMPT" desc="Prompt for the user to choose how they want to handle their existing sync data">
-         You have bookmarks, history, passwords, and other settings from <ph name ="FROM_ACCOUNT">%1$s<ex>johndoe@old.com</ex></ph>.
-      </message>
-      <message name="IDS_SYNC_IMPORT_DATA_PROMPT_WITHOUT_PASSWORDS" desc="Prompt for the user to choose how they want to handle their existing sync data. Similar to IDS_SYNC_IMPORT_DATA_PROMPT but without mentioning passwords.">
-         You have bookmarks, history, and other settings from <ph name ="FROM_ACCOUNT">%1$s<ex>johndoe@old.com</ex></ph>.
-      </message>
-      <message name="IDS_SYNC_IMPORT_EXISTING_DATA" desc="Option to import existing data to the newly selected sync account">
-        Combine my data
-      </message>
-      <message name="IDS_SYNC_IMPORT_EXISTING_DATA_SUBTEXT" desc="Subtext describing what happens if the user elects to import existing data to the newly selected sync account">
-        Add existing data to <ph name="TO_ACCOUNT">%1$s<ex>johndoe@new.com</ex></ph>.
-      </message>
-      <message name="IDS_SYNC_KEEP_EXISTING_DATA_SEPARATE" desc="Option to keep the existing data separate from the newly selected sync account">
-        Keep my data separate
-      </message>
-      <message name="IDS_SYNC_KEEP_EXISTING_DATA_SEPARATE_SUBTEXT_EXISTING_DATA" desc="Subtext describing what happens if the user elects to keep the existing data separate signing into a new account after have previously being signed into a different account then signed out.">
-        Delete existing data.
       </message>
 
       <!-- Hint of sync error solution strings -->
@@ -2932,6 +2961,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_IDENTITY_ERROR_CARD_BUTTON_OKAY" desc="Button label for the message shown in the Sync Error Card (due to missing trusted vault keys) for confirming that a user wants to get all their passwords on their device.">
         Okay
       </message>
+      <message name="IDS_IDENTITY_ERROR_CARD_BUTTON_GET" desc="Button label for the message shown in the Sync Error Card (due to missing trusted vault keys) for fixing the issue and getting all passwords of a user on their device.">
+        Get
+      </message>
       <!-- Identity error message and notification strings -->
       <message name="IDS_IDENTITY_ERROR_MESSAGE_BODY" desc="Error message/notification to resolve passphrase required error, sync encryption error, auth error, outdated client error.">
         Keep using the Chrome data in your Google Account
@@ -2951,7 +2983,7 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_IDENTITY_ERROR_MESSAGE_TITLE_CLIENT_OUT_OF_DATE" desc="Error message/notification title for client out-of-date error.">
         Update Chrome
       </message>
-      <message name="IDS_IDENTITY_ERROR_MESSAGE_BUTTON_PASSPHRASE_REQUIRED" desc="Error message button label for passphrase required error.">
+      <message name="IDS_IDENTITY_ERROR_MESSAGE_BUTTON_PASSPHRASE_REQUIRED" meaning="An on-screen button that opens the dialog for the user to enter a custom passphrase" desc="Error message button label for passphrase required error.">
         Enter
       </message>
       <message name="IDS_IDENTITY_ERROR_MESSAGE_BUTTON_VERIFY" desc="Error message button label for all errors requiring re-auth (auth error, degraded recoverability, encryption error)">
@@ -3041,6 +3073,11 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
           =1 {1 was blocked by your organization}
           other {# were blocked by your organization}}
       </message>
+      <message name="IDS_DOWNLOAD_MESSAGE_MULTIPLE_DOWNLOAD_DANGEROUS" desc="Download message label describing that one or more downloads are dangerous and were blocked">
+        {FILE_COUNT, plural,
+          =1 {Dangerous download blocked}
+          other {# dangerous downloads blocked}}
+      </message>
 
       <message name="IDS_INCOGNITO_DOWNLOAD_MESSAGE_TITLE" desc="Download title displayed in a prompt message when the user downloads a file in Incognito mode.">
         Download file?
@@ -3062,6 +3099,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
 
       <message name="IDS_MENU_LISTEN_TO_THIS_PAGE_IPH" desc="The in-product-help message that encourages users to use the Listen to this Page feature in the app menu">
         You can listen to this page
+      </message>
+      <message name="IDS_MENU_LISTEN_TO_THIS_PAGE_WITH_AI_IPH" desc="The in-product-help message that encourages users to listen to this page in Audio Overivew mode in the app menu">
+        Listen to this page with AI
       </message>
 
       <message name="IDS_MENU_PRINT" desc="Menu item for printing the current page. [CHAR_LIMIT=27]">
@@ -4351,6 +4391,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_MENU_MOVE_TO_OTHER_WINDOW" desc="Menu item for moving the current tab into the other window. [CHAR_LIMIT=27]">
         Move to other window
       </message>
+      <message name="IDS_MENU_MOVE_TAB_TO_OTHER_WINDOW" desc="Menu item for moving the current tab into another window. [CHAR_LIMIT=27]">
+        Move tab to another window
+      </message>
+      <message name="IDS_MENU_MOVE_GROUP_TO_OTHER_WINDOW" desc="Menu item for moving the current tab group into another window. [CHAR_LIMIT=27]">
+        Move group to another window
+      </message>
       <message name="IDS_MENU_MANAGE_ALL_WINDOWS" desc="Menu item for bringing up instance switcher UI. [CHAR_LIMIT=27]">
         Manage windows (<ph name="INSTANCE_COUNTS">%1$d<ex>3</ex></ph>)
       </message>
@@ -4389,6 +4435,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_MENU_RECENT_TABS" desc="Menu item for opening the 'Recent tabs' page that shows recently closed tabs and pages the user has opened on his/her other devices. [CHAR_LIMIT=27]">
         Recent tabs
+      </message>
+      <message name="IDS_MENU_EXTENSIONS" desc="Menu item for opening the 'Extensions' page that allows the user to manage installed extensions. [CHAR_LIMIT=27]">
+        Extensions
       </message>
       <message name="IDS_MENU_TINKER_TANK" desc="Menu item for opening the tinker tank bottom sheet. [CHAR_LIMIT=27]" translateable="false">
         Tinker tank
@@ -4443,6 +4492,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_MENU_READER_MODE_PREFS" desc="Menu item to show reader mode preferences pane, which allows users to change the appearance (font size, theme, etc.) of the page. [CHAR_LIMIT=27]">
         Appearance
       </message>
+      <message name="IDS_READER_MODE_BOTTOM_SHEET_TITLE" desc="Title of the Reading Mode bottom sheet. [CHAR_LIMIT=27]">
+        Reading mode
+      </message>
+      <message name="IDS_READER_MODE_BOTTOM_SHEET_CONTENT_DESCRIPTION" desc="Content description of the Reading Mode bottom sheet. [CHAR_LIMIT=27]">
+        Reading mode bottom sheet
+      </message>
       <message name="IDS_MENU_SETTINGS" desc="Menu item for opening browser settings. [CHAR_LIMIT=27]">
         Settings
       </message>
@@ -4490,6 +4545,15 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_MENU_REVIEW_PDF_WITH_AI" desc="Menu item to review a PDF file with AI.">
         Review PDF with AI
+      </message>
+      <message name="IDS_MENU_PIN_TAB" desc="Menu item for pinning a tab.">
+        Pin tab
+      </message>
+      <message name="IDS_MENU_UNPIN_TAB" desc="Menu item for unpinning a tab.">
+        Unpin tab
+      </message>
+      <message name="IDS_MENU_ITEM_CONTENT_FILTER_HELP_CENTER_LINK" desc="Menu item to explain that the content filter is on and to direct the user to the help center article about content filters. Only available when the content filter is on.">
+        Content filter is on
       </message>
 
       <!-- Bookmarks strings -->
@@ -4894,17 +4958,17 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_MENU_OPEN_IN_PRODUCT_DEFAULT" desc="Default title for menu item for opening link in browser. [CHAR_LIMIT=30]">
         Open in browser
       </message>
-      <message name="IDS_READER_VIEW_TEXT_ALT" desc='Message shown on the reader mode button bar, to invite the user to tap to open a reader mode. Reader mode extracts content and removes clutter from a web page and puts the result in a panel making it easier to read. This is used when "Reader Mode for Accessibility" is available.'>
+      <message name="IDS_SHOW_READING_MODE_TEXT" desc='Message shown on the reader mode button bar, to invite the user to tap to open a reading mode. Reading mode extracts content and removes clutter from a web page and puts the result in a panel making it easier to read. This is used when "Reader Mode for Accessibility" is available.'>
         Show Reading Mode
       </message>
-      <message name="IDS_READER_MODE_MESSAGE_TITLE" desc="Message shown on the reader mode prompt, to invite the user to tap to open a reader mode.">
+      <message name="IDS_HIDE_READING_MODE_TEXT" desc='Message shown on the reader mode button bar, to invite the user to tap to close reading mode. Returns user to a non-distilled version of the same web page.'>
+        Hide Reading Mode
+      </message>
+      <message name="IDS_READER_MODE_MESSAGE_TITLE" desc="Message shown on the reader mode prompt, to invite the user to tap to open a reading mode.">
         View Reading Mode?
       </message>
       <message name="IDS_READER_MODE_MESSAGE_BUTTON" desc="The label for the button to open the current page in reader mode.">
         View
-      </message>
-      <message name="IDS_READER_MODE_ACTION_CHIP_LABEL_SIMPLIFY_PAGE" desc="The label for the action chip shown on the toolbar to open the current page in reader mode. [CHAR_LIMIT=27]">
-        Simplify page
       </message>
       <message name="IDS_CONTENT_PROVIDER_SEARCH_DESCRIPTION" desc="Description for Chrome's entry in QSB's list of search suggestion providers [CHAR_LIMIT=32]">
         Bookmarks and web history
@@ -4954,6 +5018,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_ACCESSIBILITY_TOOLBAR_BTN_MIC" desc="Content description for the voice search button.">
         Start voice search
+      </message>
+      <message name="IDS_ACCESSIBILITY_TOOLBAR_BTN_COMPOSEPLATE" is_accessibility_with_no_ui="true" desc="Content description for the composeplate.">
+        Start search
       </message>
       <message name="IDS_ACCESSIBILITY_BTN_LENS_CAMERA" desc="Content description for the Lens button. When the user taps the button, they can perform a 'search with your camera or photos', which opens the Google Lens app.">
         Search with your camera using Google Lens
@@ -5278,7 +5345,13 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         Unsupported number of Chrome instances.
       </message>
       <message name="IDS_MAX_NUMBER_OF_WINDOWS" desc="Toast message for when the user has tried to start more than 5 instances of Chrome window.">
-        You can have up to 5 windows.
+        You can have up to <ph name="MAX_WINDOW_COUNT">%1$d</ph> windows.
+      </message>
+      <message name="IDS_MAX_NUMBER_OF_WINDOWS_INSTANCE_SWITCHER_V2_ACTIVE_TAB" desc="Message to notify the user that a new window cannot be created because the total number of persisted instances exceeds the window limit.">
+        To open a new window, reduce the total number of windows across active and inactive to <ph name="MAX_WINDOW_COUNT_MINUS_ONE">%1$d</ph> or fewer.
+      </message>
+      <message name="IDS_MAX_NUMBER_OF_WINDOWS_INSTANCE_SWITCHER_V2_INACTIVE_TAB" desc="Message to notify the user thata window cannot be restored because the total number of persisted instances exceeds the window limit.">
+        To restore a new window, reduce the total number of windows across active and inactive to <ph name="MAX_WINDOW_COUNT_MINUS_ONE">%1$d</ph> or fewer. Inactive windows are deleted after 6 months.
       </message>
       <message name="IDS_TAB_DROPPED_DIFFERENT_MODEL" desc="Toast that appears when a tab is dropped into tab strip with a different profile (regular v.s. incognito).">
         You can find all open tabs in the tab switcher
@@ -5576,7 +5649,7 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         Open a new tab
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_REOPEN_NEW_TAB" desc="A text label that appears next to the keyboard shortcut for reopening the last tab in the chrome app. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Reopen the last closed tab
+        Reopen closed tab
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_NEW_INCOGNITO_TAB" desc="A text label that appears next to a keyboard shortcut to open a new tab in Incognito mode in Chrome. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
         Open a new tab in Incognito mode
@@ -5591,7 +5664,7 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         Tab navigation shortcuts
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_OPEN_MENU" desc="A text label that appears next to a keyboard shortcut that opens the overflow menu in Chrome. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open the menu
+        Open Chrome menu
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_NEXT_TAB" desc="A text label that appears next to the keyboard shortcut that will move the user to the next tab in the Chrome app. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
         Jump to the next tab
@@ -5603,43 +5676,43 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         Close current tab
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_FIND_BAR" desc="A text label that appears next to the keyboard shortcut that will open the find bar that searches what is on the screen. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open the Find Bar
+        Open Find Bar
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_ADDRESS_BAR" desc="A text label that appears next to the keyboard that will let you focus on the address bar on the screen. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Jump to the address bar
+        Jump to address bar
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_SEARCH" desc="A text label that appears next to the keyboard that will focusa and clear the address bar on the screen. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Jump to search
+        Start new search
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_BOOKMARK_MANAGER" desc="A text label that appears next to the keyboard shortcut that will open the bookmarks manager in Chrome. On a tablet this is a new tab, on the phone this is a new activity. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open the bookmarks manager
+        Open Bookmarks Manager
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_BOOKMARK_PAGE" desc="A text label that appears next to the keyboard shortcut that will bookmark the page that is currently on screen. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
         Bookmark the current page
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_HISTORY_MANAGER" desc="A text label that appears next to the keyboard shorcut that will open up the history page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open the history page
+        Open History
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_HISTORY_GO_BACK" desc="A text label that appears next to the keyboard shorcut that will go to the previous page in your browser History. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Go to the previous page in History
+        Go to previous page
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_HISTORY_GO_FORWARD" desc="A text label that appears next to the keyboard shorcut that will go to the next page in your browser History. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Go to the next page in History
+        Go to next page
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_SAVE_PAGE" desc="A text label that appears next to the keyboard shortcut that will save the page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open options to save page
+        Open options to save
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_PRINT_PAGE" desc="A text label that appears next to the keyboard shortcut that will open the print page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Open options to print page
+        Open options to print
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_ZOOM_IN" desc="A text label that appears next to the keyboard shortcut that will increase everything on the page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Make everything on the page bigger
+        Zoom in
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_ZOOM_OUT" desc="A text label that appears next to the keyboard shortcut that will decrease everything on the page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Make everything on the page smaller
+        Zoom out
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_RESET_ZOOM" desc="A text label that appears next to the keyboard shortcut that will reset the zoom back to the original size. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Return everything on the page to default size
+        Reset zoom
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_RELOAD_PAGE" desc="A text label that appears next to the keyboard shortcut that will reload the current page. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
         Reload the current page
@@ -5651,7 +5724,7 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         Open the Chrome Help Center in a new tab
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_TOGGLE_BOOKMARK_BAR" desc="A text label that appears next to the keyboard shortcut that will toggle the bookmark bar. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
-        Show or hide the bookmarks bar
+        Show or hide Bookmarks bar
       </message>
       <message name="IDS_KEYBOARD_SHORTCUT_DEVELOPER_TOOLS" desc="A text label that appears next to the keyboard shortcut that will open Developer Tools. The shortcut description is shown in a system dialog along with all other supported shortcuts. [CHAR_LIMIT=55]">
         Open Developer Tools
@@ -5688,23 +5761,6 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_MODULE_INSTALL_FAILURE_TEXT" desc="Text shown on an infobar when Chrome failed to install a dynamic feature module.">
         Unable to install <ph name="module">%1$s<ex>augmented reality</ex></ph> for Chrome
-      </message>
-
-      <!-- Custom Context Menu Informations -->
-      <message name="IDS_CONTEXTMENU_PAGE_TITLE" desc="The title of a context menu tab when the item pressed contains more than one type. This indicates that all the actions are related to the page.">
-        PAGE
-      </message>
-      <message name="IDS_CONTEXTMENU_IMAGE_TITLE" desc="The title of a context menu tab when the item pressed contains more than one type. This indicates that all the actions are related to the image.">
-        IMAGE
-      </message>
-      <message name="IDS_CONTEXTMENU_LINK_TITLE" desc="The title of a context menu tab when the item pressed contains more than one type. This indicates that all the actions are related to the link.">
-        LINK
-      </message>
-      <message name="IDS_CONTEXTMENU_VIDEO_TITLE" desc="The title of a context menu tab when the item pressed contains more than one type. This indicates that all the actions are related to a video.">
-        VIDEO
-      </message>
-      <message name="IDS_CONTEXTMENU_DEVELOPER_TITLE" desc="The title of a context menu tab when the item pressed contains more than one type. This indicates that all the actions are related to tools for developers.">
-        DEVELOPER
       </message>
 
       <!-- Multi-instance Switcher Dialog strings -->
@@ -5753,8 +5809,11 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_TARGET_SELECTOR_MOVE" desc="The message in the button in target selector dialog that starts moving a tab.">
         Move tab
       </message>
-      <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_HEADER" desc="The header of multi-instance switcher dialog confirming close operation.">
+      <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_HEADER" desc="The header of multi-instance switcher dialog confirming close operation for a non-current window.">
         Close window?
+      </message>
+      <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_HEADER_CURRENT" desc="The header of multi-instance switcher dialog confirming close operation for the current window.">
+        Close your current window?
       </message>
       <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_TABS_ZERO" desc="The phrase used in the message when there is a single tab to delete.">
         The window will be closed
@@ -5762,10 +5821,18 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_TABS_ONE" desc="The phrase used in the message when there is a single tab to delete.">
         The tab <ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> will be closed
       </message>
+      <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_TABS_ONE_V2" desc="The phrase used in the message when there is a single tab to delete.">
+        <ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> will be closed
+      </message>
       <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_TABS_MANY" desc="The phrase used in the message when there are multiple tabs to delete.">
         {TAB_COUNT, plural,
           =1 {<ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> and <ph name="TAB_COUNT_ONE">%2$s</ph> more tab will be closed}
           other {<ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> and <ph name="TAB_COUNT_MANY">%2$s</ph> more tabs will be closed}}
+      </message>
+      <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_TABS_MANY_V2" desc="The phrase used in the message when there are multiple tabs to delete.">
+        {TAB_COUNT, plural,
+          =1 {<ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> and <ph name="TAB_COUNT_ONE">%2$s</ph> other tab will be closed}
+          other {<ph name="TAB_TITLE">%1$s<ex>YouTube</ex></ph> and <ph name="TAB_COUNT_MANY">%2$s</ph> other tabs will be closed}}
       </message>
       <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_INCOGNITO" desc="The phrase used in the message for deleting incognito-only instance.">
         {TAB_COUNT, plural,
@@ -5776,6 +5843,25 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
         {TAB_COUNT, plural,
           =1 {<ph name="INCOGNITO_TAB_COUNT">%1$s<ex>2</ex></ph> incognito and <ph name="TAB_COUNT_ONE">%2$s<ex>1</ex></ph> more tab will be closed}
           other {<ph name="INCOGNITO_TAB_COUNT">%1$s<ex>4</ex></ph> incognito and <ph name="TAB_COUNT_MANY">%2$s<ex>4</ex></ph> more tabs will be closed}}
+      </message>
+      <message name="IDS_INSTANCE_LAST_ACCESSED_CURRENT" desc="The current window indicator text.">
+        Current window
+      </message>
+       <message name="IDS_INSTANCE_SWITCHER_CLOSE_CONFIRM_DELETED_INCOGNITO_MIXED_V2" desc="The phrase used in the message for deleting incognito-selected instance.">
+        {TAB_COUNT, plural,
+          =1 {<ph name="INCOGNITO_TAB_COUNT">%1$s<ex>2</ex></ph> incognito and <ph name="TAB_COUNT_ONE">%2$s<ex>1</ex></ph> other tab will be closed}
+          other {<ph name="INCOGNITO_TAB_COUNT">%1$s<ex>4</ex></ph> incognito and <ph name="TAB_COUNT_MANY">%2$s<ex>4</ex></ph> other tabs will be closed}}
+      </message>
+
+      <!-- Multi-instance message strings -->
+      <message name="IDS_MULTI_INSTANCE_RESTORATION_MESSAGE_TITLE" desc="Title of the message shown when the number of persisted instances exceeds the max instance count after an instance limit downgrade.">
+        Only <ph name="MAX_INSTANCE_COUNT">%1$s<ex>5</ex></ph> windows can be shown
+      </message>
+      <message name="IDS_MULTI_INSTANCE_RESTORATION_MESSAGE_DESCRIPTION" desc="Description of the message shown when the number of persisted instances exceeds the max instance count after an instance limit downgrade.">
+        Select manage to see all windows
+      </message>
+      <message name="IDS_MULTI_INSTANCE_RESTORATION_MESSAGE_BUTTON" desc="Text on the button that will open the instance switcher dialog.">
+        Manage
       </message>
 
       <!-- In-Product Help strings -->
@@ -5812,6 +5898,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_IPH_ANDROID_TAB_DECLUTTER_TEXT" desc="The in-product-help text for the android tab declutter feature.">
         Review your inactive tabs here
       </message>
+      <message name="IDS_IPH_ANDROID_TAB_DECLUTTER_TEXT_WITH_TAB_GROUPS" desc="The in-product-help text for the android tab declutter feature.">
+        Review your inactive tabs and groups here
+      </message>
       <message name="IDS_IPH_ANDROID_TAB_DECLUTTER_ACCESSIBILITY_TEXT" desc="The in-product-help accessibility text for the android tab declutter feature.">
         To open tabs and visit different pages at the same time, tap the open tabs button
       </message>
@@ -5844,6 +5933,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_IPH_TAB_SWITCHER_XR" desc="The in-product-help message to notify the user about the new tab switcher on an XR device.">
         Your open tabs now have an updated look in XR
+      </message>
+      <message name="IDS_IPH_TAB_TEARING_XR" desc="The in-product-help message to notify the user about the new tab switcher on an XR device.">
+        Pinch, hold, and drag to open tabs in a new window
       </message>
 
       <!-- Search Widget strings -->
@@ -6809,6 +6901,9 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name ="IDS_COLLABORATION_MANAGE_GROUP_TITLE" desc="The Title for the manage flow dialog for a shared group.">
         Manage access
       </message>
+      <message name ="IDS_COLLABORATION_MANAGE_ICON" desc="The text for the manage icon." formatter_data="android_java">
+        Manage icon
+      </message>
       <message name ="IDS_COLLABORATION_MANAGE_STOP_SHARING_OPTION" desc="The Label for the manage flow stop sharing option and confirmation button.">
         Stop sharing
       </message>
@@ -7073,21 +7168,29 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
 
       <!-- Tab declutter -->
-      <message name="IDS_ARCHIVED_TAB_CARD_TITLE" desc="Shown in the tab switcher to prompt the user to review their inactive tabs. Indicates how many tabs are inactive.">
+      <message name="IDS_ARCHIVED_TAB_CARD_TITLE" desc="Shown in the tab switcher to prompt the user to review their inactive tabs and tab groups. Indicates how many tabs and tab groups are inactive.">
         {ARCHIVED_TAB_COUNT, plural,
-          =1 {Inactive tab (1)}
-          other {Inactive tabs (#)}}
+          =1 {(1) inactive item}
+          other {(#) inactive items}}
       </message>
-      <message name="IDS_ARCHIVED_TAB_CARD_SUBTITLE" desc="Shown in the tab switcher to inform the user how long the relevant tabs have been in active for.">
+      <message name="IDS_ARCHIVED_TAB_CARD_SUBTITLE" desc="Shown in the tab switcher to inform the user how long the relevant tabs have been inactive for.">
         {INACTIVE_TIME_DAYS, plural,
           =1 {Not used for 1 day or more}
           other {Not used for # days or more}}
       </message>
+      <message name="IDS_ARCHIVED_TAB_CARD_SUBTITLE_WITH_TAB_GROUPS" desc="Shown in the tab switcher to inform the user how long the relevant tabs and tab groups have been inactive for.">
+        {INACTIVE_TIME_DAYS, plural,
+          =1 {Tabs and tab groups not used for 1 day or more}
+          other {Tabs and tab groups not used for # days or more}}
+      </message>
       <message name="IDS_ARCHIVED_TAB_IPH_CARD_SUBTITLE" desc="In product help shown as a message in the archived tabs dialog.">
-        Tabs you haven’t used for <ph name="DAYS_INACTIVE">%1$d<ex>14</ex></ph> days are moved here<ph name="AUTODELETE_SECTION">%2$s<ex>and deleted after 60 days</ex></ph>. You can change this anytime in <ph name="SETTINGS_TITLE">%3$s<ex>Settings</ex></ph>.
+        Tabs you haven’t used for <ph name="DAYS_INACTIVE">%1$d<ex>14</ex></ph> days are moved here<ph name="AUTODELETE_SECTION">%2$s<ex>and deleted after 3 months</ex></ph>. You can change this anytime in <ph name="SETTINGS_TITLE">%3$s<ex>Settings</ex></ph>.
+      </message>
+      <message name="IDS_ARCHIVED_TAB_IPH_CARD_SUBTITLE_WITH_TAB_GROUPS" desc="In product help shown as a message in the archived tabs dialog.">
+        Tabs and tab groups you haven’t used for <ph name="DAYS_INACTIVE">%1$d<ex>14</ex></ph> days are moved here<ph name="AUTODELETE_SECTION">%2$s<ex>and deleted after 3 months</ex></ph>. You can change this anytime in <ph name="SETTINGS_TITLE">%3$s<ex>Settings</ex></ph>.
       </message>
       <message name="IDS_ARCHIVED_TAB_IPH_CARD_SUBTITLE_AUTODELETE_SECTION" desc="A section describing auto-delete, shown if it's enabled.">
-        \u0020and closed after <ph name="DAYS_ARCHIVED">%1$d<ex>60</ex></ph> days
+        \u0020and closed after <ph name="MONTHS_ARCHIVED">%1$d<ex>3</ex></ph> months
       </message>
       <message name="IDS_ARCHIVED_TAB_IPH_CARD_SUBTITLE_SETTINGS_TITLE" desc="The word for settings, used in IDS_ARCHIVED_TAB_IPH_CARD_SUBTITLE.">
         Settings
@@ -7137,6 +7240,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       <message name="IDS_DEFAULT_BROWSER_PROMO_MESSAGE_SETTINGS_BUTTON" desc="Text that displayed on button that allows the user to open Android settings to set a default browser.">
         Settings
       </message>
+
+      <!-- Tab group suggestions -->
+      <message name="IDS_TAB_GROUP_SUGGESTION_ACTION_CHIP_LABEL" desc="The label for the action chip for tab group suggestions in the top toolbar.">
+        Group tabs
+      </message>
+
     </messages>
   </release>
 </grit>

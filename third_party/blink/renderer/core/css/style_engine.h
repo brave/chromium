@@ -71,10 +71,6 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
-namespace WTF {
-class TextPosition;
-}  // namespace WTF
-
 namespace blink {
 
 class AnchorEvaluator;
@@ -297,30 +293,13 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
     return global_rule_set_->DocumentRulesSelectorsRuleSet();
   }
 
-  // Helper class for making sure RuleSets that are ensured when collecting
-  // sheets for a TreeScope are not shared between two equal sheets which
-  // contain @layer rules since anonymous layers need to be unique.
-  class RuleSetScope {
-    STACK_ALLOCATED();
+  RuleSet* RuleSetForSheet(CSSStyleSheet&, const MixinMap& mixins);
 
-   public:
-    RuleSetScope() = default;
-
-    // Ensure a RuleSet for the passed in css_sheet
-    RuleSet* RuleSetForSheet(StyleEngine& engine, CSSStyleSheet* css_sheet);
-
-   private:
-    // Keep track of ensured RuleSets with @layer rules to detect
-    // StyleSheetContents sharing.
-    HeapHashSet<Member<const RuleSet>> layer_rule_sets_;
-  };
-
-  RuleSet* RuleSetForSheet(CSSStyleSheet&);
   // See StyleSheetContents::CreateUnconnectedRuleSet.
   //
   // Note that this can return nullptr when the associated media query
   // does not match.
-  RuleSet* CreateUnconnectedRuleSet(CSSStyleSheet&);
+  RuleSet* CreateUnconnectedRuleSet(CSSStyleSheet&, const MixinMap& mixins);
 
   // A functional @media query is evaluated as a part of some function
   // during value resolution. This is different from regular media queries,
@@ -679,16 +658,18 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   // after all.
   void UpdateStyleForNonEligibleSizeContainer(Element& container);
   // Updates the style of `element`, and descendants if needed.
-  // The provided `try_set` represents the declaration block from
-  // a @position-try rule. The specified TryTacticList will cause
-  // CSSFlipRevertValues to appear in the try-tactics layer (see
-  // OutOfFlowData::try_tactics_set_).
-  void UpdateStyleAndLayoutTreeForOutOfFlow(
+  // The provided `fallback` represents which of the position-try-fallbacks
+  // alternatives should be applied, null if no fallback should be applied.
+  // Return true if the style was updated.
+  // Returns false if a named @position-try rule was not found, in which case
+  // the style was not updated.
+  bool UpdateStyleAndLayoutTreeForOutOfFlow(
       Element& element,
-      std::optional<wtf_size_t> try_fallback_index,
-      const CSSPropertyValueSet* try_set,
-      const TryTacticList&,
-      AnchorEvaluator*);
+      const PositionTryFallback* fallback,
+      AnchorEvaluator*,
+      WritingDirectionMode abs_container_writing_direction);
+  std::optional<const CSSPropertyValueSet*> TrySetFromFallback(
+      const PositionTryFallback& fallback);
   void PostInterleavedRecalcUpdate(const Element& interleaving_root);
   StyleRulePositionTry* GetPositionTryRule(const ScopedCSSName&);
   void RecalcStyle();
@@ -766,7 +747,7 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   const CSSValue* GetCachedFillOrClipPathURIValue(const AtomicString& string);
 
   void Trace(Visitor*) const override;
-  const char* NameInHeapSnapshot() const override { return "StyleEngine"; }
+  const char* GetHumanReadableName() const override { return "StyleEngine"; }
 
   RuleSet* DefaultViewTransitionStyle(const Element&) const;
 
@@ -779,8 +760,8 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   // See comment on viewport_size_.
   void UpdateViewportSize();
   const CSSToLengthConversionData::ViewportSize& GetViewportSize() const {
-    DCHECK(viewport_size_ == CSSToLengthConversionData::ViewportSize(
-                                 GetDocument().GetLayoutView()));
+    DCHECK_EQ(viewport_size_, CSSToLengthConversionData::ViewportSize(
+                                  GetDocument().GetLayoutView()));
     return viewport_size_;
   }
 

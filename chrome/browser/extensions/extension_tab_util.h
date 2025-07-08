@@ -28,7 +28,6 @@
 #endif
 
 class Browser;
-class ChromeExtensionFunctionDetails;
 class ExtensionFunction;
 class GURL;
 class Profile;
@@ -48,12 +47,15 @@ class TabGroupVisualData;
 }  // namespace tab_groups
 
 namespace extensions {
+class ChromeExtensionFunctionDetails;
 class Extension;
 class WindowController;
 
 // Provides various utility functions that help manipulate tabs.
 class ExtensionTabUtil {
  public:
+  static constexpr char kTabNotFoundError[] = "No tab with id: *.";
+
 #if !BUILDFLAG(IS_ANDROID)
   // This file is slowly being ported to Android. For now, most of it is
   // ifdef'd out.
@@ -65,7 +67,6 @@ class ExtensionTabUtil {
       "Tabs can only be moved between windows in the same profile.";
   static constexpr char kNoCurrentWindowError[] = "No current window";
   static constexpr char kWindowNotFoundError[] = "No window with id: *.";
-  static constexpr char kTabNotFoundError[] = "No tab with id: *.";
   static constexpr char kTabStripNotEditableError[] =
       "Tabs cannot be edited right now (user may be dragging a tab).";
   static constexpr char kTabStripDoesNotSupportTabGroupsError[] =
@@ -84,9 +85,9 @@ class ExtensionTabUtil {
       "Cannot navigate to a chrome-untrusted:// page.";
   static constexpr char kFileUrlsNotAllowedInExtensionNavigations[] =
       "Cannot navigate to a file URL without local file access.";
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   static constexpr char kTabsKey[] = "tabs";
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   enum ScrubTabBehaviorType {
     kScrubTabFully,
@@ -124,15 +125,15 @@ class ExtensionTabUtil {
       const OpenTabParams& params,
       bool user_gesture);
 
-  static int GetWindowId(const Browser* browser);
+  static int GetWindowId(Browser* browser);
   static int GetWindowIdOfTabStripModel(const TabStripModel* tab_strip_model);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   static int GetTabId(const content::WebContents* web_contents);
+  static int GetWindowIdOfTab(const content::WebContents* web_contents);
 
 #if !BUILDFLAG(IS_ANDROID)
-  static int GetWindowIdOfTab(const content::WebContents* web_contents);
-  static base::Value::List CreateTabList(const Browser* browser,
+  static base::Value::List CreateTabList(Browser* browser,
                                          const Extension* extension,
                                          mojom::ContextType context);
 
@@ -152,7 +153,7 @@ class ExtensionTabUtil {
       std::string* error_message);
 
   // Returns the tabs:: API constant for the window type of the `browser`.
-  static std::string GetBrowserWindowTypeText(const Browser& browser);
+  static std::string GetBrowserWindowTypeText(Browser& browser);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   // Creates a Tab object (see chrome/common/extensions/api/tabs.json) with
@@ -181,7 +182,7 @@ class ExtensionTabUtil {
   // ScrubTabBehavior for the populated tabs data.
   // TODO(devlin): Convert this to a api::Windows::Window object.
   static base::Value::Dict CreateWindowValueForExtension(
-      const Browser& browser,
+      Browser& browser,
       const Extension* extension,
       WindowController::PopulateTabBehavior populate_tab_behavior,
       mojom::ContextType context);
@@ -281,13 +282,13 @@ class ExtensionTabUtil {
       content::BrowserContext* browser_context,
       bool include_incognito);
 
-#if !BUILDFLAG(IS_ANDROID)
   // Determines if the `web_contents` is in `browser_context` or it's OTR
   // BrowserContext if `include_incognito` is true.
   static bool IsWebContentsInContext(content::WebContents* web_contents,
                                      content::BrowserContext* browser_context,
                                      bool include_incognito);
 
+#if !BUILDFLAG(IS_ANDROID)
   // Takes `url_string` and returns a GURL which is either valid and absolute
   // or invalid. If `url_string` is not directly interpretable as a valid (it is
   // likely a relative URL) an attempt is made to resolve it. When `extension`
@@ -325,6 +326,14 @@ class ExtensionTabUtil {
   // Executes the specified callback for all tabs in all browser windows.
   static void ForEachTab(
       base::RepeatingCallback<void(content::WebContents*)> callback);
+
+  // Open the extension's options page. Returns true if an options page was
+  // successfully opened (though it may not necessarily *load*, e.g. if the
+  // URL does not exist). This call to open the options page is initiated from
+  // the details page of chrome://extensions.
+  static bool OpenOptionsPageFromWebContents(
+      const Extension* extension,
+      content::WebContents* web_contents);
 
 #if !BUILDFLAG(IS_ANDROID)
   static WindowController* GetWindowControllerOfTab(

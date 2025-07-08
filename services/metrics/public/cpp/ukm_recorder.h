@@ -11,7 +11,6 @@
 #include "base/functional/callback.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
-#include "base/threading/thread_checker.h"
 #include "base/types/pass_key.h"
 #include "services/metrics/public/cpp/metrics_export.h"
 #include "services/metrics/public/cpp/ukm_source.h"
@@ -44,6 +43,10 @@ class RenderFrameHostImpl;
 namespace extensions {
 class ExtensionMessagePort;
 class ManifestV2ExperimentManager;
+}
+
+namespace safe_browsing {
+class NotificationContentDetectionUkmUtil;
 }
 
 namespace weblayer {
@@ -175,6 +178,12 @@ class METRICS_EXPORT UkmRecorder {
   // for recording nonpersistent notification UKM events.
   static SourceId GetSourceIdForNotificationEvent(
       base::PassKey<NonPersistentNotificationHandler>,
+      const GURL& url);
+
+  // Gets a new SourceId of NOTIFICATION_ID type. This should only be used
+  // for recording suspicious notification interaction UKM events.
+  static SourceId GetSourceIdForNotificationEvent(
+      base::PassKey<safe_browsing::NotificationContentDetectionUkmUtil>,
       const GURL& url);
 
   // This method should be called when the system is about to shutdown, but

@@ -21,6 +21,7 @@
 #include "third_party/blink/renderer/core/layout/grid/layout_grid.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
+#include "third_party/blink/renderer/core/layout/inline/caret_rect.h"
 #include "third_party/blink/renderer/core/layout/inline/fragment_items.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/inline/physical_line_box_fragment.h"
@@ -367,39 +368,6 @@ PaintInfo FloatPaintInfo(const PaintInfo& paint_info) {
   return float_paint_info;
 }
 
-// Helper function for painting a child fragment, when there's any likelihood
-// that we need legacy fallback. If it's guaranteed that legacy fallback won't
-// be necessary, on the other hand, there's no need to call this function. In
-// such cases, call sites may just as well invoke BoxFragmentPainter::Paint()
-// on their own.
-void PaintFragment(const PhysicalBoxFragment& fragment,
-                   const PaintInfo& paint_info) {
-  if (fragment.CanTraverse()) {
-    BoxFragmentPainter(fragment).Paint(paint_info);
-    return;
-  }
-
-  if (fragment.IsHiddenForPaint() ||
-      (!fragment.IsFirstForNode() && !CanPaintMultipleFragments(fragment))) {
-    return;
-  }
-
-  // We are about to enter legacy paint code. This means that the node is
-  // monolithic. However, that doesn't necessarily mean that it only has one
-  // fragment. Repeated table headers / footers may cause multiple fragments,
-  // for instance. Set the FragmentData, to use the right paint offset.
-  PaintInfo modified_paint_info(paint_info);
-  modified_paint_info.SetFragmentDataOverride(fragment.GetFragmentData());
-
-  auto* layout_object = fragment.GetLayoutObject();
-  DCHECK(layout_object);
-  if (fragment.IsPaintedAtomically() && layout_object->IsLayoutReplaced()) {
-    ObjectPainter(*layout_object).PaintAllPhasesAtomically(modified_paint_info);
-  } else {
-    layout_object->Paint(modified_paint_info);
-  }
-}
-
 bool ShouldDelegatePaintingToViewTransition(const PhysicalBoxFragment& fragment,
                                             PaintPhase paint_phase) {
   if (!fragment.GetLayoutObject()) {
@@ -464,6 +432,34 @@ InlinePaintContext& BoxFragmentPainter::EnsureInlineContext() {
   if (!inline_context_)
     inline_context_ = &inline_context_storage_.emplace();
   return *inline_context_;
+}
+
+void BoxFragmentPainter::PaintFragment(const PhysicalBoxFragment& fragment,
+                                       const PaintInfo& paint_info) {
+  if (fragment.CanTraverse()) {
+    BoxFragmentPainter(fragment).Paint(paint_info);
+    return;
+  }
+
+  if (fragment.IsHiddenForPaint() ||
+      (!fragment.IsFirstForNode() && !CanPaintMultipleFragments(fragment))) {
+    return;
+  }
+
+  // We are about to enter legacy paint code. This means that the node is
+  // monolithic. However, that doesn't necessarily mean that it only has one
+  // fragment. Repeated table headers / footers may cause multiple fragments,
+  // for instance. Set the FragmentData, to use the right paint offset.
+  PaintInfo modified_paint_info(paint_info);
+  modified_paint_info.SetFragmentDataOverride(fragment.GetFragmentData());
+
+  auto* layout_object = fragment.GetLayoutObject();
+  DCHECK(layout_object);
+  if (fragment.IsPaintedAtomically() && layout_object->IsLayoutReplaced()) {
+    ObjectPainter(*layout_object).PaintAllPhasesAtomically(modified_paint_info);
+  } else {
+    layout_object->Paint(modified_paint_info);
+  }
 }
 
 void BoxFragmentPainter::Paint(const PaintInfo& paint_info) {
@@ -576,6 +572,9 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
       info.phase = PaintPhase::kDescendantBlockBackgroundsOnly;
   }
 
+  LocalFrame* frame = box_fragment_.GetLayoutObject()->GetFrame();
+  CaretShape shape = frame->Selection().GetCaretShape();
+
   if (original_phase != PaintPhase::kSelfBlockBackgroundOnly &&
       original_phase != PaintPhase::kSelfOutlineOnly &&
       // kOverlayOverflowControls is for the current object itself, so we don't
@@ -585,6 +584,17 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
         !box_fragment_.GetLayoutObject()->IsBox()) {
       PaintObject(info, paint_offset);
     } else {
+      // Paint the caret before text when caret-shape is block as text insertion
+      // of block caret is a rectangle overlapping the visible text character.
+      // If the caret's node's fragment's containing block is this block, and
+      // the paint action is PaintPhaseForeground, then paint the caret.
+      if (original_phase == PaintPhase::kForeground &&
+          shape == CaretShape::kBlock) {
+        if (!recorder) [[likely]] {
+          DCHECK(!text_combine || !text_combine->NeedsAffineTransformInPaint());
+          PaintCaretsIfNeeded(paint_state, paint_info, paint_offset);
+        }
+      }
       ScopedBoxContentsPaintState contents_paint_state(
           paint_state, To<LayoutBox>(*box_fragment_.GetLayoutObject()));
       PaintObject(contents_paint_state.GetPaintInfo(),
@@ -592,9 +602,9 @@ void BoxFragmentPainter::PaintInternal(const PaintInfo& paint_info) {
     }
   }
 
-  // If the caret's node's fragment's containing block is this block, and
-  // the paint action is PaintPhaseForeground, then paint the caret.
-  if (original_phase == PaintPhase::kForeground) {
+  // Paint the caret when the shape is bar or underscore.
+  if (original_phase == PaintPhase::kForeground &&
+      shape != CaretShape::kBlock) {
     if (!recorder) [[likely]] {
       DCHECK(!text_combine || !text_combine->NeedsAffineTransformInPaint());
       PaintCaretsIfNeeded(paint_state, paint_info, paint_offset);
@@ -1369,7 +1379,7 @@ void BoxFragmentPainter::PaintGapDecorations(
   // create them in the same manner and don't want to duplicate paint chunks.
   // This boils down to only creating one when we are in overflow: hidden, which
   // is when GapDecorations need it but background doesn't
-  if (layout_box.HasNonVisibleOverflow() && !contents_paint_state) {
+  if (layout_box.IsScrollContainer() && !contents_paint_state) {
     // For the case where we are painting the decorations in the contents
     // space, we need to include the entire overflow rect.
     paint_rect = layout_box.ScrollableOverflowRect();
@@ -1378,8 +1388,6 @@ void BoxFragmentPainter::PaintGapDecorations(
         paint_info, paint_offset, layout_box, box_fragment_.GetFragmentData());
     paint_rect.Move(contents_paint_state_for_hidden->PaintOffset());
 
-    background_client = &layout_box.GetScrollableArea()
-                             ->GetScrollingBackgroundDisplayItemClient();
     visual_rect = layout_box.GetScrollableArea()->ScrollingBackgroundVisualRect(
         paint_offset);
   } else {
@@ -1765,7 +1773,8 @@ void BoxFragmentPainter::PaintBoxDecorationBackgroundForBlockInInline(
 // is implemented for multi-column.
 void BoxFragmentPainter::PaintColumnRules(const PaintInfo& paint_info,
                                           const PhysicalOffset& paint_offset) {
-  if (box_fragment_.GetGapGeometry()) {
+  if (box_fragment_.GetGapGeometry() ||
+      RuntimeEnabledFeatures::CSSGapDecorationEnabled()) {
     return;
   }
 

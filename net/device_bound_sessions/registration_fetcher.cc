@@ -99,6 +99,7 @@ void SignChallengeWithKey(
     const GURL& registration_url,
     std::string_view challenge,
     std::optional<std::string> authorization,
+    std::optional<std::string> session_identifier,
     base::OnceCallback<
         void(std::optional<RegistrationFetcher::RegistrationTokenResult>)>
         callback) {
@@ -114,7 +115,7 @@ void SignChallengeWithKey(
       CreateKeyRegistrationHeaderAndPayload(
           challenge, registration_url, expected_algorithm.value(),
           expected_public_key.value(), base::Time::Now(),
-          std::move(authorization));
+          std::move(authorization), std::move(session_identifier));
 
   if (!optional_header_and_payload.has_value()) {
     std::move(callback).Run(std::nullopt);
@@ -260,9 +261,8 @@ class RegistrationFetcherImpl : public URLRequest::Delegate {
         AttemptChallengeSigning();
         return;
       } else {
-        RunCallbackAndDeleteSelf(base::unexpected(SessionError{
-            SessionError::ErrorType::kTooManyChallenges,
-            net::SchemefulSite(fetcher_endpoint_), session_identifier_}));
+        RunCallbackAndDeleteSelf(base::unexpected(
+            SessionError{SessionError::ErrorType::kTooManyChallenges}));
         return;
       }
     }
@@ -282,7 +282,7 @@ class RegistrationFetcherImpl : public URLRequest::Delegate {
   void AttemptChallengeSigning() {
     SignChallengeWithKey(
         *key_service_, key_id_, fetcher_endpoint_, *current_challenge_,
-        current_authorization_,
+        current_authorization_, session_identifier_,
         base::BindOnce(&RegistrationFetcherImpl::OnRegistrationTokenCreated,
                        base::Unretained(this)));
   }
@@ -295,10 +295,8 @@ class RegistrationFetcherImpl : public URLRequest::Delegate {
         AttemptChallengeSigning();
         return;
       } else {
-        RunCallbackAndDeleteSelf(base::unexpected(SessionError{
-            SessionError::ErrorType::kSigningError,
-            net::SchemefulSite(url::Origin::Create(fetcher_endpoint_)),
-            session_identifier_}));
+        RunCallbackAndDeleteSelf(base::unexpected(
+            SessionError{SessionError::ErrorType::kSigningError}));
         return;
       }
     }
@@ -334,10 +332,8 @@ class RegistrationFetcherImpl : public URLRequest::Delegate {
   void OnChallengeNeeded(
       std::optional<std::vector<SessionChallengeParam>> challenge_params) {
     if (!challenge_params || challenge_params->empty()) {
-      RunCallbackAndDeleteSelf(base::unexpected(SessionError{
-          SessionError::ErrorType::kInvalidChallenge,
-          net::SchemefulSite(url::Origin::Create(fetcher_endpoint_)),
-          session_identifier_}));
+      RunCallbackAndDeleteSelf(base::unexpected(
+          SessionError{SessionError::ErrorType::kInvalidChallenge}));
       return;
     }
 
@@ -349,15 +345,13 @@ class RegistrationFetcherImpl : public URLRequest::Delegate {
 
   void OnResponseCompleted(SessionError::ErrorType error_on_no_data) {
     if (data_received_.empty()) {
-      RunCallbackAndDeleteSelf(base::unexpected(SessionError{
-          error_on_no_data,
-          net::SchemefulSite(url::Origin::Create(fetcher_endpoint_)),
-          session_identifier_}));
+      RunCallbackAndDeleteSelf(
+          base::unexpected(SessionError{error_on_no_data}));
       return;
     }
 
-    RunCallbackAndDeleteSelf(
-        ParseSessionInstructionJson(request_->url(), key_id_, data_received_));
+    RunCallbackAndDeleteSelf(ParseSessionInstructionJson(
+        request_->url(), key_id_, session_identifier_, data_received_));
   }
 
   // Running callback when fetching is complete or on error.
@@ -479,10 +473,8 @@ void RegistrationFetcher::StartFetchWithExistingKey(
   }
 
   if (!key_id.has_value()) {
-    std::move(callback).Run(base::unexpected(
-        SessionError{SessionError::ErrorType::kKeyError,
-                     net::SchemefulSite(request_params.registration_endpoint()),
-                     request_params.session_identifier()}));
+    std::move(callback).Run(
+        base::unexpected(SessionError{SessionError::ErrorType::kKeyError}));
     return;
   }
 
@@ -507,6 +499,7 @@ void RegistrationFetcher::CreateTokenAsyncForTesting(
     std::string challenge,
     const GURL& registration_url,
     std::optional<std::string> authorization,
+    std::optional<std::string> session_identifier,
     base::OnceCallback<
         void(std::optional<RegistrationFetcher::RegistrationTokenResult>)>
         callback) {
@@ -519,6 +512,7 @@ void RegistrationFetcher::CreateTokenAsyncForTesting(
           [](unexportable_keys::UnexportableKeyService& key_service,
              const GURL& registration_url, const std::string& challenge,
              std::optional<std::string>&& authorization,
+             std::optional<std::string>&& session_identifier,
              base::OnceCallback<void(
                  std::optional<RegistrationFetcher::RegistrationTokenResult>)>
                  callback,
@@ -529,12 +523,14 @@ void RegistrationFetcher::CreateTokenAsyncForTesting(
               return;
             }
 
-            SignChallengeWithKey(key_service, key_result.value(),
-                                 registration_url, challenge,
-                                 std::move(authorization), std::move(callback));
+            SignChallengeWithKey(
+                key_service, key_result.value(), registration_url, challenge,
+                std::move(authorization), std::move(session_identifier),
+                std::move(callback));
           },
           std::ref(unexportable_key_service), registration_url,
-          std::move(challenge), std::move(authorization), std::move(callback)));
+          std::move(challenge), std::move(authorization),
+          std::move(session_identifier), std::move(callback)));
 }
 
 }  // namespace net::device_bound_sessions

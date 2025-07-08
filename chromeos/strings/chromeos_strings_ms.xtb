@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Pada masa ini, hasil janaan orang tidak akan dipaparkan. Cuba gesaan lain.</translation>
 <translation id="1815850098929213707">Kunci yang dipilih ialah <ph name="KEYS" />. Ketik butang untuk mengedit kawalan</translation>
 <translation id="1818174214124933000">Apabila anda memilih hantar, maklum balas anda dan kandungan (yang ditunjukkan di bawah) akan dihantar kepada Google, disemak oleh jurusemak dan digunakan untuk melatih atau meningkatkan produk dan perkhidmatan kami tertakluk pada <ph name="LINK_POLICY_BEGIN" />Dasar Privasi<ph name="LINK_POLICY_END" /> dan <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Syarat Perkhidmatan Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Guru anda telah menghantar sumber yang tidak disokong. Beritahu mereka.</translation>
 <translation id="1823120442877418684">Aksara</translation>
 <translation id="1827738518074806965">Galeri seni</translation>
 <translation id="183287940576828840">Menyinggung/Tidak selamat</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Penukaran reka letak</translation>
 <translation id="224421911978987610">dedahan lama</translation>
 <translation id="2244834438220057800">hijau</translation>
+<translation id="2248689665683494517">gambar pegun minimal beberapa bunga Papaver rhea di dalam pasu kaca pada latar hitam</translation>
 <translation id="225692081236532131">Status pengaktifan</translation>
 <translation id="2267285889943769271">Tambahkan tangkapan skrin</translation>
 <translation id="2268044343513325586">Perhalusi</translation>
@@ -586,7 +586,7 @@
 <translation id="3600339377155080675">Cermin skrin</translation>
 <translation id="3602290021589620013">Pratonton</translation>
 <translation id="3603829704940252505">Avatar</translation>
-<translation id="3604713164406837697">Tukar kertas dinding</translation>
+<translation id="3604713164406837697">Tukar hiasan latar</translation>
 <translation id="360565022852130722">Rangkaian Wi-Fi selamat dengan protokol lemah WEP 802.1x</translation>
 <translation id="3606583719724308068">Kependaman tinggi ke laman web HTTPS</translation>
 <translation id="3614639364827854748">Alihkan menu ini ke sebelah kiri</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">sifon</translation>
 <translation id="4310735698903592804">Hiasan latar terbaharu dikuasakan oleh Google AI</translation>
 <translation id="4320904097188876154">merah jambu neon</translation>
+<translation id="432961742358282111">Klik kanan atau tekan dan tahan untuk mendapatkan takrifan, terjemahan atau penukaran unit. Gunakan kekunci Anak panah ke kiri atau Anak panah ke kanan untuk mengurus ciri ini.</translation>
 <translation id="4333390807948134856">Kekunci <ph name="KEY_NAME" /> ditekan</translation>
 <translation id="4334293042716981313">Anda boleh juga <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />menulis gesaan anda sendiri<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">kekunci</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Tanya pakar dalam forum bantuan Chromebook</translation>
-<translation id="7309823890857024809">gambar pegun minimal beberapa batang Papaver rhea di dalam pasu kaca pada latar hitam</translation>
 <translation id="7311368985037279727">warna papan kekunci</translation>
 <translation id="7317831949569936035">Pendaftaran sekolah</translation>
 <translation id="7319430975418800333">A3</translation>

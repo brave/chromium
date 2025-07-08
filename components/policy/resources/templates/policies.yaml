@@ -1364,8 +1364,17 @@ policies:
   1363: TLS13EarlyDataEnabled
   1364: LocalNetworkAccessRestrictionsEnabled
   1365: PrefetchWithServiceWorkerEnabled
-  1366: AIModeSearchSuggestSettings
-
+  1366: ''
+  1367: AIModeSettings
+  1368: WatermarkStyle
+  1369: KioskApplicationLogCollectionEnabled
+  1370: EnableUnsafeSwiftShader
+  1371: LocalNetworkAccessAllowedForUrls
+  1372: LocalNetworkAccessBlockedForUrls
+  1373: DeviceBluetoothJustWorksPairingEnabled
+  1374: LiveCaptionEnabled
+  1375: DeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled
+  1376: AutomatedPasswordChangeSettings
 atomic_groups:
   1: Homepage
   2: RemoteAccess
@@ -1424,3 +1433,4 @@ atomic_groups:
   55: SmartCardConnectSettings
   56: WebRtc
   57: ControlledFrameSettings
+  58: LocalNetworkAccessSettings

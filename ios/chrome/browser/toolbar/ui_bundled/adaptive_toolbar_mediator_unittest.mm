@@ -36,7 +36,6 @@
 #import "ios/chrome/browser/shared/public/commands/load_query_commands.h"
 #import "ios/chrome/browser/shared/public/commands/qr_scanner_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/test/toolbar_test_navigation_manager.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/toolbar_consumer.h"
 #import "ios/chrome/browser/web/model/web_navigation_browser_agent.h"
@@ -91,8 +90,6 @@ class AdaptiveToolbarMediatorTest : public PlatformTest {
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
         {
-            kTabGroupSync,
-            kTabGroupIndicator,
             data_sharing::features::kDataSharingFeature,
         },
         /*disable_features=*/{});
@@ -174,6 +171,14 @@ class AdaptiveToolbarMediatorTest : public PlatformTest {
     ClipboardRecentContent::SetInstance(nullptr);
 
     [mediator_ disconnect];
+
+    EXPECT_OCMOCK_VERIFY(consumer_);
+    EXPECT_OCMOCK_VERIFY(strict_consumer_);
+    EXPECT_OCMOCK_VERIFY(mock_application_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_settings_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_browser_coordinator_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_qr_scanner_commands_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_load_query_commands_handler_);
   }
 
  protected:
@@ -256,10 +261,10 @@ TEST_F(AdaptiveToolbarMediatorTest, TestToolbarSetup) {
   SetUpActiveWebState();
   mediator_.consumer = consumer_;
 
-  [[consumer_ verify] setCanGoForward:NO];
-  [[consumer_ verify] setCanGoBack:NO];
-  [[consumer_ verify] setLoadingState:YES];
-  [[consumer_ verify] setShareMenuEnabled:NO];
+  [consumer_ setCanGoForward:NO];
+  [consumer_ setCanGoBack:NO];
+  [consumer_ setLoadingState:YES];
+  [consumer_ setShareMenuEnabled:NO];
 }
 
 // Tests the Toolbar Setup gets called when the mediator's WebState and Consumer
@@ -269,10 +274,10 @@ TEST_F(AdaptiveToolbarMediatorTest, TestToolbarSetupReverse) {
   mediator_.webStateList = web_state_list_.get();
   SetUpActiveWebState();
 
-  [[consumer_ verify] setCanGoForward:NO];
-  [[consumer_ verify] setCanGoBack:NO];
-  [[consumer_ verify] setLoadingState:YES];
-  [[consumer_ verify] setShareMenuEnabled:NO];
+  [consumer_ setCanGoForward:NO];
+  [consumer_ setCanGoBack:NO];
+  [consumer_ setLoadingState:YES];
+  [consumer_ setShareMenuEnabled:NO];
 }
 
 // Test the WebstateList related setup gets called when the mediator's WebState
@@ -281,7 +286,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestWebstateListRelatedSetup) {
   mediator_.webStateList = web_state_list_.get();
   mediator_.consumer = consumer_;
 
-  [[consumer_ verify] setTabCount:3 addedInBackground:NO];
+  [consumer_ setTabCount:3 addedInBackground:NO];
 }
 
 // Test the WebstateList related setup gets called when the mediator's WebState
@@ -290,7 +295,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestWebstateListRelatedSetupReverse) {
   mediator_.consumer = consumer_;
   mediator_.webStateList = web_state_list_.get();
 
-  [[consumer_ verify] setTabCount:3 addedInBackground:NO];
+  [consumer_ setTabCount:3 addedInBackground:NO];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method
@@ -304,7 +309,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidStartLoading) {
   mediator_.consumer = consumer_;
 
   web_state_->SetLoading(true);
-  [[consumer_ verify] setLoadingState:YES];
+  [consumer_ setLoadingState:YES];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method DidStopLoading
@@ -315,7 +320,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidStopLoading) {
   mediator_.consumer = consumer_;
 
   web_state_->SetLoading(false);
-  [[consumer_ verify] setLoadingState:NO];
+  [consumer_ setLoadingState:NO];
 }
 
 // Tests the Toolbar is not updated when the Webstate observer method
@@ -328,7 +333,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidStartLoadingNTP) {
   web_state_->SetLoading(false);
   web_state_->SetVisibleURL(GURL(kChromeUINewTabURL));
   web_state_->SetLoading(true);
-  [[consumer_ verify] setLoadingState:NO];
+  [consumer_ setLoadingState:NO];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method
@@ -344,9 +349,9 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidLoadPageWithSucess) {
   web_state_->SetCurrentURL(GURL(kTestUrl));
   web_state_->OnPageLoaded(web::PageLoadCompletionStatus::SUCCESS);
 
-  [[consumer_ verify] setCanGoForward:YES];
-  [[consumer_ verify] setCanGoBack:YES];
-  [[consumer_ verify] setShareMenuEnabled:YES];
+  [consumer_ setCanGoForward:YES];
+  [consumer_ setCanGoBack:YES];
+  [consumer_ setShareMenuEnabled:YES];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method
@@ -363,9 +368,9 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidFinishNavigation) {
   web::FakeNavigationContext context;
   web_state_->OnNavigationFinished(&context);
 
-  [[consumer_ verify] setCanGoForward:YES];
-  [[consumer_ verify] setCanGoBack:YES];
-  [[consumer_ verify] setShareMenuEnabled:YES];
+  [consumer_ setCanGoForward:YES];
+  [consumer_ setCanGoBack:YES];
+  [consumer_ setShareMenuEnabled:YES];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method
@@ -381,9 +386,9 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidChangeVisibleSecurityState) {
   web_state_->SetCurrentURL(GURL(kTestUrl));
   web_state_->OnVisibleSecurityStateChanged();
 
-  [[consumer_ verify] setCanGoForward:YES];
-  [[consumer_ verify] setCanGoBack:YES];
-  [[consumer_ verify] setShareMenuEnabled:YES];
+  [consumer_ setCanGoForward:YES];
+  [consumer_ setCanGoBack:YES];
+  [consumer_ setShareMenuEnabled:YES];
 }
 
 // Tests the Toolbar is updated when the Webstate observer method
@@ -394,7 +399,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestLoadingProgress) {
   mediator_.consumer = consumer_;
 
   [mediator_ webState:web_state_ didChangeLoadingProgress:0.42];
-  [[consumer_ verify] setLoadingProgressFraction:0.42];
+  [consumer_ setLoadingProgressFraction:0.42];
 }
 
 // Tests the Toolbar is updated when Webstate observer method
@@ -409,8 +414,8 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDidChangeBackForwardState) {
 
   web_state_->OnBackForwardStateChanged();
 
-  [[consumer_ verify] setCanGoForward:YES];
-  [[consumer_ verify] setCanGoBack:YES];
+  [consumer_ setCanGoForward:YES];
+  [consumer_ setCanGoBack:YES];
 }
 
 // Test that increasing the number of Webstates will update the consumer with
@@ -420,7 +425,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestIncreaseNumberOfWebstates) {
   mediator_.consumer = consumer_;
 
   InsertNewWebState(0);
-  [[consumer_ verify] setTabCount:kNumberOfWebStates + 1 addedInBackground:YES];
+  [consumer_ setTabCount:kNumberOfWebStates + 1 addedInBackground:YES];
 }
 
 // Test that decreasing the number of Webstates will update the consumer with
@@ -430,7 +435,7 @@ TEST_F(AdaptiveToolbarMediatorTest, TestDecreaseNumberOfWebstates) {
   mediator_.consumer = consumer_;
 
   web_state_list_->DetachWebStateAt(0);
-  [[consumer_ verify] setTabCount:kNumberOfWebStates - 1 addedInBackground:NO];
+  [consumer_ setTabCount:kNumberOfWebStates - 1 addedInBackground:NO];
 }
 
 // Test that consumer is informed that voice search is enabled.
@@ -440,7 +445,6 @@ TEST_F(AdaptiveToolbarMediatorTest, TestVoiceSearchProviderEnabled) {
   OCMExpect([consumer_ setVoiceSearchEnabled:YES]);
   mediator_.consumer = consumer_;
 
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Test that consumer is informed that voice search is not enabled.
@@ -449,8 +453,6 @@ TEST_F(AdaptiveToolbarMediatorTest, TestVoiceSearchProviderNotEnabled) {
 
   OCMExpect([consumer_ setVoiceSearchEnabled:NO]);
   mediator_.consumer = consumer_;
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Test that updating the consumer for a specific webState works.
@@ -473,8 +475,6 @@ TEST_F(AdaptiveToolbarMediatorTest, TestUpdateConsumerForWebState) {
   OCMExpect([consumer_ setShareMenuEnabled:YES]);
 
   [mediator_ updateConsumerForWebState:test_web_state.get()];
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Tests the menu elements.
@@ -579,8 +579,6 @@ TEST_F(AdaptiveToolbarMediatorTest, MessageOnNonGroupAtStartup) {
   OCMExpect([consumer_ setTabGridButtonBlueDot:YES]);
 
   mediator_.consumer = consumer_;
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Tests adding a message for a group update while not in a group, the backend
@@ -607,8 +605,6 @@ TEST_F(AdaptiveToolbarMediatorTest, MessageOnNonGroupNotInitialized) {
 
   // Fake the initialization of the service.
   [mediator_ onMessagingBackendServiceInitialized];
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Tests adding a message for a group update while not in a group, receiving the
@@ -635,8 +631,6 @@ TEST_F(AdaptiveToolbarMediatorTest, MessageOnNonGroupNotification) {
 
   // Fake the update of the backend.
   [mediator_ displayPersistentMessage:messages[0]];
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Tests adding a message for a group update while in a group, receiving the
@@ -663,8 +657,6 @@ TEST_F(AdaptiveToolbarMediatorTest, MessageForGroupInGroupNotification) {
 
   // Fake the update of the backend.
   [mediator_ displayPersistentMessage:messages[0]];
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 // Tests adding a message for a group update while in a group, receiving the
@@ -691,8 +683,6 @@ TEST_F(AdaptiveToolbarMediatorTest, MessageForOtherGroupInGroupNotification) {
 
   // Fake the update of the backend.
   [mediator_ displayPersistentMessage:messages[0]];
-
-  EXPECT_OCMOCK_VERIFY(consumer_);
 }
 
 }  // namespace

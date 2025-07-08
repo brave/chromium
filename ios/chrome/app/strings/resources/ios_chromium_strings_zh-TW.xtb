@@ -7,8 +7,8 @@
 <translation id="1086486568852410168">透過 Google 智慧鏡頭搜尋</translation>
 <translation id="1091252999271033193">這代表 Chromium 每次都會對行動版網站發出要求。</translation>
 <translation id="1115463765356382667">完成下列建議動作，充分運用 Chromium 的各項功能。</translation>
-<translation id="1140315115515116765">預設使用 Chromium，輕鬆取得價格分析</translation>
 <translation id="1185134272377778587">關於 Chromium</translation>
+<translation id="1229234641991056119">在 Chromium 中使用 Safari 密碼、歷史記錄、書籤和信用卡</translation>
 <translation id="1257458525759135959">如要儲存圖片，請輕觸 [設定] 並允許 Chromium 新增相片</translation>
 <translation id="1260702988262336471">開啟 Chromium 選單</translation>
 <translation id="12739128458173458">如要將這個分頁傳送到另一部裝置，請在這兩部裝置上登入 Chromium。</translation>
@@ -121,7 +121,6 @@
 <translation id="3855938650519180865">Chromium 新功能</translation>
 <translation id="3886689467633467988">登入這個網站和 Chromium，即可在所有裝置上存取書籤及其他設定。</translation>
 <translation id="3949514465204582407">Chromium 提示：在任何應用程式中使用儲存的密碼</translation>
-<translation id="3983291422281996849">將 Chromium 設為預設瀏覽器，即可輕鬆追蹤價格，並取得欲購商品的價格分析。</translation>
 <translation id="4005283307739974863">在 Chromium 中開啟並執行安全檢查。</translation>
 <translation id="4043291146360695975">密碼只會儲存至這部裝置上的密碼管理工具。</translation>
 <translation id="4066426933127344530">預設使用 Chromium</translation>
@@ -174,8 +173,10 @@
 <translation id="5203244847421322551">在 Chromium 中儲存及自動填寫密碼</translation>
 <translation id="5224391634244552924">未儲存任何密碼。你必須先儲存密碼，才能使用 Chromium 的密碼檢查功能。</translation>
 <translation id="5259423875997548710">在 Chromium 中搜尋影像內容。</translation>
+<translation id="5284913972719948193">匯入資料即可在 Chromium 中使用密碼、歷史記錄、書籤和信用卡</translation>
 <translation id="5308226104666789935">Chromium 無法檢查更新</translation>
 <translation id="5311557153294205270">將輸入的網址加入 Chromium 書籤。</translation>
+<translation id="5383251701169024761">如要在其他應用程式中輕鬆使用儲存的密碼，請選擇 Chromium 做為自動填寫來源。</translation>
 <translation id="538767207339317086">允許登入 Chromium</translation>
 <translation id="5389058611415066188">讓 Chromium 保障你的安全</translation>
 <translation id="5415273218238091735">Chromium 實用訣竅</translation>
@@ -248,7 +249,6 @@
 <translation id="7018284295775193585">Chromium 無法更新</translation>
 <translation id="7055269218854630176">貴機構 (<ph name="DOMAIN" />) 會管理你登入的帳戶和 Chromium 的使用方式。管理員可以設定或限制特定功能。</translation>
 <translation id="7099326575020694068">Chromium 無法在分割模式中使用你的相機</translation>
-<translation id="7129379408282555630">充分利用 Chromium 購物功能</translation>
 <translation id="7165402419892018581">選擇使用 Chromium 的自動填入功能</translation>
 <translation id="7175400662502680481">你的密碼因為資料侵害事件遭到外洩，密碼管理工具建議你立即變更這組密碼。</translation>
 <translation id="7185731475720473450">系統不會加密保護付款方式和地址，也不會同步處理 Chromium 中的瀏覽記錄。
@@ -276,7 +276,6 @@
 <translation id="7763454117143368771">使用 Chromium 做為預設瀏覽器可保護你免於危險網站的威脅，同時確保你的密碼安全無虞</translation>
 <translation id="7784950022329154821">關閉 Chromium 時鎖定無痕分頁</translation>
 <translation id="78025249032851484">Chromium 版本過舊。</translation>
-<translation id="7811371919871579588">如要在其他應用程式中輕鬆使用儲存的密碼，請選擇 Chromium 做為自動填寫來源。</translation>
 <translation id="7859018312476869945">在網址列或搜尋框中輸入時，Chromium 會將你輸入的內容傳送給預設搜尋引擎，提供更符合需求的搜尋建議。這項功能在無痕模式中為關閉狀態。</translation>
 <translation id="7890287942691234100">開始使用 Chromium 掃描器</translation>
 <translation id="7905064834449738336">如果你使用的密碼已被他人公布在網路上，Chromium 就會發出警告。在進行這項檢查時，系統會加密你的密碼和使用者名稱，因此任何人 (包括 Google) 都無法讀取。</translation>
@@ -307,6 +306,7 @@
 <translation id="865600487977764604">在已登入帳戶的狀態下，能確保你持續享有安全無虞的 Chromium 使用體驗，也有助於提升其他 Google 應用程式的安全機制。</translation>
 <translation id="8663480472502753423">取得 Chromium 最新版本</translation>
 <translation id="8685813584220679697">登入這個網站和 Chromium。</translation>
+<translation id="8698780336333802489">匯入 Chromium</translation>
 <translation id="8730503818204408000">開啟 Chromium 設定，將 Chromium 設為預設瀏覽器。</translation>
 <translation id="8754966941001340678">Chromium 建議使用強化防護</translation>
 <translation id="8759037115129007407">你的家庭成員目前無法接收密碼。請要求對方更新 Chromium 並同步處理密碼。<ph name="BEGIN_LINK" />瞭解詳情<ph name="END_LINK" /></translation>
@@ -331,6 +331,7 @@
 <translation id="9050790730841755540">隨時可以使用 Chromium 開啟其他應用程式中的連結。</translation>
 <translation id="9059693977935746710">你不需要記住這組密碼，系統會將密碼儲存至 <ph name="EMAIL" /> 的密碼管理員中</translation>
 <translation id="9089354809943900324">Chromium 版本過舊</translation>
+<translation id="9105645282262300612">Chromium 提示：搜尋畫面內容</translation>
 <translation id="9152995302810511799">Chromium 提示：享有 Chromium 最強大的安全防護</translation>
 <translation id="9177628952266852500"><ph name="EMAIL" />。Chromium 目前由貴機構管理。</translation>
 <translation id="921174536258924340">Chromium 無法檢查所有密碼，請明天再試，或<ph name="BEGIN_LINK" />檢查 Google 帳戶中的密碼。<ph name="END_LINK" /></translation>

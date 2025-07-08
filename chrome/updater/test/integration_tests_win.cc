@@ -319,7 +319,7 @@ void CheckInstallation(UpdaterScope scope,
               ADD_FAILURE() << "Unexpected service found: " << service_name;
             }
           });
-      EXPECT_EQ(count_entries, is_installed);
+      EXPECT_EQ(count_entries > 0, is_installed);
     }
   }
 
@@ -720,10 +720,10 @@ void RunOfflineInstallWithManifest(UpdaterScope scope,
   EXPECT_TRUE(DeleteRegKey(root, app_client_state_key));
 }
 
-bool BuildTestMetaInstaller(const std::string& appid,
-                            const base::FilePath& installer_path,
-                            const base::FilePath& offline_manifest,
-                            const base::FilePath& output_metainstaller) {
+bool BuildMockOfflineMetaInstaller(const std::string& appid,
+                                   const base::FilePath& installer_path,
+                                   const base::FilePath& offline_manifest,
+                                   const base::FilePath& output_metainstaller) {
   base::FilePath exe_path;
   if (!base::PathService::Get(base::DIR_EXE, &exe_path)) {
     return false;
@@ -2115,16 +2115,18 @@ void RunOfflineInstallOsNotSupported(UpdaterScope scope,
                                 language, false);
 }
 
-void RunOfflineMetaInstall(UpdaterScope scope,
-                           const std::string& app_id,
-                           const base::Version& version,
-                           const base::FilePath& installer_path,
-                           const std::string& arguments,
-                           bool is_silent_install,
-                           const std::string& platform,
-                           int string_resource_id_to_find,
-                           const std::string& language,
-                           bool expect_success) {
+void RunMockOfflineMetaInstall(UpdaterScope scope,
+                               const std::string& app_id,
+                               const base::Version& version,
+                               const std::string& tag,
+                               const base::FilePath& installer_path,
+                               const std::string& arguments,
+                               bool is_silent_install,
+                               const std::string& platform,
+                               const std::string& installer_text,
+                               const bool always_launch_cmd,
+                               const int expected_exit_code,
+                               bool expect_success) {
   if (installer_path.MatchesExtension(L".msi")) {
     ASSERT_EQ(scope, UpdaterScope::kSystem);
   }
@@ -2159,24 +2161,17 @@ void RunOfflineMetaInstall(UpdaterScope scope,
 
   const base::FilePath output_metainstaller =
       temp_dir.GetPath().Append(L"StandaloneInstaller.exe");
-  ASSERT_TRUE(BuildTestMetaInstaller(app_id, installer_path, manifest_path,
-                                     output_metainstaller));
+  ASSERT_TRUE(BuildMockOfflineMetaInstaller(
+      app_id, installer_path, manifest_path, output_metainstaller));
 
   // Trigger offline install.
-  ASSERT_NO_FATAL_FAILURE(InstallUpdaterAndApp(
-      scope, app_id, is_silent_install,
-      /*tag=*/
-      base::StrCat({"appguid=", app_id,
-                    "&needsadmin=", IsSystemInstall(scope) ? "true" : "false"}),
-      base::WideToUTF8(string_resource_id_to_find
-                           ? GetLocalizedString(string_resource_id_to_find,
-                                                base::UTF8ToWide(language))
-                           : std::wstring()),
-      /*always_launch_cmd=*/false,
-      /*verify_app_logo_loaded=*/false, expect_success,
-      /*wait_for_the_installer=*/true,
-      /*expected_exit_code=*/0,
-      /*additional_switches=*/{}, output_metainstaller));
+  ASSERT_NO_FATAL_FAILURE(
+      InstallUpdaterAndApp(scope, app_id, is_silent_install,
+                           /*tag=*/tag, installer_text, always_launch_cmd,
+                           /*verify_app_logo_loaded=*/false, expect_success,
+                           /*wait_for_the_installer=*/true, expected_exit_code,
+                           /*additional_switches=*/{}, output_metainstaller));
+  ASSERT_TRUE(WaitForUpdaterExit());
 }
 
 base::CommandLine MakeElevated(base::CommandLine command_line) {
@@ -2223,6 +2218,24 @@ void ExpectAppVersion(UpdaterScope scope,
                         GetAppClientStateKey(app_id).c_str(), Wow6432(KEY_READ))
           .ReadValue(kRegValuePV, &pv));
   EXPECT_EQ(base::SysUTF8ToWide(version.GetString()), pv);
+}
+
+void SetAppAllowsUsageStats(UpdaterScope scope,
+                            const std::string& identifier,
+                            bool allowed) {
+  base::win::RegKey key;
+  ASSERT_EQ(
+      key.Create(UpdaterScopeToHKeyRoot(scope),
+                 GetAppClientStateKey(identifier).c_str(), Wow6432(KEY_WRITE)),
+      ERROR_SUCCESS);
+  EXPECT_EQ(key.WriteValue(L"usagestats", static_cast<DWORD>(allowed)),
+            ERROR_SUCCESS);
+}
+
+void ClearAppAllowsUsageStats(UpdaterScope scope,
+                              const std::string& identifier) {
+  ASSERT_TRUE(DeleteRegKey(UpdaterScopeToHKeyRoot(scope),
+                           GetAppClientStateKey(identifier).c_str()));
 }
 
 }  // namespace updater::test

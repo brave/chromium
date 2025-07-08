@@ -104,6 +104,7 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/cache_storage/window_cache_storage.idl",
   "//third_party/blink/renderer/modules/cache_storage/worker_cache_storage.idl",
   "//third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.idl",
+  "//third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_draw_element_option.idl",
   "//third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_recorder_context.idl",
   "//third_party/blink/renderer/modules/canvas/canvas2d/canvas_filter.idl",
   "//third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_gpu_transfer.idl",
@@ -253,6 +254,11 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/device_orientation/window_device_orientation.idl",
   "//third_party/blink/renderer/modules/device_posture/device_posture.idl",
   "//third_party/blink/renderer/modules/device_posture/navigator_device_posture.idl",
+  "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture.idl",
+  "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_event.idl",
+  "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_event_init.idl",
+  "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_options.idl",
+  "//third_party/blink/renderer/modules/document_picture_in_picture/window_document_picture_in_picture.idl",
   "//third_party/blink/renderer/modules/donottrack/navigator_do_not_track.idl",
   "//third_party/blink/renderer/modules/encoding/text_decode_options.idl",
   "//third_party/blink/renderer/modules/encoding/text_decoder.idl",
@@ -386,7 +392,7 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/indexeddb/idb_database.idl",
   "//third_party/blink/renderer/modules/indexeddb/idb_database_info.idl",
   "//third_party/blink/renderer/modules/indexeddb/idb_factory.idl",
-  "//third_party/blink/renderer/modules/indexeddb/idb_get_all_records_options.idl",
+  "//third_party/blink/renderer/modules/indexeddb/idb_get_all_options.idl",
   "//third_party/blink/renderer/modules/indexeddb/idb_index.idl",
   "//third_party/blink/renderer/modules/indexeddb/idb_index_parameters.idl",
   "//third_party/blink/renderer/modules/indexeddb/idb_key_range.idl",
@@ -757,6 +763,7 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/service_worker/service_worker_global_scope.idl",
   "//third_party/blink/renderer/modules/service_worker/service_worker_registration.idl",
   "//third_party/blink/renderer/modules/service_worker/window_client.idl",
+  "//third_party/blink/renderer/modules/service_worker/worker_navigator_service_worker.idl",
   "//third_party/blink/renderer/modules/shapedetection/barcode_detector.idl",
   "//third_party/blink/renderer/modules/shapedetection/barcode_detector_options.idl",
   "//third_party/blink/renderer/modules/shapedetection/detected_barcode.idl",
@@ -789,13 +796,11 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/speech/speech_grammar_list.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_alternative.idl",
-  "//third_party/blink/renderer/modules/speech/speech_recognition_context.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_error_event.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_error_event_init.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_event.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_event_init.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_phrase.idl",
-  "//third_party/blink/renderer/modules/speech/speech_recognition_phrase_list.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_result.idl",
   "//third_party/blink/renderer/modules/speech/speech_recognition_result_list.idl",
   "//third_party/blink/renderer/modules/speech/speech_synthesis.idl",
@@ -1345,22 +1350,6 @@ if (!target_os_is_android) {
     "//third_party/blink/renderer/modules/window_controls_overlay/window_controls_overlay.idl",
     "//third_party/blink/renderer/modules/window_controls_overlay/window_controls_overlay_geometry_change_event.idl",
     "//third_party/blink/renderer/modules/window_controls_overlay/window_controls_overlay_geometry_change_event_init.idl",
-  ]
-}
-
-# Document Picture-in-Picture
-# This uses target_os rather than current_os (which is what is_android is set
-# from) for the case of generating the v8 context snapshot for android. When
-# generating the snapshot for android, blink is compiled with
-# current_os="linux" and target_os="android". Using target_os is necessary as
-# we need to compile in the same way as would happen when current_os="android".
-if (!target_os_is_android) {
-  static_idl_files_in_modules += [
-    "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture.idl",
-    "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_event.idl",
-    "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_event_init.idl",
-    "//third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_options.idl",
-    "//third_party/blink/renderer/modules/document_picture_in_picture/window_document_picture_in_picture.idl",
   ]
 }
 

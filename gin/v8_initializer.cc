@@ -27,6 +27,7 @@
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/lazy_instance.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -374,9 +375,6 @@ void SetFeatureFlags() {
   SetV8FlagsIfOverridden(features::kV8ExternalMemoryAccountedInGlobalLimit,
                          "--external-memory-accounted-in-global-limit",
                          "--no-external-memory-accounted-in-global-limit");
-  SetV8FlagsIfOverridden(features::kV8GCSpeedUsesCounters,
-                         "--gc-speed-uses-counters",
-                         "--no-gc-speed-uses-counters");
   SetV8FlagsIfOverridden(features::kV8TurboFastApiCalls,
                          "--turbo-fast-api-calls", "--no-turbo-fast-api-calls");
   SetV8FlagsIfOverridden(features::kV8MegaDomIC, "--mega-dom-ic",
@@ -392,6 +390,10 @@ void SetFeatureFlags() {
   if (base::FeatureList::IsEnabled(features::kV8PreconfigureOldGen)) {
     SetV8FlagsFormatted("--preconfigured-old-space-size=%i",
                         features::kV8PreconfigureOldGenSize.Get());
+  }
+  if (base::FeatureList::IsEnabled(features::kV8HighEndAndroid)) {
+    SetV8FlagsFormatted("--high-end-android-physical-memory-threshold=%i",
+                        features::kV8HighEndAndroidMemoryThreshold.Get());
   }
   SetV8FlagsIfOverridden(features::kV8IncrementalMarkingStartUserVisible,
                          "--incremental-marking-start-user-visible",
@@ -528,13 +530,7 @@ void SetFeatureFlags() {
   SetV8FlagsIfOverridden(features::kJavaScriptPromiseTry, "--js-promise-try",
                          "--no-js-promise-try");
 
-  // WebAssembly features.
-
-  SetV8FlagsIfOverridden(features::kWebAssemblyDeopt, "--wasm-deopt",
-                         "--no-wasm-deopt");
-  SetV8FlagsIfOverridden(features::kWebAssemblyInliningCallIndirect,
-                         "--wasm-inlining-call-indirect",
-                         "--no-wasm-inlining-call-indirect");
+  // WebAssembly features (currently none).
 }
 
 }  // namespace

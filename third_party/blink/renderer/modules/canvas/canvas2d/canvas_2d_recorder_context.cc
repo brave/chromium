@@ -74,6 +74,7 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_host.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
+#include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
 #include "third_party/blink/renderer/core/paint/filter_effect_builder.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/filter_operations.h"
@@ -1028,6 +1029,9 @@ void Canvas2DRecorderContext::setStrokeStyle(v8::Isolate* isolate,
       if (!origin_tainted_by_content_ && !v8_style.pattern->OriginClean()) {
         SetOriginTaintedByContent();
       }
+      if (v8_style.pattern->HasInterventionTrigger()) {
+        AddTriggersForCanvasIntervention(CanvasOperationType::kCopyFromCanvas);
+      }
       state.SetStrokePattern(v8_style.pattern);
       break;
     case V8CanvasStyleType::kString: {
@@ -1058,10 +1062,13 @@ ColorParseResult Canvas2DRecorderContext::ParseColorOrCurrentColor(
   }
 
   if (parse_result == ColorParseResult::kColorFunction) {
-    const CSSValue* color_mix_value = CSSParser::ParseSingleValue(
+    const CSSValue* color_value = CSSParser::ParseSingleValue(
         CSSPropertyID::kColor, color_string,
         StrictCSSParserContext(SecureContextMode::kInsecureContext));
 
+    if (!color_value) {
+      return ColorParseResult::kParseFailed;
+    }
     static const TextLinkColors kDefaultTextLinkColors{};
     auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext());
     const TextLinkColors& text_link_colors =
@@ -1069,12 +1076,12 @@ ColorParseResult Canvas2DRecorderContext::ParseColorOrCurrentColor(
                : kDefaultTextLinkColors;
     // TODO(40946458): Don't use default length resolver here!
     const ResolveColorValueContext context{
-        .length_resolver = CSSToLengthConversionData(/*element=*/nullptr),
+        .conversion_data = CSSToLengthConversionData(/*element=*/nullptr),
         .text_link_colors = text_link_colors,
         .used_color_scheme = color_scheme_,
         .color_provider = GetColorProvider(),
         .is_in_web_app_scope = IsInWebAppScope()};
-    const StyleColor style_color = ResolveColorValue(*color_mix_value, context);
+    const StyleColor style_color = ResolveColorValue(*color_value, context);
     color = style_color.Resolve(GetCurrentColor(), color_scheme_);
     return ColorParseResult::kColor;
   }
@@ -1148,6 +1155,9 @@ void Canvas2DRecorderContext::setFillStyle(v8::Isolate* isolate,
     case V8CanvasStyleType::kPattern:
       if (!origin_tainted_by_content_ && !v8_style.pattern->OriginClean()) {
         SetOriginTaintedByContent();
+      }
+      if (v8_style.pattern->HasInterventionTrigger()) {
+        AddTriggersForCanvasIntervention(CanvasOperationType::kCopyFromCanvas);
       }
       state.SetFillPattern(v8_style.pattern);
       break;
@@ -1389,6 +1399,17 @@ void Canvas2DRecorderContext::setGlobalAlpha(double alpha) {
                                                 alpha);
   }
   state.SetGlobalAlpha(alpha);
+}
+
+double Canvas2DRecorderContext::globalHDRHeadroom() const {
+  return GetState().GlobalHDRHeadroom();
+}
+
+void Canvas2DRecorderContext::setGlobalHDRHeadroom(double h) {
+  if (h < 0.f) {
+    return;
+  }
+  GetState().SetGlobalHDRHeadroom(h);
 }
 
 String Canvas2DRecorderContext::globalCompositeOperation() const {
@@ -2462,7 +2483,7 @@ void Canvas2DRecorderContext::drawImage(CanvasImageSource* image_source,
 
   ValidateStateStack();
 
-  WillDrawImage(image_source);
+  WillDrawImage(image_source, image && image->IsTextureBacked());
 
   if (!origin_tainted_by_content_ && WouldTaintCanvasOrigin(image_source)) {
     SetOriginTaintedByContent();
@@ -2660,8 +2681,19 @@ CanvasPattern* Canvas2DRecorderContext::createPattern(
 
   bool origin_clean = !WouldTaintCanvasOrigin(image_source);
 
+  bool has_intervention_trigger = false;
+  if (image_source->IsCanvasElement() || image_source->IsOffscreenCanvas()) {
+    CanvasRenderingContext* rendering_context =
+        static_cast<CanvasRenderingContextHost*>(image_source)
+            ->RenderingContext();
+    if (rendering_context && rendering_context->ShouldTriggerIntervention()) {
+      has_intervention_trigger = true;
+    }
+  }
+
   auto* pattern = MakeGarbageCollected<CanvasPattern>(
-      std::move(image_for_rendering), repeat_mode, origin_clean);
+      std::move(image_for_rendering), repeat_mode, origin_clean,
+      has_intervention_trigger);
   pattern->SetExecutionContext(
       identifiability_study_helper_.execution_context());
   return pattern;
@@ -2773,15 +2805,13 @@ void Canvas2DRecorderContext::drawMesh(
       index_buffer->GetBuffer();
   CHECK_NE(index_data, nullptr);
 
-  WillDrawImage(image_source);
+  WillDrawImage(image_source, image && image->IsTextureBacked());
 
   if (!origin_tainted_by_content_ && WouldTaintCanvasOrigin(image_source)) {
     SetOriginTaintedByContent();
   }
 
-  SkRect bounds;
-  bounds.setBounds(vertex_data->data().data(),
-                   SkToInt(vertex_data->data().size()));
+  SkRect bounds = SkRect::BoundsOrEmpty(vertex_data->data());
 
   Draw<OverdrawOp::kNone>(
       /*draw_func=*/
@@ -2968,7 +2998,7 @@ void Canvas2DRecorderContext::SnapshotStateForFilter() {
 bool Canvas2DRecorderContext::IsAccelerated() const {
   CanvasRenderingContextHost* host = GetCanvasRenderingContextHost();
   if (host) {
-    return host->GetRasterMode() == RasterMode::kGPU;
+    return host->GetRasterModeForCanvas2D() == RasterMode::kGPU;
   }
   return false;
 }

@@ -41,10 +41,6 @@ void FakeTransaction::Begin(std::vector<PartitionedLock> locks) {
   wrapped_transaction_->Begin(std::move(locks));
 }
 
-void FakeTransaction::Reset() {
-  wrapped_transaction_->Reset();
-}
-
 Status FakeTransaction::SetDatabaseVersion(int64_t version) {
   return wrapped_transaction_->SetDatabaseVersion(version);
 }
@@ -85,10 +81,10 @@ Status FakeTransaction::RenameIndex(int64_t object_store_id,
   return wrapped_transaction_->RenameIndex(object_store_id, index_id, new_name);
 }
 
-Status FakeTransaction::GetRecord(int64_t object_store_id,
-                                  const blink::IndexedDBKey& key,
-                                  IndexedDBValue* record) {
-  return wrapped_transaction_->GetRecord(object_store_id, key, record);
+StatusOr<IndexedDBValue> FakeTransaction::GetRecord(
+    int64_t object_store_id,
+    const blink::IndexedDBKey& key) {
+  return wrapped_transaction_->GetRecord(object_store_id, key);
 }
 
 StatusOr<BackingStore::RecordIdentifier> FakeTransaction::PutRecord(
@@ -132,22 +128,12 @@ Status FakeTransaction::PutIndexDataForRecord(
                                                      key, record);
 }
 
-StatusOr<blink::IndexedDBKey> FakeTransaction::GetPrimaryKeyViaIndex(
+StatusOr<blink::IndexedDBKey> FakeTransaction::GetFirstPrimaryKeyForIndexKey(
     int64_t object_store_id,
     int64_t index_id,
     const blink::IndexedDBKey& key) {
-  return wrapped_transaction_->GetPrimaryKeyViaIndex(object_store_id, index_id,
-                                                     key);
-}
-
-Status FakeTransaction::KeyExistsInIndex(
-    int64_t object_store_id,
-    int64_t index_id,
-    const blink::IndexedDBKey& key,
-    std::unique_ptr<blink::IndexedDBKey>* found_primary_key,
-    bool* exists) {
-  return wrapped_transaction_->KeyExistsInIndex(object_store_id, index_id, key,
-                                                found_primary_key, exists);
+  return wrapped_transaction_->GetFirstPrimaryKeyForIndexKey(object_store_id,
+                                                             index_id, key);
 }
 
 StatusOr<std::unique_ptr<indexed_db::BackingStore::Cursor>>
@@ -200,6 +186,11 @@ FakeTransaction::OpenIndexCursor(int64_t object_store_id,
                                  blink::mojom::IDBCursorDirection direction) {
   return wrapped_transaction_->OpenIndexCursor(object_store_id, index_id,
                                                key_range, direction);
+}
+
+blink::mojom::IDBValuePtr FakeTransaction::BuildMojoValue(
+    IndexedDBValue value) {
+  return wrapped_transaction_->BuildMojoValue(std::move(value));
 }
 
 }  // namespace content::indexed_db

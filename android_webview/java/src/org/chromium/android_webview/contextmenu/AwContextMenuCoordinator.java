@@ -11,7 +11,6 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
-import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewStub;
@@ -61,7 +60,7 @@ public class AwContextMenuCoordinator {
     private final Context mContext;
     private final WebContents mWebContents;
     private final ContextMenuParams mParams;
-    private final List<Pair<Integer, ModelList>> mItems;
+    private final List<ModelList> mItems;
     private ComponentDialog mDialog;
     private AnchoredPopupWindow mPopupWindow;
     private WebContentsObserver mWebContentsObserver;
@@ -264,12 +263,12 @@ public class AwContextMenuCoordinator {
     private void clickItem(int id, Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
 
-        mCurrentPopulator.onItemSelected(id);
+        mCurrentPopulator.onItemSelected(id, /* unused= */ null);
         dismiss();
     }
 
     private static ModelList getItemList(
-            ListItem headerItem, List<Pair<Integer, ModelList>> items, boolean usePopupWindow) {
+            ListItem headerItem, List<ModelList> items, boolean usePopupWindow) {
         ModelList itemList = new ModelList();
         itemList.add(headerItem);
 
@@ -277,8 +276,8 @@ public class AwContextMenuCoordinator {
             itemList.add(new ListItem(ListItemType.DIVIDER, new PropertyModel.Builder().build()));
         }
 
-        for (Pair<Integer, ModelList> group : items) {
-            itemList.addAll(group.second);
+        for (ModelList item : items) {
+            itemList.addAll(item);
         }
 
         return itemList;

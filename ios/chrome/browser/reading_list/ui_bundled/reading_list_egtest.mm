@@ -121,7 +121,6 @@ void AssertToolbarMarkButtonText(int a11y_label_id) {
       selectElementWithMatcher:
           grey_allOf(
               grey_accessibilityID(kReadingListToolbarMarkButtonID),
-              grey_ancestor(grey_kindOfClassName(@"UIToolbar")),
               chrome_test_util::ButtonWithAccessibilityLabelId(a11y_label_id),
               nil)] assertWithMatcher:grey_sufficientlyVisible()];
 }
@@ -156,6 +155,13 @@ void TapToolbarButtonWithID(NSString* button_id) {
 void TapContextMenuButtonWithA11yLabelID(int a11y_label_id) {
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::ContextMenuItemWithAccessibilityLabelId(
+                     a11y_label_id)] performAction:grey_tap()];
+}
+
+// Taps the context menu button with the a11y label of `a11y_label_id`.
+void TapActionSheetButtonWithA11yLabelID(int a11y_label_id) {
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
                      a11y_label_id)] performAction:grey_tap()];
 }
 
@@ -944,7 +950,7 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   TapToolbarButtonWithID(kReadingListToolbarMarkButtonID);
 
   // Tap the action sheet.
-  TapContextMenuButtonWithA11yLabelID(
+  TapActionSheetButtonWithA11yLabelID(
       IDS_IOS_READING_LIST_MARK_ALL_READ_ACTION);
 
   AssertHeaderNotVisible(kUnreadHeader);
@@ -964,7 +970,7 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   TapToolbarButtonWithID(kReadingListToolbarMarkButtonID);
 
   // Tap the action sheet.
-  TapContextMenuButtonWithA11yLabelID(
+  TapActionSheetButtonWithA11yLabelID(
       IDS_IOS_READING_LIST_MARK_ALL_UNREAD_ACTION);
 
   AssertHeaderNotVisible(kReadHeader);
@@ -985,7 +991,7 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   TapToolbarButtonWithID(kReadingListToolbarMarkButtonID);
 
   // Tap the action sheet.
-  TapContextMenuButtonWithA11yLabelID(
+  TapActionSheetButtonWithA11yLabelID(
       IDS_IOS_READING_LIST_MARK_ALL_UNREAD_ACTION);
 
   AssertHeaderNotVisible(kReadHeader);
@@ -1035,7 +1041,7 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   TapToolbarButtonWithID(kReadingListToolbarMarkButtonID);
 
   // Tap the action sheet.
-  TapContextMenuButtonWithA11yLabelID(IDS_IOS_READING_LIST_MARK_UNREAD_BUTTON);
+  TapActionSheetButtonWithA11yLabelID(IDS_IOS_READING_LIST_MARK_UNREAD_BUTTON);
 
   AssertAllEntriesVisible();
   GREYAssertEqual(static_cast<long>(kNumberReadEntries - 1),
@@ -1056,7 +1062,7 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
   TapToolbarButtonWithID(kReadingListToolbarMarkButtonID);
 
   // Tap the action sheet.
-  TapContextMenuButtonWithA11yLabelID(IDS_IOS_READING_LIST_MARK_READ_BUTTON);
+  TapActionSheetButtonWithA11yLabelID(IDS_IOS_READING_LIST_MARK_READ_BUTTON);
 
   AssertAllEntriesVisible();
   GREYAssertEqual(static_cast<long>(kNumberReadEntries + 1),
@@ -1566,6 +1572,11 @@ void AssertIsShowingDistillablePage(bool online, const GURL& distillable_url) {
 
 // Tests the Open in New Window context menu action for a reading list entry.
 - (void)testContextMenuOpenInNewWindow {
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
   }

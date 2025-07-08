@@ -96,6 +96,7 @@
 #include "services/network/public/mojom/network_service_test.mojom.h"
 #include "services/network/public/mojom/system_dns_resolution.mojom-forward.h"
 #include "services/network/restricted_cookie_manager.h"
+#include "services/network/scheduler/network_service_task_scheduler.h"
 #include "services/network/tpcd/metadata/manager.h"
 #include "services/network/url_loader.h"
 
@@ -379,6 +380,10 @@ NetworkService::NetworkService(
     : net_log_(net::NetLog::Get()), registry_(std::move(registry)) {
   DCHECK(!g_network_service);
   g_network_service = this;
+
+  if (base::FeatureList::IsEnabled(features::kNetworkServiceTaskScheduler)) {
+    NetworkServiceTaskScheduler::MaybeCreate();
+  }
 
   ContentDecodingInterceptor::SetIsNetworkServiceRunningInTheCurrentProcess(
       true, {});

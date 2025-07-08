@@ -229,7 +229,7 @@ _BANNED_JAVA_FUNCTIONS: Sequence[BanRule] = (
         ('Prefer passing in the Profile reference instead of relying on the '
          'static getLastUsedRegularProfile() call. Only top level entry points '
          '(e.g. Activities) should call this method. Otherwise, the Profile '
-         'should either be passed in explicitly or retreived from an existing '
+         'should either be passed in explicitly or retrieved from an existing '
          'entity with a reference to the Profile (e.g. WebContents).', ),
         False,
         excluded_paths=(r'.*Test[A-Z]?.*\.java', ),
@@ -263,12 +263,12 @@ _BANNED_JAVA_FUNCTIONS: Sequence[BanRule] = (
         False,
     ),
     BanRule(
-        pattern=(r'IS_DESKTOP_ANDROID'),
+        pattern=(r'/((DeviceInfo\.isDesktop\()|IS_DESKTOP_ANDROID)'),
         explanation=(
-            'Do not add new uses of IS_DESKTOP_ANDROID build flag until you '
-            'have the approval of tedchoc@ or twellington@. '
-            'Background: it is highly important to reduce the divergence of '
-            'features across platforms. '
+            'Do not add new uses of IS_DESKTOP_ANDROID build flag or '
+            'DeviceInfo.isDesktop() until you have the approval of tedchoc@ or '
+            'twellington@. Background: it is highly important to reduce the '
+            'divergence of features across platforms. '
             'Allowances may be granted to only the directories below: '
             '[build/, chrome/, components/, extensions/, infra/, tools/] ',
             'Note: in particular we need to avoid components shared with '
@@ -1551,8 +1551,6 @@ _BANNED_CPP_FUNCTIONS: Sequence[BanRule] = (
             _THIRD_PARTY_EXCEPT_BLINK,
             # sql/ itself uses virtual tables in the recovery module and tests.
             r'^sql/.*',
-            # TODO(https://crbug.com/695592): Remove once WebSQL is deprecated.
-            r'third_party/blink/web_tests/storage/websql/.*'
             # Various performance tools that do not build as part of Chrome.
             r'^tools/perf.*',
             r'.*perfetto.*',
@@ -1937,7 +1935,7 @@ _BANNED_CPP_FUNCTIONS: Sequence[BanRule] = (
         pattern='ProfileManager::GetLastUsedProfile',
         explanation=
         ('Most code should already be scoped to a Profile. Pass in a Profile* '
-         'or retreive from an existing entity with a reference to the Profile '
+         'or retrieve from an existing entity with a reference to the Profile '
          '(e.g. WebContents).', ),
         treat_as_error=False,
     ),
@@ -1952,7 +1950,7 @@ _BANNED_CPP_FUNCTIONS: Sequence[BanRule] = (
                  r'FindBrowserWithActiveWindow'),
         explanation=
         ('Most code should already be scoped to a Browser. Pass in a Browser* '
-         'or retreive from an existing entity with a reference to the Browser.',
+         'or retrieve from an existing entity with a reference to the Browser.',
          ),
         treat_as_error=False,
     ),
@@ -2412,7 +2410,9 @@ _KNOWN_ROBOTS = set() | set('%s@appspot.gserviceaccount.com' % s for s in (
                     'chops-security-borg',
                     'chops-security-cronjobs-cpesuggest')) | set(
                         '%s@chromeos-release-bot.iam.gserviceaccount.com' % s
-                        for s in ('chromeos-ci-release', ))
+                        for s in ('chromeos-ci-release', )) | set(
+                        '%s@chromeos-bot.iam.gserviceaccount.com' % s
+                        for s in ('chromeos-ci-prod', ))
 
 _INVALID_GRD_FILE_LINE = [(r'<file lang=.* path=.*',
                            'Path should come before lang in GRD files.')]
@@ -2866,28 +2866,6 @@ def CheckCrosApiNeedBrowserTest(input_api, output_api):
             )
         ]
     return []
-
-
-def CheckValidHostsInDEPSOnUpload(input_api, output_api):
-    """Checks that DEPS file deps are from allowed_hosts."""
-    # Run only if DEPS file has been modified to annoy fewer bystanders.
-    if all(f.LocalPath() != 'DEPS' for f in input_api.AffectedFiles()):
-        return []
-    # Outsource work to gclient verify
-    try:
-        gclient_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
-                                              'third_party', 'depot_tools',
-                                              'gclient.py')
-        input_api.subprocess.check_output(
-            [input_api.python3_executable, gclient_path, 'verify'],
-            stderr=input_api.subprocess.STDOUT)
-        return []
-    except input_api.subprocess.CalledProcessError as error:
-        return [
-            output_api.PresubmitError(
-                'DEPS file must have only git dependencies.',
-                long_text=error.output)
-        ]
 
 
 def _GetMessageForMatchingType(input_api, affected_file, line_number, line,
@@ -3852,6 +3830,7 @@ def CheckSpamLogging(input_api, output_api):
             r"^components/cast",
             r"^components/media_control/renderer/media_playback_options\.cc$",
             r"^components/policy/core/common/policy_logger\.cc$",
+            r"^components/supervised_user/core/browser/android/content_filters_observer_bridge\.cc",
             r"^components/viz/service/display/"
             r"overlay_strategy_underlay_cast\.cc$",
             r"^components/zucchini/.*",
@@ -6111,6 +6090,9 @@ def ChecksCommon(input_api, output_api):
             non_inclusive_terms=_NON_INCLUSIVE_TERMS))
     results.extend(
         input_api.canned_checks.CheckNewDEPSHooksHasRequiredReviewers(
+            input_api, output_api))
+    results.extend(
+        input_api.canned_checks.CheckValidHostsInDEPSOnUpload(
             input_api, output_api))
 
     presubmit_py_filter = lambda f: input_api.FilterSourceFile(

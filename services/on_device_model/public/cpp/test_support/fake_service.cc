@@ -12,6 +12,7 @@
 #include "base/files/memory_mapped_file.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "services/on_device_model/ml/chrome_ml_audio_buffer.h"
@@ -219,7 +220,7 @@ void FakeOnDeviceSession::GenerateImpl(
     remote->OnResponse(std::move(chunk));
   }
 
-  int output_token_count = 0;
+  uint32_t output_token_count = 0;
   if (settings_->model_execute_result.empty()) {
     for (const auto& context : context_) {
       std::string text = CtxToString(*context, params_->capabilities);
@@ -242,6 +243,10 @@ void FakeOnDeviceSession::GenerateImpl(
       chunk->text = text;
       remote->OnResponse(std::move(chunk));
     }
+  }
+  if (options->max_output_tokens &&
+      output_token_count > options->max_output_tokens) {
+    output_token_count = options->max_output_tokens;
   }
   auto summary = mojom::ResponseSummary::New();
   summary->output_token_count = output_token_count;
@@ -398,10 +403,6 @@ void FakeOnDeviceModelService::LoadModel(
     mojom::LoadModelParamsPtr params,
     mojo::PendingReceiver<mojom::OnDeviceModel> model,
     LoadModelCallback callback) {
-  if (settings_->drop_connection_request) {
-    std::move(callback).Run(mojom::LoadModelResult::kSuccess);
-    return;
-  }
   FakeOnDeviceModel::Data data;
   data.base_weight = ReadFile(params->assets.weights.file());
   if (params->assets.cache.IsValid()) {
@@ -410,6 +411,13 @@ void FakeOnDeviceModelService::LoadModel(
   data.adaptation_ranks = params->adaptation_ranks;
   auto test_model = std::make_unique<FakeOnDeviceModel>(
       settings_, std::move(data), params->performance_hint);
+  if (settings_->drop_connection_request) {
+    mojo::Receiver<mojom::OnDeviceModel>(test_model.get(), std::move(model))
+        .ResetWithReason(
+            static_cast<uint32_t>(*settings_->drop_connection_request), "");
+    std::move(callback).Run(mojom::LoadModelResult::kSuccess);
+    return;
+  }
   auto* raw_model = test_model.get();
   model_receivers_.Add(std::move(test_model), std::move(model), raw_model);
   std::move(callback).Run(mojom::LoadModelResult::kSuccess);
@@ -435,11 +443,12 @@ void FakeOnDeviceModelService::LoadTextSafetyModel(
   ts_holder_.Reset(std::move(params), std::move(model));
 }
 
-void FakeOnDeviceModelService::GetEstimatedPerformanceClass(
-    GetEstimatedPerformanceClassCallback callback) {
+void FakeOnDeviceModelService::GetDevicePerformanceInfo(
+    GetDevicePerformanceInfoCallback callback) {
+  auto result = mojom::DevicePerformanceInfo::New();
+  result->performance_class = mojom::PerformanceClass::kVeryHigh;
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(std::move(callback), mojom::PerformanceClass::kVeryHigh),
+      FROM_HERE, base::BindOnce(std::move(callback), std::move(result)),
       settings_->estimated_performance_delay);
 }
 

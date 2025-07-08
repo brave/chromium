@@ -19,15 +19,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/memory.h"
-#include "base/trace_event/memory_allocator_dump_guid.h"
-#include "base/trace_event/process_memory_dump.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace gpu {
 
 GpuMemoryBufferImplSharedMemory::GpuMemoryBufferImplSharedMemory(
-    gfx::GpuMemoryBufferId id,
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
@@ -36,7 +33,7 @@ GpuMemoryBufferImplSharedMemory::GpuMemoryBufferImplSharedMemory(
     base::WritableSharedMemoryMapping shared_memory_mapping,
     size_t offset,
     uint32_t stride)
-    : GpuMemoryBufferImpl(id, size, format, std::move(callback)),
+    : GpuMemoryBufferImpl(size, format, std::move(callback)),
       shared_memory_region_(std::move(shared_memory_region)),
       shared_memory_mapping_(std::move(shared_memory_mapping)),
       offset_(offset),
@@ -49,11 +46,11 @@ GpuMemoryBufferImplSharedMemory::~GpuMemoryBufferImplSharedMemory() = default;
 
 // static
 std::unique_ptr<GpuMemoryBufferImplSharedMemory>
-GpuMemoryBufferImplSharedMemory::Create(gfx::GpuMemoryBufferId id,
-                                        const gfx::Size& size,
-                                        gfx::BufferFormat format,
-                                        gfx::BufferUsage usage,
-                                        DestructionCallback callback) {
+GpuMemoryBufferImplSharedMemory::CreateForTesting(
+    const gfx::Size& size,
+    gfx::BufferFormat format,
+    gfx::BufferUsage usage,
+    DestructionCallback callback) {
   if (!IsUsageSupported(usage))
     return nullptr;
   size_t buffer_size = 0u;
@@ -67,15 +64,14 @@ GpuMemoryBufferImplSharedMemory::Create(gfx::GpuMemoryBufferId id,
     return nullptr;
 
   return base::WrapUnique(new GpuMemoryBufferImplSharedMemory(
-      id, size, format, usage, std::move(callback),
-      std::move(shared_memory_region), std::move(shared_memory_mapping), 0,
+      size, format, usage, std::move(callback), std::move(shared_memory_region),
+      std::move(shared_memory_mapping), 0,
       gfx::RowSizeForBufferFormat(size.width(), format, 0)));
 }
 
 // static
 gfx::GpuMemoryBufferHandle
 GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage) {
@@ -92,7 +88,6 @@ GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
 
   gfx::GpuMemoryBufferHandle handle(std::move(shared_memory_region));
   handle.type = gfx::SHARED_MEMORY_BUFFER;
-  handle.id = id;
   handle.offset = 0;
   handle.stride = static_cast<uint32_t>(
       gfx::RowSizeForBufferFormat(size.width(), format, 0));
@@ -148,11 +143,10 @@ GpuMemoryBufferImplSharedMemory::CreateFromHandle(
     return nullptr;
   }
 
-  const gfx::GpuMemoryBufferId id = handle.id;
   const uint32_t offset = handle.offset;
   const uint32_t stride = handle.stride;
   return base::WrapUnique(new GpuMemoryBufferImplSharedMemory(
-      id, size, format, usage, std::move(callback), std::move(handle).region(),
+      size, format, usage, std::move(callback), std::move(handle).region(),
       base::WritableSharedMemoryMapping(), offset, stride));
 }
 
@@ -175,13 +169,6 @@ bool GpuMemoryBufferImplSharedMemory::IsUsageSupported(gfx::BufferUsage usage) {
       return false;
   }
   NOTREACHED();
-}
-
-// static
-bool GpuMemoryBufferImplSharedMemory::IsConfigurationSupported(
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage) {
-  return IsUsageSupported(usage);
 }
 
 // static
@@ -226,7 +213,7 @@ base::OnceClosure GpuMemoryBufferImplSharedMemory::AllocateForTesting(
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     gfx::GpuMemoryBufferHandle* handle) {
-  *handle = CreateGpuMemoryBuffer(handle->id, size, format, usage);
+  *handle = CreateGpuMemoryBuffer(size, format, usage);
   return base::DoNothing();
 }
 
@@ -278,24 +265,9 @@ gfx::GpuMemoryBufferType GpuMemoryBufferImplSharedMemory::GetType() const {
 gfx::GpuMemoryBufferHandle GpuMemoryBufferImplSharedMemory::CloneHandle()
     const {
   gfx::GpuMemoryBufferHandle handle(shared_memory_region_.Duplicate());
-  handle.id = id_;
   handle.offset = offset_;
   handle.stride = stride_;
   return handle;
-}
-
-void GpuMemoryBufferImplSharedMemory::OnMemoryDump(
-    base::trace_event::ProcessMemoryDump* pmd,
-    const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-    uint64_t tracing_process_id,
-    int importance) const {
-  pmd->CreateSharedMemoryOwnershipEdge(buffer_dump_guid, GetSharedMemoryGUID(),
-                                       importance);
-}
-
-base::UnguessableToken GpuMemoryBufferImplSharedMemory::GetSharedMemoryGUID()
-    const {
-  return shared_memory_region_.GetGUID();
 }
 
 }  // namespace gpu

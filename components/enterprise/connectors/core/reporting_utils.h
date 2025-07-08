@@ -60,16 +60,22 @@ std::optional<chrome::cros::reporting::proto::PasswordBreachEvent>
 GetPasswordBreachEvent(
     const std::string& trigger,
     const std::vector<std::pair<GURL, std::u16string>>& identities,
-    const enterprise_connectors::ReportingSettings& settings);
+    const enterprise_connectors::ReportingSettings& settings,
+    const std::string& profile_identifier,
+    const std::string& profile_username);
 
 chrome::cros::reporting::proto::SafeBrowsingPasswordReuseEvent
 GetPasswordReuseEvent(const GURL& url,
                       const std::string& user_name,
                       bool is_phishing_url,
-                      bool warning_shown);
+                      bool warning_shown,
+                      const std::string& profile_identifier,
+                      const std::string& profile_username);
 
 chrome::cros::reporting::proto::SafeBrowsingPasswordChangedEvent
-GetPasswordChangedEvent(const std::string& user_name);
+GetPasswordChangedEvent(const std::string& user_name,
+                        const std::string& profile_identifier,
+                        const std::string& profile_username);
 
 chrome::cros::reporting::proto::LoginEvent GetLoginEvent(
     const GURL& url,
@@ -88,6 +94,15 @@ GetInterstitialEvent(const GURL& url,
                      const std::string& profile_identifier,
                      const std::string& profile_username,
                      const ReferrerChain& referrer_chain);
+
+chrome::cros::reporting::proto::UrlFilteringInterstitialEvent
+GetUrlFilteringInterstitialEvent(
+    const GURL& url,
+    const std::string& threat_type,
+    const safe_browsing::RTLookupResponse& response,
+    const std::string& profile_identifier,
+    const std::string& profile_username,
+    const ReferrerChain& referrer_chain);
 
 chrome::cros::reporting::proto::BrowserCrashEvent GetBrowserCrashEvent(
     const std::string& channel,

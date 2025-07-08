@@ -18,6 +18,7 @@
 #import "components/feed/core/v2/public/common_enums.h"
 #import "components/feed/core/v2/public/ios/pref_names.h"
 #import "components/feed/feed_feature_list.h"
+#import "components/omnibox/common/omnibox_features.h"
 #import "components/policy/policy_constants.h"
 #import "components/pref_registry/pref_registry_syncable.h"
 #import "components/prefs/pref_service.h"
@@ -55,6 +56,7 @@
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_coordinator.h"
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_delegate.h"
 #import "ios/chrome/browser/home_customization/utils/home_customization_constants.h"
+#import "ios/chrome/browser/lens/ui_bundled/lens_entrypoint.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_state.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
@@ -84,7 +86,11 @@
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_commands.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_view_controller.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_mediator.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_shortcuts_handler.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_utils.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_view_controller.h"
+#import "ios/chrome/browser/omnibox/model/placeholder_service/placeholder_service.h"
+#import "ios/chrome/browser/omnibox/model/placeholder_service/placeholder_service_factory.h"
 #import "ios/chrome/browser/overscroll_actions/ui_bundled/overscroll_actions_controller.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
@@ -101,12 +107,15 @@
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
+#import "ios/chrome/browser/shared/public/commands/open_lens_input_selection_command.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
+#import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
+#import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
 #import "ios/chrome/browser/sharing/ui_bundled/sharing_coordinator.h"
 #import "ios/chrome/browser/sharing/ui_bundled/sharing_params.h"
@@ -155,7 +164,8 @@
                                      OverscrollActionsControllerDelegate,
                                      ProfileStateObserver,
                                      SceneStateObserver,
-                                     FamilyLinkUserCapabilitiesObserving> {
+                                     FamilyLinkUserCapabilitiesObserving,
+                                     NewTabPageShortcutsHandler> {
   // Observes changes in the IdentityManager.
   std::unique_ptr<signin::IdentityManagerObserverBridge>
       _identityObserverBridge;
@@ -449,9 +459,9 @@
 - (void)stopIfNeeded {
   WebStateList* webStateList = self.browser->GetWebStateList();
   for (int i = 0; i < webStateList->count(); i++) {
-    NewTabPageTabHelper* iterNtpHelper =
+    NewTabPageTabHelper* NTPHelper =
         NewTabPageTabHelper::FromWebState(webStateList->GetWebStateAt(i));
-    if (iterNtpHelper->IsActive()) {
+    if (NTPHelper && NTPHelper->IsActive()) {
       return;
     }
   }
@@ -646,10 +656,12 @@
       self.componentFactory;
   self.logoVendor = ios::provider::CreateLogoVendor(browser, self.webState);
   self.NTPViewController = [componentFactory NTPViewController];
-  self.headerViewController = [componentFactory headerViewController];
+  self.headerViewController =
+      [componentFactory headerViewControllerForProfile:self.profile];
   self.NTPMediator =
       [componentFactory NTPMediatorForBrowser:browser
                      identityDiscImageUpdater:self.headerViewController];
+  self.NTPViewController.mutator = self.NTPMediator;
   self.contentSuggestionsCoordinator =
       [componentFactory contentSuggestionsCoordinatorForBrowser:browser];
   self.feedMetricsRecorder =
@@ -715,23 +727,19 @@
   CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
   headerViewController.fakeboxFocuserHandler =
       HandlerForProtocol(dispatcher, FakeboxFocuser);
-  headerViewController.lensHandler =
-      HandlerForProtocol(dispatcher, LensCommands);
-  headerViewController.applicationHandler =
-      HandlerForProtocol(dispatcher, ApplicationCommands);
-  headerViewController.browserCoordinatorHandler =
-      HandlerForProtocol(dispatcher, BrowserCoordinatorCommands);
   headerViewController.helpHandler =
       HandlerForProtocol(dispatcher, HelpCommands);
 
+  headerViewController.NTPShortcutsHandler = self;
+
   headerViewController.commandHandler = self;
-  headerViewController.customizationDelegate = self;
   headerViewController.delegate = self.NTPViewController;
   headerViewController.layoutGuideCenter =
       LayoutGuideCenterForBrowser(self.browser);
   headerViewController.toolbarDelegate = self.toolbarDelegate;
   headerViewController.baseViewController = self.baseViewController;
   headerViewController.NTPMetricsRecorder = self.NTPMetricsRecorder;
+  headerViewController.mutator = self.NTPMediator;
   [headerViewController setLogoVendor:self.logoVendor];
 }
 
@@ -754,6 +762,11 @@
   NTPMediator.NTPContentDelegate = self;
   NTPMediator.headerConsumer = self.headerViewController;
   NTPMediator.consumer = self.NTPViewController;
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate)) {
+    PlaceholderService* placeholderService =
+        ios::PlaceholderServiceFactory::GetForProfile(self.profile);
+    NTPMediator.placeholderService = placeholderService;
+  }
   [NTPMediator setUp];
 }
 
@@ -775,7 +788,7 @@
       self.contentSuggestionsCoordinator.magicStackCollectionView;
   self.NTPViewController.contentSuggestionsViewController =
       self.contentSuggestionsCoordinator.viewController;
-
+  self.NTPViewController.NTPShortcutsHandler = self;
   self.NTPViewController.feedVisible = [self isFeedVisible];
 
   self.feedWrapperViewController = [self.componentFactory
@@ -800,7 +813,6 @@
   self.NTPViewController.feedMetricsRecorder = self.feedMetricsRecorder;
   self.NTPViewController.helpHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), HelpCommands);
-  self.NTPViewController.mutator = self.NTPMediator;
 }
 
 // Configures the `_tabGroupIndicatorCoordinator` and sets the
@@ -876,17 +888,19 @@
   }
   [self dismissCustomizationMenu];
   [self.NTPMetricsRecorder recordIdentityDiscTapped];
-  id<ApplicationCommands> handler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), ApplicationCommands);
-
   BOOL isSignedIn =
       self.authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin);
   if (![self isSignInAllowed]) {
-    [handler showSettingsFromViewController:self.baseViewController];
+    id<SettingsCommands> handler = HandlerForProtocol(
+        self.browser->GetCommandDispatcher(), SettingsCommands);
+    [handler
+        showGoogleServicesSettingsFromViewController:self.baseViewController];
   } else if (isSignedIn) {
     if (IsIdentityDiscAccountMenuEnabled()) {
       [self showAccountMenu:identityDisc];
     } else {
+      id<ApplicationCommands> handler = HandlerForProtocol(
+          self.browser->GetCommandDispatcher(), ApplicationCommands);
       [handler showSettingsFromViewController:self.baseViewController];
     }
   } else {
@@ -923,19 +937,8 @@
     return;
   }
 
-  PrefService* localState = GetApplicationContext()->GetLocalState();
-  if (localState->GetInteger(
-          prefs::kNTPHomeCustomizationNewBadgeImpressionCount) <=
-      kCustomizationNewBadgeMaxImpressionCount) {
-    base::RecordAction(
-        base::UserMetricsAction(kNTPCustomizationNewBadgeTappedAction));
-    // Set the new badge impression count to `INT_MAX` to ensure it isn't shown
-    // again, even if we increase the max impression count.
-    localState->SetInteger(prefs::kNTPHomeCustomizationNewBadgeImpressionCount,
-                           INT_MAX);
-
-    [self.headerViewController hideBadgeOnCustomizationMenu];
-  }
+  // Hide the 'new' badge for the current session after being tapped.
+  [self.headerViewController hideBadgeOnCustomizationMenu];
 
   [self.NTPMetricsRecorder recordHomeCustomizationMenuOpenedFromEntrypoint:
                                HomeCustomizationEntrypoint::kMain];
@@ -1051,6 +1054,9 @@
   [self updateFeedLayout];
   [self cancelOmniboxEdit];
   [self.NTPViewController setContentOffsetToTop];
+
+  _headerViewController.isGoogleDefaultSearchEngine =
+      [self isGoogleDefaultSearchEngine];
 }
 
 #pragma mark - ContentSuggestionsDelegate
@@ -1590,12 +1596,6 @@
               .empty();
 }
 
-// Update the state, to take into account that the account menu coordinator is
-// stopped.
-- (void)showAccountMenuDidFinish {
-  [self stopAccountMenuCoordinator];
-}
-
 // Update the state, to take into account that the signin coordinator
 // coordinator is stopped.
 - (void)showSigninCommandDidFinish {
@@ -1903,6 +1903,62 @@
   }
   [_customizationCoordinator stop];
   _customizationCoordinator = nil;
+}
+
+#pragma mark - NewTabPageShortcutsHandler
+
+- (void)openLensViewFinder {
+  [self.NTPMetricsRecorder recordLensTapped];
+  feature_engagement::TrackerFactory::GetForProfile(self.profile)
+      ->NotifyEvent(feature_engagement::events::kIOSLensButtonUsed);
+  TriggerHapticFeedbackForSelectionChange();
+  OpenLensInputSelectionCommand* command = [[OpenLensInputSelectionCommand
+      alloc]
+          initWithEntryPoint:LensEntrypoint::NewTabPage
+           presentationStyle:LensInputSelectionPresentationStyle::SlideFromRight
+      presentationCompletion:nil];
+  [self dismissCustomizationMenu];
+  id<LensCommands> lensHandler =
+      HandlerForProtocol(self.browser->GetCommandDispatcher(), LensCommands);
+  [lensHandler openLensInputSelection:command];
+}
+
+- (void)openMIA {
+  [self.NTPMetricsRecorder recordMIATapped];
+  OpenNewTabCommand* command = [OpenNewTabCommand
+      commandWithURLFromChrome:GetUrlForAim(self.templateURLService)];
+  id<ApplicationCommands> applicationHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), ApplicationCommands);
+  [applicationHandler openURLInNewTab:command];
+}
+
+- (void)preloadVoiceSearch {
+  id<BrowserCoordinatorCommands> browserCoordinatorHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), BrowserCoordinatorCommands);
+  [browserCoordinatorHandler preloadVoiceSearch];
+}
+
+- (void)loadVoiceSearchFromView:(UIView*)voiceSearchSourceView {
+  [self.NTPMetricsRecorder recordVoiceSearchTapped];
+  [self dismissCustomizationMenu];
+
+  LayoutGuideCenter* layoutGuideCenter =
+      LayoutGuideCenterForBrowser(self.browser);
+  [layoutGuideCenter referenceView:voiceSearchSourceView
+                         underName:kVoiceSearchButtonGuide];
+
+  id<ApplicationCommands> applicationHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), ApplicationCommands);
+  [applicationHandler startVoiceSearch];
+}
+
+- (void)openIncognitoSearch {
+  [self.NTPMetricsRecorder recordIncognitoTapped];
+  OpenNewTabCommand* command = [OpenNewTabCommand commandWithIncognito:YES];
+  command.shouldFocusOmnibox = YES;
+  id<ApplicationCommands> applicationHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), ApplicationCommands);
+  [applicationHandler openURLInNewTab:command];
 }
 
 @end

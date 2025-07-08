@@ -18,11 +18,13 @@
 #include "base/time/time.h"
 #include "components/commerce/core/commerce_constants.h"
 #include "components/commerce/core/commerce_feature_list.h"
+#include "components/commerce/core/commerce_utils.h"
 #include "components/commerce/core/subscriptions/commerce_subscription.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/base/features.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -145,7 +147,8 @@ void SubscriptionsServerProxy::Create(
           }
         })");
 
-  auto fetcher = CreateEndpointFetcher(GURL(service_url), kPostHttpMethod,
+  auto fetcher = CreateEndpointFetcher(GURL(service_url),
+                                       endpoint_fetcher::HttpMethod::kPost,
                                        post_data, traffic_annotation);
   auto* const fetcher_ptr = fetcher.get();
   fetcher_ptr->Fetch(base::BindOnce(
@@ -216,7 +219,8 @@ void SubscriptionsServerProxy::Delete(
           }
         })");
 
-  auto fetcher = CreateEndpointFetcher(GURL(service_url), kPostHttpMethod,
+  auto fetcher = CreateEndpointFetcher(GURL(service_url),
+                                       endpoint_fetcher::HttpMethod::kPost,
                                        post_data, traffic_annotation);
   auto* const fetcher_ptr = fetcher.get();
   fetcher_ptr->Fetch(base::BindOnce(
@@ -271,7 +275,8 @@ void SubscriptionsServerProxy::Get(SubscriptionType type,
           }
         })");
 
-  auto fetcher = CreateEndpointFetcher(GURL(service_url), kGetHttpMethod,
+  auto fetcher = CreateEndpointFetcher(GURL(service_url),
+                                       endpoint_fetcher::HttpMethod::kGet,
                                        kEmptyPostData, traffic_annotation);
   auto* const fetcher_ptr = fetcher.get();
   fetcher_ptr->Fetch(base::BindOnce(
@@ -282,7 +287,7 @@ void SubscriptionsServerProxy::Get(SubscriptionType type,
 std::unique_ptr<EndpointFetcher>
 SubscriptionsServerProxy::CreateEndpointFetcher(
     const GURL& url,
-    const std::string& http_method,
+    const endpoint_fetcher::HttpMethod http_method,
     const std::string& post_data,
     const net::NetworkTrafficAnnotationTag& annotation_tag) {
   // If ReplaceSyncPromosWithSignInPromos is enabled - ConsentLevel::kSync is no
@@ -291,11 +296,20 @@ SubscriptionsServerProxy::CreateEndpointFetcher(
       base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos)
           ? signin::ConsentLevel::kSignin
           : signin::ConsentLevel::kSync;
+  EndpointFetcher::RequestParams::Builder request_params =
+      EndpointFetcher::RequestParams::Builder(http_method, annotation_tag);
+  request_params.SetUrl(url)
+      .SetContentType(kContentType)
+      .SetAuthType(endpoint_fetcher::OAUTH)
+      .SetOauthScopes(
+          std::vector<std::string>{GaiaConstants::kChromeMemexOAuth2Scope})
+      .SetConsentLevel(consent_level)
+      .SetTimeout(base::Milliseconds(kTimeoutMs.Get()))
+      .SetOauthConsumerName(kOAuthName)
+      .SetPostData(post_data);
+  MaybeUseAlternateShoppingServer(request_params);
   return std::make_unique<EndpointFetcher>(
-      url_loader_factory_, kOAuthName, url, http_method, kContentType,
-      std::vector<std::string>{kOAuthScope},
-      base::Milliseconds(kTimeoutMs.Get()), post_data, annotation_tag,
-      identity_manager_, consent_level);
+      url_loader_factory_, identity_manager_, request_params.Build());
 }
 
 void SubscriptionsServerProxy::HandleManageSubscriptionsResponses(

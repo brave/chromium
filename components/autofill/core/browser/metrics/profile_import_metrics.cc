@@ -227,6 +227,12 @@ void LogProfileUpdateImportDecision(
   }
 }
 
+void LogHomeAndWorkSupersetImportDecision(
+    AutofillClient::AddressPromptUserDecision decision) {
+  base::UmaHistogramEnumeration(
+      "Autofill.ProfileImport.HomeAndWorkSupersetProfileDecision", decision);
+}
+
 // static
 void LogRemovedSettingInaccessibleFields(bool did_remove) {
   base::UmaHistogramBoolean(
@@ -299,6 +305,11 @@ void LogProfileMigrationEditedType(FieldType edited_type) {
   base::UmaHistogramEnumeration(
       "Autofill.ProfileImport.MigrateProfileEditedType",
       ConvertSettingsVisibleFieldTypeForMetrics(edited_type));
+}
+
+void LogZipCodeLengthMetric(std::u16string_view zip) {
+  base::UmaHistogramExactLinear(
+      "Autofill.ProfileImportValidCandidate.ZipCode.Length", zip.size(), 20);
 }
 
 void LogZipCodeSeparatorMetric(std::u16string_view zip) {

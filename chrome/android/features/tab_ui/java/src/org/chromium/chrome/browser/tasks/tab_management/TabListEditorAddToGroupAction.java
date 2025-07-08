@@ -4,12 +4,12 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tabmodel.TabGroupUtils.areAnyTabsPartOfSharedGroup;
 
 import android.app.Activity;
 import android.graphics.drawable.Drawable;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 
@@ -149,6 +149,7 @@ public class TabListEditorAddToGroupAction extends TabListEditorAction {
             @Nullable MotionEventInfo triggeringMotion) {
         assert !tabs.isEmpty() : "Add tab to group action should not be enabled for no tabs.";
         BottomSheetController controller = getActionDelegate().getBottomSheetController();
+        assumeNonNull(controller);
         TabGroupModelFilter filter = getTabGroupModelFilter();
 
         Tab destinationTab = tabs.get(0);
@@ -170,9 +171,9 @@ public class TabListEditorAddToGroupAction extends TabListEditorAction {
 
     @Override
     void configure(
-            @NonNull Supplier<TabGroupModelFilter> currentTabGroupModelFilterSupplier,
-            @NonNull SelectionDelegate<TabListEditorItemSelectionId> selectionDelegate,
-            @NonNull ActionDelegate actionDelegate,
+            Supplier<@Nullable TabGroupModelFilter> currentTabGroupModelFilterSupplier,
+            SelectionDelegate<TabListEditorItemSelectionId> selectionDelegate,
+            ActionDelegate actionDelegate,
             boolean editorSupportsActionOnRelatedTabs) {
         super.configure(
                 currentTabGroupModelFilterSupplier,
@@ -180,6 +181,7 @@ public class TabListEditorAddToGroupAction extends TabListEditorAction {
                 actionDelegate,
                 editorSupportsActionOnRelatedTabs);
         TabGroupModelFilter filter = getTabGroupModelFilter();
+        assumeNonNull(filter);
         filter.addTabGroupObserver(mFilterObserver);
         filter.getTabModel().addObserver(mTabModelObserver);
         updateText();
@@ -212,7 +214,8 @@ public class TabListEditorAddToGroupAction extends TabListEditorAction {
         } else {
             filter.mergeListOfTabsToGroup(tabs, destinationTab, /* notify= */ true);
         }
-        mTabGroupCreationDialogManager.showDialog(destinationTab.getTabGroupId(), filter);
+        mTabGroupCreationDialogManager.showDialog(
+                assumeNonNull(destinationTab.getTabGroupId()), filter);
     }
 
     private void destroy() {

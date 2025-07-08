@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/strings/string_util.h"
@@ -137,16 +138,18 @@ void BluetoothAdapterFloss::Initialize(base::OnceClosure callback) {
 void BluetoothAdapterFloss::Shutdown() {
   BLUETOOTH_LOG(EVENT) << "BluetoothAdapterFloss::Shutdown";
 
-  if (dbus_is_shutdown_)
+  if (dbus_is_shutdown_) {
     return;
+  }
 
   if (!FlossDBusManager::Get()->IsObjectManagerSupported()) {
     dbus_is_shutdown_ = true;
     return;
   }
 
-  if (IsPresent())
+  if (IsPresent()) {
     RemoveAdapter();  // Cleans up devices and adapter observers.
+  }
   DCHECK(devices_.empty());
 
   // This may call unregister on advertisements that have already been
@@ -303,8 +306,9 @@ std::string BluetoothAdapterFloss::GetAddress() const {
 }
 
 std::string BluetoothAdapterFloss::GetName() const {
-  if (!IsPresent())
+  if (!IsPresent()) {
     return std::string();
+  }
 
   return FlossDBusManager::Get()->GetAdapterClient()->GetName();
 }
@@ -376,8 +380,9 @@ void BluetoothAdapterFloss::SetPowered(bool powered,
 }
 
 bool BluetoothAdapterFloss::IsDiscoverable() const {
-  if (!IsPresent())
+  if (!IsPresent()) {
     return false;
+  }
 
   return FlossDBusManager::Get()->GetAdapterClient()->GetDiscoverable();
 }
@@ -409,8 +414,9 @@ base::TimeDelta BluetoothAdapterFloss::GetDiscoverableTimeout() const {
 }
 
 bool BluetoothAdapterFloss::IsDiscovering() const {
-  if (!IsPresent())
+  if (!IsPresent()) {
     return false;
+  }
 
   return NumScanningDiscoverySessions() > 0;
 }
@@ -1480,6 +1486,17 @@ void BluetoothAdapterFloss::SetServiceAllowList(const UUIDList& uuids,
       uuids);
 }
 
+void BluetoothAdapterFloss::SetSimpleSecurePairingEnabled(
+    bool enabled,
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
+  FlossDBusManager::Get()->GetAdminClient()->SetSimpleSecurePairingEnabled(
+      base::BindOnce(&BluetoothAdapterFloss::OnMethodResponse,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(error_callback)),
+      enabled);
+}
+
 std::unique_ptr<device::BluetoothLowEnergyScanSession>
 BluetoothAdapterFloss::StartLowEnergyScanSession(
     std::unique_ptr<device::BluetoothLowEnergyScanFilter> filter,
@@ -1555,6 +1572,7 @@ void BluetoothAdapterFloss::ConfigureBluetoothTelephony(bool enabled) {
   FlossDBusManager::Get()->GetBluetoothTelephonyClient()->SetPhoneOpsEnabled(
       base::DoNothing(), enabled);
 }
+
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 void BluetoothAdapterFloss::ScannerRegistered(device::BluetoothUUID uuid,

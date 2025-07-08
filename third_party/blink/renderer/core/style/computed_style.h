@@ -168,7 +168,7 @@ class WebkitTextStrokeColor;
 //
 // In addition to storing the computed value of every CSS property,
 // ComputedStyle also contains various internal style information. Examples
-// include cached_pseudo_element_styles_ (for storing pseudo element styles) and
+// include cached_pseudo_element_styles_ (for storing pseudo-element styles) and
 // has_simple_underline_ (cached indicator flag of text-decoration). These are
 // stored on ComputedStyle for two reasons:
 //
@@ -360,7 +360,7 @@ class ComputedStyle final : public ComputedStyleBase {
   // Find out how two ComputedStyles differ. Used for figuring out if style
   // recalc needs to propagate style changes down the tree. The constants are
   // listed in increasing severity. E.g. kInherited also means we need to update
-  // pseudo elements (kPseudoElementStyle).
+  // pseudo-elements (kPseudoElementStyle).
   enum class Difference {
     // The ComputedStyle objects have the same computed style. The might have
     // some different extra flags which means we still need to replace the old
@@ -369,7 +369,7 @@ class ComputedStyle final : public ComputedStyleBase {
     // Non-inherited properties differ which means we need to apply visual
     // difference changes to the layout tree through LayoutObject::SetStyle().
     kNonInherited,
-    // Pseudo element style is different which means we have to update pseudo
+    // Pseudo-element style is different which means we have to update pseudo-
     // element existence and computed style.
     kPseudoElementStyle,
     // Inherited properties are different which means we need to recalc style
@@ -393,7 +393,7 @@ class ComputedStyle final : public ComputedStyleBase {
     //
     // If scroll-marker-group property changes from/to "none" on scroller, we
     // should
-    // remove all ::scroll-marker pseudo elements from the scroller's subtree.
+    // remove all ::scroll-marker pseudo-elements from the scroller's subtree.
     kDescendantAffecting,
   };
   CORE_EXPORT static Difference ComputeDifference(
@@ -891,6 +891,9 @@ class ComputedStyle final : public ComputedStyleBase {
 
   // letter-spacing
   float LetterSpacing() const { return GetFontDescription().LetterSpacing(); }
+  const Length& SpecifiedLetterSpacing() const {
+    return GetFontDescription().SpecifiedLetterSpacing();
+  }
 
   // word-spacing
   float WordSpacing() const { return GetFontDescription().WordSpacing(); }
@@ -917,6 +920,8 @@ class ComputedStyle final : public ComputedStyleBase {
            InternalVisitedStrokePaint().HasCurrentColor();
   }
   bool HasDashArray() const { return !StrokeDashArray()->data.empty(); }
+
+  bool IsCaretColorAuto() const { return CaretColor().IsAutoColor(); }
 
   // accent-color
   // An empty optional means the accent-color is 'auto'
@@ -1122,7 +1127,7 @@ class ComputedStyle final : public ComputedStyleBase {
   }
 
   // Grid axis utility functions, usable in Grid and Masonry.
-  const NGGridTrackList& AutoTracks(
+  const GridTrackList& AutoTracks(
       GridTrackSizingDirection track_direction) const {
     return (track_direction == kForColumns) ? GridAutoColumns()
                                             : GridAutoRows();
@@ -1314,6 +1319,8 @@ class ComputedStyle final : public ComputedStyleBase {
   }
   bool BorderImageSlicesFill() const { return BorderImage().Fill(); }
 
+  bool HasBorderShape() const { return BorderShape(); }
+
   bool BorderSizeEquals(const ComputedStyle& o) const {
     return BorderLeftWidth() == o.BorderLeftWidth() &&
            BorderTopWidth() == o.BorderTopWidth() &&
@@ -1339,7 +1346,7 @@ class ComputedStyle final : public ComputedStyleBase {
            BorderBottomWidth();
   }
   bool HasBorderDecoration() const {
-    return HasBorder() || BorderImage().HasImage();
+    return HasBorder() || BorderImage().HasImage() || HasBorderShape();
   }
   bool HasBorderRadius() const {
     if (!BorderTopLeftRadius().Width().IsZero()) {
@@ -1688,8 +1695,8 @@ class ComputedStyle final : public ComputedStyleBase {
   bool IsDisplayMathType() const { return IsDisplayMathBox(Display()); }
 
   bool BlockifiesChildren() const {
-    return IsDisplayFlexibleOrGridBox() || IsDisplayMathType() ||
-           IsDisplayLayoutCustomBox() ||
+    return IsDisplayFlexibleOrGridBox() || IsDisplayMasonryBox() ||
+           IsDisplayMathType() || IsDisplayLayoutCustomBox() ||
            (Display() == EDisplay::kContents && IsInBlockifyingDisplay());
   }
 
@@ -1938,6 +1945,12 @@ class ComputedStyle final : public ComputedStyleBase {
            UsedPointerEvents() != EPointerEvents::kNone;
   }
 
+  // returns `true` is the element has a non-identity transform, `false`
+  // otherwise.
+  bool HasNonIdentityTransformOperation() const {
+    return HasTransformOperations() && !Transform().IsIdentityOrTranslation();
+  }
+
   // Animation utility functions.
   bool HasCurrentTransformRelatedAnimation() const {
     return HasCurrentTransformAnimation() || HasCurrentScaleAnimation() ||
@@ -2181,7 +2194,7 @@ class ComputedStyle final : public ComputedStyleBase {
            GetPosition() != EPosition::kStatic;
   }
 
-  // Pseudo element styles.
+  // Pseudo-element styles.
   static bool HasPseudoElementStyle(unsigned pseudo_styles, PseudoId pseudo) {
     DCHECK(pseudo >= kFirstPublicPseudoId);
     DCHECK(pseudo <= kLastTrackedPublicPseudoId);
@@ -2448,8 +2461,8 @@ class ComputedStyle final : public ComputedStyleBase {
     return ScrollMarkerGroup() == other.ScrollMarkerGroup();
   }
 
-  bool ScrollMarkerContainNone() const {
-    return ScrollMarkerContain() == EScrollMarkerContain::kNone;
+  bool ScrollTargetGroupNone() const {
+    return ScrollTargetGroup() == EScrollTargetGroup::kNone;
   }
 
   PhysicalBoxStrut ScrollMarginStrut() const {
@@ -3149,7 +3162,7 @@ class ComputedStyleBuilder final : public ComputedStyleBuilderBase {
   }
 
   // letter-spacing
-  void SetLetterSpacing(float letter_spacing) {
+  void SetLetterSpacing(const Length& letter_spacing) {
     FontDescription description(GetFontDescription());
     description.SetLetterSpacing(letter_spacing);
     SetFontDescription(description);

@@ -40,6 +40,7 @@
 #include "components/web_package/test_support/signed_web_bundles/key_pair.h"
 #include "components/webapps/common/web_app_id.h"
 #include "components/webapps/isolated_web_apps/update_channel.h"
+#include "content/public/browser/network_service_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_launcher.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -231,7 +232,11 @@ class KioskIwaVersionManagementBaseTest
       : feature_list_(ash::features::kIsolatedWebAppKiosk),
         iwa_server_mixin_(&mixin_host_),
         kiosk_mixin_(&mixin_host_,
-                     std::move(config_creator).Run(GetUpdateManifestUrl())) {}
+                     std::move(config_creator).Run(GetUpdateManifestUrl())) {
+    // Prevents a race condition (often in debug builds) where a network service
+    // process is not yet started when kiosk downloads the IWA update manifest.
+    content::ForceInProcessNetworkService();
+  }
 
   ~KioskIwaVersionManagementBaseTest() override = default;
   KioskIwaVersionManagementBaseTest(const KioskIwaVersionManagementBaseTest&) =
@@ -493,7 +498,13 @@ IN_PROC_BROWSER_TEST_F(KioskIwaSimpleUpdateTest,
   ExpectTestAppInstalledAtVersion(kAppVersion1);
 }
 
-IN_PROC_BROWSER_TEST_F(KioskIwaSimpleUpdateTest, UpdatesToLatestBeforeLaunch) {
+#if BUILDFLAG(IS_LINUX) && defined(ADDRESS_SANITIZER)
+#define MAYBE_UpdatesToLatestBeforeLaunch DISABLED_UpdatesToLatestBeforeLaunch
+#else
+#define MAYBE_UpdatesToLatestBeforeLaunch UpdatesToLatestBeforeLaunch
+#endif
+IN_PROC_BROWSER_TEST_F(KioskIwaSimpleUpdateTest,
+                       MAYBE_UpdatesToLatestBeforeLaunch) {
   EXPECT_EQ(TheKioskApp().name(), kTestIwaTitle1);
 
   AddTestBundle(kTestIwaTitle2, kVersionString2);

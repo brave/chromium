@@ -123,10 +123,6 @@
     "META": {"sizes": {"includes": [150]}},
     "includes": [2400],
   },
-  "chrome/browser/resources/chromeos/seal/resources.grd": {
-    "META": {"sizes": {"includes": [50]}},
-    "includes": [2420],
-  },
   "chrome/browser/resources/component_extension_resources.grd": {
     "includes": [2440],
     "structures": [2460],
@@ -167,6 +163,10 @@
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/accessibility/resources.grd": {
     "META": {"sizes": {"includes": [10],}},
     "includes": [2740],
+  },
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/actor_internals/resources.grd": {
+    "META": {"sizes": {"includes": [10],}},
+    "includes": [2750],
   },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/app_home/resources.grd": {
     "META": {"sizes": {"includes": [20]}},
@@ -612,6 +612,10 @@
     "META": {"sizes": {"includes": [45],}},
     "includes": [4780],
   },
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/comments/resources.grd": {
+    "META": {"sizes": {"includes": [30],}},
+    "includes": [4790],
+  },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/side_panel/commerce/resources.grd": {
     "META": {"sizes": {"includes": [20],}},
     "includes": [4800],
@@ -679,18 +683,17 @@
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/support_tool/resources.grd": {
     "META": {"sizes": {"includes": [30]}},
     "includes": [5020],
+  }, "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/tab_group_home/resources.grd": {
+    "META": {"sizes": {"includes": [10]}},
+    "includes": [5030],
   },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/tab_search/resources.grd": {
     "META": {"sizes": {"includes": [90]}},
     "includes": [5040],
   },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/tab_strip/resources.grd": {
-    "META": {"sizes": {"includes": [30]}},
+    "META": {"sizes": {"includes": [40]}},
     "includes": [5060],
-  },
-  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/tabs/tab_group_home/resources.grd": {
-    "META": {"sizes": {"includes": [10]}},
-    "includes": [5065],
   },
   "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/tts_engine/resources.grd": {
     "META": {"sizes": {"includes": [20]}},
@@ -1070,6 +1073,10 @@
   "<(SHARED_INTERMEDIATE_DIR)/components/autofill/core/browser/autofill_and_password_manager_internals/resources.grd": {
     "META": {"sizes": {"includes": [5]}},
     "includes": [7290],
+  },
+  "<(SHARED_INTERMEDIATE_DIR)/chrome/browser/resources/autofill_ml_internals/resources.grd": {
+    "META": {"sizes": {"includes": [10]}},
+    "includes": [7295],
   },
   "<(SHARED_INTERMEDIATE_DIR)/components/commerce/core/internals/resources/resources.grd": {
     "META": {"sizes": {"includes": [30]}},

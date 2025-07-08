@@ -15,6 +15,7 @@
 #include "base/test/gmock_callback_support.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
+#include "gpu/command_buffer/client/fake_gpu_memory_buffer.h"
 #include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "media/capture/video/mock_video_capture_device_client.h"
 #include "media/capture/video/video_capture_device.h"
@@ -26,7 +27,6 @@
 
 #if BUILDFLAG(IS_LINUX)
 #include "base/command_line.h"
-#include "gpu/command_buffer/client/fake_gpu_memory_buffer.h"
 #include "media/capture/capture_switches.h"
 #include "media/capture/video/linux/fake_device_provider.h"
 #include "media/capture/video/linux/fake_v4l2_impl.h"

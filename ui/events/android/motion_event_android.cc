@@ -15,6 +15,7 @@
 #include "event_flags_android.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/android/event_flags_android.h"
+#include "ui/events/android/events_android_utils.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
@@ -27,10 +28,6 @@ using base::android::ScopedJavaLocalRef;
 namespace ui {
 namespace {
 
-#define ACTION_CASE(x)              \
-  case JNI_MotionEvent::ACTION_##x: \
-    return MotionEventAndroid::Action::x
-
 #define ACTION_REVERSE_CASE(x)        \
   case MotionEventAndroid::Action::x: \
     return JNI_MotionEvent::ACTION_##x
@@ -38,24 +35,6 @@ namespace {
 #define TOOL_TYPE_REVERSE_CASE(x)       \
   case MotionEventAndroid::ToolType::x: \
     return JNI_MotionEvent::TOOL_TYPE_##x
-
-MotionEventAndroid::Action FromAndroidAction(int android_action) {
-  switch (android_action) {
-    ACTION_CASE(DOWN);
-    ACTION_CASE(UP);
-    ACTION_CASE(MOVE);
-    ACTION_CASE(CANCEL);
-    ACTION_CASE(POINTER_DOWN);
-    ACTION_CASE(POINTER_UP);
-    ACTION_CASE(HOVER_ENTER);
-    ACTION_CASE(HOVER_EXIT);
-    ACTION_CASE(HOVER_MOVE);
-    ACTION_CASE(BUTTON_PRESS);
-    ACTION_CASE(BUTTON_RELEASE);
-    default:
-      NOTREACHED() << "Invalid Android MotionEvent action: " << android_action;
-  }
-}
 
 int ToAndroidAction(MotionEventAndroid::Action action) {
   switch (action) {
@@ -87,9 +66,7 @@ int ToAndroidToolType(MotionEventAndroid::ToolType tool_type) {
   }
 }
 
-#undef ACTION_CASE
 #undef ACTION_REVERSE_CASE
-#undef TOOL_TYPE_CASE
 #undef TOOL_TYPE_REVERSE_CASE
 
 int FromAndroidButtonState(int button_state) {
@@ -165,7 +142,6 @@ MotionEventAndroid::MotionEventAndroid(float pix_to_dip,
                                        int android_gesture_classification,
                                        int android_button_state,
                                        int android_meta_state,
-                                       int source,
                                        float raw_offset_x_pixels,
                                        float raw_offset_y_pixels,
                                        bool for_touch_handle,
@@ -175,7 +151,6 @@ MotionEventAndroid::MotionEventAndroid(float pix_to_dip,
       ticks_x_(ticks_x),
       ticks_y_(ticks_y),
       tick_multiplier_(tick_multiplier),
-      source_(source),
       for_touch_handle_(for_touch_handle),
       cached_oldest_event_time_(FromAndroidTime(oldest_event_time)),
       cached_latest_event_time_(FromAndroidTime(latest_event_time)),
@@ -205,7 +180,6 @@ MotionEventAndroid::MotionEventAndroid(const MotionEventAndroid& e,
       ticks_x_(e.ticks_x_),
       ticks_y_(e.ticks_y_),
       tick_multiplier_(e.tick_multiplier_),
-      source_(e.source_),
       for_touch_handle_(e.for_touch_handle_),
       cached_oldest_event_time_(e.cached_oldest_event_time_),
       cached_latest_event_time_(e.cached_latest_event_time_),
@@ -255,10 +229,6 @@ MotionEventAndroid::Action MotionEventAndroid::GetAction() const {
 
 int MotionEventAndroid::GetActionButton() const {
   return cached_action_button_;
-}
-
-int MotionEventAndroid::GetSource() const {
-  return source_;
 }
 
 MotionEvent::Classification MotionEventAndroid::GetClassification() const {

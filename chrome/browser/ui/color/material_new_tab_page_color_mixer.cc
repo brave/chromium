@@ -39,6 +39,27 @@ void AddMaterialNewTabPageColorMixer(ui::ColorProvider* provider,
       ui::kColorSysStateHoverOnSubtle};
   mixer[kColorNewTabPageButtonForeground] = {ui::kColorSysOnTonalContainer};
 
+  mixer[kColorNewTabPageComposeboxBackground] = {
+      dark_mode ? SkColorSetRGB(0x1D, 0x1E, 0x26)
+                : SkColorSetRGB(0xF0, 0xF2, 0xF5)};
+  mixer[kColorNewTabPageComposeboxFont] = {
+      dark_mode ? SkColorSetRGB(0xE6, 0xE8, 0xF0)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+  mixer[kColorNewTabPageComposeboxCancelButton] = {
+      dark_mode ? SkColorSetRGB(0xAD, 0xAF, 0xB8)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+  mixer[kColorNewTabPageComposeboxHover] = {
+      dark_mode ? SkColorSetRGB(0x25, 0x26, 0x2E)
+                : SkColorSetRGB(0xE9, 0xEB, 0xF0)};
+  mixer[kColorNewTabPageComposeboxScrimBackground] = {
+      dark_mode ? SkColorSetRGB(0x10, 0x12, 0x18)
+                : SkColorSetRGB(0xFF, 0xFF, 0xFF)};
+  mixer[kColorNewTabPageComposeboxSubmitButton] = {
+      SkColorSetRGB(0x0B, 0x50, 0xD0)};
+  mixer[kColorNewTabPageComposeboxUploadButton] = {
+      dark_mode ? SkColorSetRGB(0xE6, 0xE8, 0xF0)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+
   mixer[kColorNewTabPageControlBackgroundHovered] = {
       ui::kColorSysStateHoverOnSubtle};
   mixer[kColorNewTabPageFocusRing] = {ui::kColorSysStateFocusRing};
@@ -142,5 +163,6 @@ void AddMaterialNewTabPageColorMixer(ui::ColorProvider* provider,
   /* NewTabFooter */
   mixer[kColorNewTabFooterBackground] = {ui::kColorSysSurface2};
   mixer[kColorNewTabFooterText] = {ui::kColorSysOnSurface};
-  // LINT.ThenChange(chrome/browser/ui/color/new_tab_page_color_mixer.cc)
+  mixer[kColorNewTabFooterLogoBackground] = {ui::kColorSysSurface};
+  // LINT.ThenChange(//chrome/browser/ui/color/new_tab_page_color_mixer.cc)
 }

@@ -20,7 +20,7 @@ void FakeLocalFrameHost::Init(blink::AssociatedInterfaceProvider* provider) {
   provider->OverrideBinderForTesting(
       mojom::blink::LocalFrameHost::Name_,
       WTF::BindRepeating(&FakeLocalFrameHost::BindFrameHostReceiver,
-                         base::Unretained(this)));
+                         WTF::Unretained(this)));
 }
 
 void FakeLocalFrameHost::EnterFullscreen(
@@ -105,6 +105,7 @@ void FakeLocalFrameHost::DispatchLoad() {}
 void FakeLocalFrameHost::GoToEntryAtOffset(
     int32_t offset,
     bool has_user_gesture,
+    base::TimeTicks actual_navigation_start,
     std::optional<blink::scheduler::TaskAttributionId>) {}
 
 void FakeLocalFrameHost::UpdateTitle(

@@ -49,14 +49,6 @@ BASE_DECLARE_FEATURE(kClearUndecryptablePasswords);
 // Delete undecryptable passwords from the store when Sync is active.
 BASE_DECLARE_FEATURE(kClearUndecryptablePasswordsOnSync);
 
-// Marks form submission as failed whenever a POST request has failed for the
-// same iframe with 400-403 status code.
-BASE_DECLARE_FEATURE(kFailedLoginDetectionBasedOnResourceLoadingErrors);
-
-// Marks form submission as failed whenever a password field is cleared for the
-// sign-in forms.
-BASE_DECLARE_FEATURE(kFailedLoginDetectionBasedOnFormClearEvent);
-
 #if BUILDFLAG(IS_ANDROID)
 // Enables reading credentials from SharedPreferences.
 BASE_DECLARE_FEATURE(kFetchGaiaHashOnSignIn);
@@ -92,7 +84,10 @@ BASE_DECLARE_FEATURE(kIOSPasswordBottomSheetV2);
 // is signed-in and taps on a new password field.
 BASE_DECLARE_FEATURE(kIOSProactivePasswordGenerationBottomSheet);
 
-#endif
+// Allows filling from a secondary recovery password saved as a backup on iOS.
+BASE_DECLARE_FEATURE(kIOSFillRecoveryPassword);
+
+#endif  // BUILDFLAG(IS_IOS)
 
 // Enables running the clientside form classifier to parse password forms.
 BASE_DECLARE_FEATURE(kPasswordFormClientsideClassifier);
@@ -129,6 +124,10 @@ BASE_DECLARE_FEATURE(kBiometricsAuthForPwdFill);
 // passwords.
 BASE_DECLARE_FEATURE(kSetLeakCheckRequestCriticality);
 
+// Shows recovery password for the improved password change flow in the
+// management UI.
+BASE_DECLARE_FEATURE(kShowRecoveryPassword);
+
 // Displays at least the decryptable and never saved logins in the password
 // manager
 BASE_DECLARE_FEATURE(kSkipUndecryptablePasswords);
@@ -136,6 +135,9 @@ BASE_DECLARE_FEATURE(kSkipUndecryptablePasswords);
 // Starts passwords resync after undecryptable passwords were removed. This flag
 // is enabled by default and should be treaded as a killswitch.
 BASE_DECLARE_FEATURE(kTriggerPasswordResyncAfterDeletingUndecryptablePasswords);
+
+// Starts passwords resync when undecryptable passwords are detected.
+BASE_DECLARE_FEATURE(kTriggerPasswordResyncWhenUndecryptablePasswordsDetected);
 
 #if BUILDFLAG(IS_ANDROID)
 // The feature flag for the Identity Check feature. The feature makes biometric
@@ -170,6 +172,20 @@ BASE_DECLARE_FEATURE(kMarkAllCredentialsAsLeaked);
 
 // Enables improvements to password change functionality.
 BASE_DECLARE_FEATURE(kImprovedPasswordChangeService);
+
+inline constexpr base::FeatureParam<std::string>
+    kPasswordChangeSuccessSurveyTriggerId{
+        &kImprovedPasswordChangeService, "PasswordChangeSuccessSurveyTriggerId",
+        /*default_value=*/""};
+inline constexpr base::FeatureParam<std::string>
+    kPasswordChangeErrorSurveyTriggerId{&kImprovedPasswordChangeService,
+                                        "PasswordChangeErrorSurveyTriggerId",
+                                        /*default_value=*/""};
+inline constexpr base::FeatureParam<std::string>
+    kPasswordChangeCanceledSurveyTriggerId{
+        &kImprovedPasswordChangeService,
+        "PasswordChangeCanceledSurveyTriggerId",
+        /*default_value=*/""};
 
 // All features parameters in alphabetical order.
 }  // namespace password_manager::features

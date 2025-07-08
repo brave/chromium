@@ -258,6 +258,8 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
           group = GROUP_ADDRESS_STATE;
           break;
         case ADDRESS_HOME_ZIP:
+        case ADDRESS_HOME_ZIP_PREFIX:
+        case ADDRESS_HOME_ZIP_SUFFIX:
           group = GROUP_ADDRESS_ZIP;
           break;
         case ADDRESS_HOME_COUNTRY:
@@ -393,7 +395,6 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
         case CREDIT_CARD_STANDALONE_VERIFICATION_CODE:
         case SINGLE_USERNAME_FORGOT_PASSWORD:
         case SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES:
-        case IMPROVED_PREDICTION:
         case PASSPORT_NAME_TAG:
         case PASSPORT_NUMBER:
         case PASSPORT_ISSUING_COUNTRY:
@@ -415,6 +416,10 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
         case DRIVERS_LICENSE_EXPIRATION_DATE:
         case DRIVERS_LICENSE_ISSUE_DATE:
         case EMAIL_OR_LOYALTY_MEMBERSHIP_ID:
+        case NATIONAL_ID_CARD_NUMBER:
+        case NATIONAL_ID_CARD_EXPIRATION_DATE:
+        case NATIONAL_ID_CARD_ISSUE_DATE:
+        case NATIONAL_ID_CARD_ISSUING_COUNTRY:
           NOTREACHED() << field_type << " type is not in that group.";
       }
       break;

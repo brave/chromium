@@ -191,9 +191,6 @@
       <message name="IDS_IOS_ABOUT_VERSION_COPYRIGHT" desc="Copyright information on the about pages">
         Copyright <ph name="YEAR">$1</ph> The Chromium Authors. All rights reserved.
       </message>
-      <message name="IDS_IOS_ACCOUNT_MENU_OPEN_SETTINGS" desc="The button title in the account menu to open settings. [iOS only]">
-        Chromium settings
-      </message>
       <message name="IDS_IOS_ACCOUNT_TABLE_ERROR_ENTER_PASSPHRASE_MESSAGE" desc="The error message to show in the account table when there is a passphrase error. [iOS only]">
         To use and save Chromium data in your Google Account, enter your passphrase.
       </message>
@@ -248,6 +245,9 @@
       </message>
       <message name="IDS_IOS_BEST_FEATURES_SHARE_PASSWORDS_SUBTITLE" desc="Subtitle for the Share Passwords Chrome iOS Best Features Promo">
         Easily and securely share a copy of a password with your family group in Google Password Manager
+      </message>
+      <message name="IDS_IOS_BWG_SETTINGS_TITLE" desc="Title for BWG settings dialog [Length: 29em] [iOS only]">
+        Gemini in Chromium
       </message>
       <message name="IDS_IOS_CALENDARS_USAGE_DESCRIPTION" desc="Specifies the reason for accessing the user's calendar while the app is in use [Length: unlimited] [iOS only].">
         This will be used to create events in your Apple Calendar from Chromium and Google Lens.
@@ -734,7 +734,7 @@ Only someone with your passphrase can read your encrypted data. The passphrase i
         Tips on getting the most out of Chromium.
       </message>
       <message name="IDS_IOS_NOTIFICATIONS_TIPS_CPE_BODY" desc="Text for the body of a Tips notification that encourages the user to enable the CPE.">
-        To easily get your saved passwords in other apps, chose Chromium for Autofill.
+        To easily get your saved passwords in other apps, choose Chromium for Autofill.
       </message>
       <message name="IDS_IOS_NOTIFICATIONS_TIPS_CPE_TITLE" desc="Text for the title of a Tips notification that encourages the user to enable the CPE.">
         Chromium Tip: Get your passwords in any app
@@ -882,6 +882,15 @@ For more settings that use data to improve your Chromium experience, go to <ph n
       <message name="IDS_IOS_REMOVE_ACCOUNT_CONFIRMATION_MESSAGE" desc="Dialog message to emphasize the effects of removing an account.">
         This account and any unsaved data will be removed from Chromium.
       </message>
+      <message name="IDS_IOS_SAFARI_IMPORT_ENTRY_POINT_PRIMARY_ACTION" desc="Safari import entry point screen - Button text to start the workflow to import data from Safari to Chromium. [iOS only]" meaning="mport data from other browser to be used on Chromium">
+        Import to Chromium
+      </message>
+      <message name="IDS_IOS_SAFARI_IMPORT_ENTRY_POINT_SUBTITLE" desc="Safari import entry point screen - Subtitle. [iOS only]">
+        Import your data to use your passwords, history, bookmarks and credit cards on Chromium
+      </message>
+      <message name="IDS_IOS_SAFARI_IMPORT_IMPORT_SUBTITLE" desc="Safari import import screen - Subtitle. [iOS only]">
+        Use your Safari passwords, history, bookmarks, and credit cards in Chromium
+      </message>
       <message name="IDS_IOS_SAFETY_CHECK_COMPACT_DESCRIPTION_UPDATE_CHROME" desc="Tag label description displayed for the Safety Check module in the Magic Stack when the Update Chrome check finds an issue. [iOS only]">
         Your Chromium is out of date.
       </message>
@@ -951,15 +960,6 @@ For more settings that use data to improve your Chromium experience, go to <ph n
       </message>
       <message name="IDS_IOS_SCANNER_MULTIPLE_FOREGROUND_APPS_ALERT_DETAIL" desc="Body of a modal dialog shown when the user tries to open the QR or credit card scanner in a Split View mode, when the camera is unavailable. [Length: 140em] [iOS only]">
         Chromium can't use your camera in Split View mode
-      </message>
-      <message name="IDS_IOS_SEGMENTED_DEFAULT_BROWSER_SCREEN_SHOPPER_SUBTITLE" desc="Subtitle for Default Browser promo shown on Set Up List item tap to users identified as Shopping feature users.">
-        Set Chromium as your default browser to easily track prices and get price insights for things you want to buy.
-      </message>
-      <message name="IDS_IOS_SEGMENTED_DEFAULT_BROWSER_SCREEN_SHOPPER_TITLE" desc="Title for Default Browser promo shown on Set Up List item tap to users identified as Shopping feature users.">
-        Get the power of Chromium Shopping
-      </message>
-      <message name="IDS_IOS_SEGMENTED_DEFAULT_BROWSER_VIDEO_PROMO_SHOPPER_TITLE" desc="Title for the segmented generic default browser promo view, shown to users identified as Shoppers.">
-        Use Chromium by default to easily get price insights
       </message>
       <message name="IDS_IOS_SETTINGS_ADD_PASSWORD_FOOTER" desc="Disclaimer telling users what will happen to their passwords">
         Your password will be saved in your Account (<ph name="EMAIL">$1<ex>example@gmail.com</ex></ph>).

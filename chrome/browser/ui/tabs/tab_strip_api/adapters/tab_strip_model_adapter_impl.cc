@@ -4,7 +4,7 @@
 
 #include "chrome/browser/ui/tabs/tab_strip_api/adapters/tab_strip_model_adapter_impl.h"
 
-#include "chrome/browser/ui/tabs/tab_strip_api/tree_builder/mojo_tree_builder.h"
+#include "chrome/browser/ui/tabs/tab_strip_api/adapters/tree_builder/mojo_tree_builder.h"
 #include "components/tabs/public/tab_collection.h"
 #include "components/tabs/public/tab_interface.h"
 
@@ -18,7 +18,7 @@ void TabStripModelAdapterImpl::RemoveObserver(TabStripModelObserver* observer) {
   tab_strip_model_->RemoveObserver(observer);
 }
 
-std::vector<tabs::TabHandle> TabStripModelAdapterImpl::GetTabs() {
+std::vector<tabs::TabHandle> TabStripModelAdapterImpl::GetTabs() const {
   std::vector<tabs::TabHandle> tabs;
   for (auto* tab : *tab_strip_model_) {
     tabs.push_back(tab->GetHandle());
@@ -26,7 +26,7 @@ std::vector<tabs::TabHandle> TabStripModelAdapterImpl::GetTabs() {
   return tabs;
 }
 
-TabRendererData TabStripModelAdapterImpl::GetTabRendererData(int index) {
+TabRendererData TabStripModelAdapterImpl::GetTabRendererData(int index) const {
   return TabRendererData::FromTabInModel(tab_strip_model_, index);
 }
 
@@ -44,19 +44,17 @@ void TabStripModelAdapterImpl::ActivateTab(size_t index) {
   tab_strip_model_->ActivateTabAt(index);
 }
 
-tabs_api::mojom::TabCollectionContainerPtr
-TabStripModelAdapterImpl::GetTabStripCollection() {
-  auto it = tab_strip_model_->collection_begin(passkey_);
-  if (it == tab_strip_model_->collection_end(passkey_)) {
-    return nullptr;
-  }
+void TabStripModelAdapterImpl::MoveTab(tabs::TabHandle tab, Position position) {
+  auto maybe_index = GetIndexForHandle(tab);
+  CHECK(maybe_index.has_value());
+  auto index = maybe_index.value();
+  tab_strip_model_->MoveWebContentsAt(index, position.index(),
+                                      /*select_after_move=*/false);
+}
 
-  const auto& root = *it;
-  if (!std::holds_alternative<const tabs::TabCollection*>(root)) {
-    return nullptr;
-  }
-  auto tree_builder = tabs_api::MojoTreeBuilder(passkey_, this);
-  return tree_builder.BuildTree(std::get<const tabs::TabCollection*>(root));
+tabs_api::mojom::TabCollectionContainerPtr
+TabStripModelAdapterImpl::GetTabStripTopology() {
+  return MojoTreeBuilder(tab_strip_model_).Build();
 }
 
 }  // namespace tabs_api

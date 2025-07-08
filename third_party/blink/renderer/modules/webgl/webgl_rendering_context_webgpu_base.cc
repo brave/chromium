@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/modules/webgl/webgl_active_info.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_buffer.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_framebuffer.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_object.h"
@@ -31,8 +32,11 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/code_point_iterator.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "ui/gfx/extension_set.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gl/angle_platform_impl.h"
 #include "ui/gl/egl_util.h"
 #include "ui/gl/gl_utils.h"
 #include "ui/gl/gl_version_info.h"
@@ -195,6 +199,26 @@ class ScopedBindFramebuffer {
   raw_ref<const gl::DriverGL> gl_;
   GLint prev_draw_fbo_ = 0;
   GLint prev_read_fbo_ = 0;
+};
+
+class ScopedBindRenderbuffer {
+ public:
+  ScopedBindRenderbuffer(const gl::DriverGL& gl, GLuint renderbuffer)
+      : gl_(gl) {
+    gl_->fn.glGetIntegervFn(GL_RENDERBUFFER_BINDING, &prev_renderbuffer_);
+    gl_->fn.glBindRenderbufferEXTFn(GL_RENDERBUFFER, renderbuffer);
+  }
+
+  ~ScopedBindRenderbuffer() {
+    gl_->fn.glBindRenderbufferEXTFn(GL_RENDERBUFFER, prev_renderbuffer_);
+  }
+
+  ScopedBindRenderbuffer(const ScopedBindRenderbuffer&) = delete;
+  ScopedBindRenderbuffer& operator=(const ScopedBindRenderbuffer&) = delete;
+
+ private:
+  raw_ref<const gl::DriverGL> gl_;
+  GLint prev_renderbuffer_ = 0;
 };
 
 const char* GetErrorString(GLenum error) {
@@ -476,16 +500,15 @@ WebGLRenderingContextWebGPUBase::getHTMLOrOffscreenCanvas() const {
 }
 
 int WebGLRenderingContextWebGPUBase::drawingBufferWidth() const {
-  return isContextLost() ? 0 : swap_buffers_->Size().height();
+  return isContextLost() ? 0 : default_framebuffer_size_.width();
 }
 
 int WebGLRenderingContextWebGPUBase::drawingBufferHeight() const {
-  return isContextLost() ? 0 : swap_buffers_->Size().width();
+  return isContextLost() ? 0 : default_framebuffer_size_.height();
 }
 
 GLenum WebGLRenderingContextWebGPUBase::drawingBufferFormat() const {
-  NOTIMPLEMENTED();
-  return 0;
+  return GL_RGBA8;
 }
 
 V8PredefinedColorSpace
@@ -988,17 +1011,69 @@ void WebGLRenderingContextWebGPUBase::generateMipmap(GLenum target) {
 }
 
 WebGLActiveInfo* WebGLRenderingContextWebGPUBase::getActiveAttrib(
-    WebGLProgram*,
+    WebGLProgram* program,
     GLuint index) {
-  NOTIMPLEMENTED();
-  return nullptr;
+  if (!ValidateProgramOrShader("getActiveAttrib", program)) {
+    return nullptr;
+  }
+
+  GLint max_name_length = -1;
+  RETURN_IF_GL_ERROR(
+      driver_gl_.fn.glGetProgramivFn(
+          program->Object(), GL_ACTIVE_ATTRIBUTE_MAX_LENGTH, &max_name_length),
+      nullptr);
+
+  if (max_name_length <= 0) {
+    return nullptr;
+  }
+
+  GLsizei length = 0;
+  GLint size = -1;
+  GLenum type = 0;
+  base::span<LChar> name_buffer;
+  scoped_refptr<StringImpl> name_impl =
+      StringImpl::CreateUninitialized(max_name_length, name_buffer);
+  RETURN_IF_GL_ERROR(
+      driver_gl_.fn.glGetActiveAttribFn(
+          program->Object(), index, max_name_length, &length, &size, &type,
+          reinterpret_cast<GLchar*>(name_buffer.data())),
+      nullptr);
+  DCHECK_GE(size, 0);
+  return MakeGarbageCollected<WebGLActiveInfo>(name_impl->Substring(0, length),
+                                               type, size);
 }
 
 WebGLActiveInfo* WebGLRenderingContextWebGPUBase::getActiveUniform(
-    WebGLProgram*,
+    WebGLProgram* program,
     GLuint index) {
-  NOTIMPLEMENTED();
-  return nullptr;
+  if (!ValidateProgramOrShader("getActiveUniform", program)) {
+    return nullptr;
+  }
+
+  GLint max_name_length = -1;
+  RETURN_IF_GL_ERROR(
+      driver_gl_.fn.glGetProgramivFn(
+          program->Object(), GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_name_length),
+      nullptr);
+
+  if (max_name_length <= 0) {
+    return nullptr;
+  }
+
+  GLsizei length = 0;
+  GLint size = -1;
+  GLenum type = 0;
+  base::span<LChar> name_buffer;
+  scoped_refptr<StringImpl> name_impl =
+      StringImpl::CreateUninitialized(max_name_length, name_buffer);
+  RETURN_IF_GL_ERROR(
+      driver_gl_.fn.glGetActiveUniformFn(
+          program->Object(), index, max_name_length, &length, &size, &type,
+          reinterpret_cast<GLchar*>(name_buffer.data())),
+      nullptr);
+  DCHECK_GE(size, 0);
+  return MakeGarbageCollected<WebGLActiveInfo>(name_impl->Substring(0, length),
+                                               type, size);
 }
 
 std::optional<HeapVector<Member<WebGLShader>>>
@@ -1124,9 +1199,32 @@ ScriptValue WebGLRenderingContextWebGPUBase::getProgramParameter(
   }
 }
 
-String WebGLRenderingContextWebGPUBase::getProgramInfoLog(WebGLProgram*) {
-  NOTIMPLEMENTED();
-  return {};
+String WebGLRenderingContextWebGPUBase::getProgramInfoLog(
+    WebGLProgram* program) {
+  if (!ValidateObject("getProgramInfoLog", program)) {
+    return String();
+  }
+
+  GLint length = 0;
+  RETURN_IF_GL_ERROR(driver_gl_.fn.glGetProgramivFn(
+                         program->Object(), GL_INFO_LOG_LENGTH, &length),
+                     String());
+
+  if (length == 0) {
+    return String();
+  }
+
+  GLsizei write_length = 0;
+  StringBuffer<LChar> log_buffer(length);
+  RETURN_IF_GL_ERROR(driver_gl_.fn.glGetProgramInfoLogFn(
+                         program->Object(), length, &write_length,
+                         reinterpret_cast<GLchar*>(log_buffer.Span().data())),
+                     String());
+
+  // The returnedLength excludes the null terminator. If this check wasn't
+  // true, then we'd need to tell the returned String the real length.
+  DCHECK_EQ(write_length + 1, length);
+  return String::Adopt(log_buffer);
 }
 
 ScriptValue WebGLRenderingContextWebGPUBase::getRenderbufferParameter(
@@ -1177,9 +1275,31 @@ ScriptValue WebGLRenderingContextWebGPUBase::getShaderParameter(
   }
 }
 
-String WebGLRenderingContextWebGPUBase::getShaderInfoLog(WebGLShader*) {
-  NOTIMPLEMENTED();
-  return {};
+String WebGLRenderingContextWebGPUBase::getShaderInfoLog(WebGLShader* shader) {
+  if (!ValidateObject("getShaderInfoLog", shader)) {
+    return String();
+  }
+
+  GLint length = 0;
+  RETURN_IF_GL_ERROR(driver_gl_.fn.glGetShaderivFn(shader->Object(),
+                                                   GL_INFO_LOG_LENGTH, &length),
+                     String());
+
+  if (length == 0) {
+    return String();
+  }
+
+  GLsizei write_length = 0;
+  StringBuffer<LChar> log_buffer(length);
+  RETURN_IF_GL_ERROR(driver_gl_.fn.glGetShaderInfoLogFn(
+                         shader->Object(), length, &write_length,
+                         reinterpret_cast<GLchar*>(log_buffer.Span().data())),
+                     String());
+
+  // The returnedLength excludes the null terminator. If this check wasn't
+  // true, then we'd need to tell the returned String the real length.
+  DCHECK_EQ(write_length + 1, length);
+  return String::Adopt(log_buffer);
 }
 
 WebGLShaderPrecisionFormat*
@@ -3394,14 +3514,10 @@ gfx::ColorSpace WebGLRenderingContextWebGPUBase::GetColorSpace() const {
 
 int WebGLRenderingContextWebGPUBase::AllocatedBufferCountPerPixel() {
   // Front and back buffers.
-  int buffer_count = 2;
-
-  if (Host()->ResourceProvider()) {
-    buffer_count++;
-  }
-
   // TODO(413078308): Add support configuring MSAA and depth-stencil.
-  return buffer_count;
+  // Note: If/once this class creates a CanvasResourceProvider it should track
+  // the memory of the provider here as well.
+  return 2;
 }
 
 bool WebGLRenderingContextWebGPUBase::isContextLost() const {
@@ -3423,6 +3539,11 @@ bool WebGLRenderingContextWebGPUBase::IsComposited() const {
   return true;
 }
 
+bool WebGLRenderingContextWebGPUBase::IsAccelerated() const {
+  NOTIMPLEMENTED();
+  return false;
+}
+
 bool WebGLRenderingContextWebGPUBase::IsPaintable() const {
   return true;
 }
@@ -3431,9 +3552,10 @@ void WebGLRenderingContextWebGPUBase::PageVisibilityChanged() {
   NOTIMPLEMENTED();
 }
 
-CanvasResourceProvider*
-WebGLRenderingContextWebGPUBase::PaintRenderingResultsToCanvas(
-    SourceDrawingBuffer) {
+scoped_refptr<StaticBitmapImage>
+WebGLRenderingContextWebGPUBase::PaintRenderingResultsToSnapshot(
+    SourceDrawingBuffer source_buffer,
+    FlushReason reason) {
   NOTIMPLEMENTED();
   return nullptr;
 }
@@ -3550,9 +3672,12 @@ void WebGLRenderingContextWebGPUBase::EnsureDefaultFramebuffer() {
   if (current_swap_buffer_) {
     return;
   }
+
+  gfx::Size framebuffer_size = Host()->Size();
+
   wgpu::TextureDescriptor texDesc;
-  texDesc.size.width = std::max(1, Host()->Size().width());
-  texDesc.size.height = std::max(1, Host()->Size().height());
+  texDesc.size.width = std::max(1, framebuffer_size.width());
+  texDesc.size.height = std::max(1, framebuffer_size.height());
   texDesc.usage = swap_buffers_->TextureUsage();
   texDesc.format = swap_buffers_->TextureFormat();
   texDesc.dimension = wgpu::TextureDimension::e2D;
@@ -3590,6 +3715,36 @@ void WebGLRenderingContextWebGPUBase::EnsureDefaultFramebuffer() {
           default_framebuffer_color_texture_, 0);
     }
   }
+
+  // TODO(413078308): Don't create a depth stencil when the user did not request
+  // it. Also choose a format based on the request.
+  if (!default_framebuffer_depth_stencil_renderbuffer_ ||
+      framebuffer_size != default_framebuffer_size_) {
+    driver_gl_.fn.glDeleteRenderbuffersEXTFn(
+        1, &default_framebuffer_depth_stencil_renderbuffer_);
+    driver_gl_.fn.glGenRenderbuffersEXTFn(
+        1, &default_framebuffer_depth_stencil_renderbuffer_);
+
+    {
+      ScopedBindRenderbuffer bind_renderbuffer(
+          driver_gl_, default_framebuffer_depth_stencil_renderbuffer_);
+      driver_gl_.fn.glRenderbufferStorageEXTFn(
+          GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+          std::max(1, framebuffer_size.width()),
+          std::max(1, framebuffer_size.height()));
+    }
+
+    {
+      ScopedBindFramebuffer bind_default_fbo(
+          driver_gl_, supports_separate_framebuffer_targets_, GL_FRAMEBUFFER,
+          default_framebuffer_);
+      driver_gl_.fn.glFramebufferRenderbufferEXTFn(
+          GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+          default_framebuffer_depth_stencil_renderbuffer_);
+    }
+  }
+
+  default_framebuffer_size_ = framebuffer_size;
 }
 
 // Do the full initialization of EGL Display and EGL context from the WebGPU
@@ -3630,6 +3785,9 @@ void WebGLRenderingContextWebGPUBase::InitializeContext() {
   EGLint egl_version_major, egl_version_minor;
   driver_egl_.fn.eglInitializeFn(display_, &egl_version_major,
                                  &egl_version_minor);
+
+  // Setup the ANGLE platform for internal logging and trace events
+  angle::InitializePlatform(display_, get_proc_address);
 
   // Create a GL Context.
   // TODO(413078308): Request version 2 vs 3 depending on WebGL version.
@@ -3726,6 +3884,8 @@ void WebGLRenderingContextWebGPUBase::InitializeContext() {
 void WebGLRenderingContextWebGPUBase::Destroy() {
   if (context_) {
     DCHECK(display_ != EGL_NO_DISPLAY);
+    driver_egl_.fn.eglMakeCurrentFn(EGL_NO_DISPLAY, EGL_NO_CONTEXT,
+                                    EGL_NO_SURFACE, EGL_NO_SURFACE);
     driver_egl_.fn.eglDestroyContextFn(display_, context_);
     context_ = EGL_NO_CONTEXT;
   }
@@ -3733,6 +3893,7 @@ void WebGLRenderingContextWebGPUBase::Destroy() {
   gles2_for_objects_ = nullptr;
 
   if (display_) {
+    angle::ResetPlatform(display_, driver_egl_.fn.eglGetProcAddressFn);
     driver_egl_.fn.eglTerminateFn(display_);
     display_ = EGL_NO_DISPLAY;
   }

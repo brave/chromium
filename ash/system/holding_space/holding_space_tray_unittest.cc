@@ -248,7 +248,8 @@ class ViewVisibilityChangedWaiter : public views::ViewObserver {
  private:
   // views::ViewObserver:
   void OnViewVisibilityChanged(views::View* view,
-                               views::View* starting_view) override {
+                               views::View* starting_view,
+                               bool visible) override {
     wait_loop_->Quit();
   }
 
@@ -2140,7 +2141,7 @@ TEST_F(HoldingSpaceTrayTest, HasExpectedBubbleTreatment) {
 
   // Background.
   auto* background = bubble->GetBackground();
-  ASSERT_TRUE(background);
+  ASSERT_FALSE(background);
   EXPECT_EQ(bubble->layer()->type(), ui::LAYER_NOT_DRAWN);
   EXPECT_EQ(bubble->layer()->background_blur(), 0.f);
 

@@ -453,10 +453,14 @@ void ReadAnythingUntrustedPageHandler::DidUpdateAudioMutingState(bool muted) {
 
 bool ReadAnythingUntrustedPageHandler::AreInnerContentsPdfContent(
     std::vector<content::WebContents*> inner_contents) {
+#if BUILDFLAG(ENABLE_PDF)
   return inner_contents.size() == 1 &&
          IsPdfExtensionOrigin(inner_contents[0]
                                   ->GetPrimaryMainFrame()
                                   ->GetLastCommittedOrigin());
+#else
+  return false;
+#endif
 }
 
 void ReadAnythingUntrustedPageHandler::WebContentsDestroyed() {
@@ -518,9 +522,15 @@ void ReadAnythingUntrustedPageHandler::GetDependencyParserModel(
 
 #if !BUILDFLAG(IS_CHROMEOS)
 void ReadAnythingUntrustedPageHandler::OnUpdateLanguageStatus(
+    content::BrowserContext* browser_context,
     const std::string& language,
     content::LanguageInstallStatus install_status,
     const std::string& error) {
+  // Language status is profile-dependent so only send the update if the status
+  // is for this profile.
+  if (browser_context->UniqueId() != profile_->UniqueId()) {
+    return;
+  }
   auto voicePackInfo = read_anything::mojom::VoicePackInfo::New();
   voicePackInfo->language = language;
   voicePackInfo->pack_state = VoicePackInstallationState::NewInstallationState(
@@ -532,9 +542,7 @@ void ReadAnythingUntrustedPageHandler::OnExtensionReady(
     content::BrowserContext* browser_context,
     const extensions::Extension* extension) {
   const auto& extensionId =
-      features::IsWasmTtsComponentUpdaterEnabled()
-          ? extension_misc::kComponentUpdaterTTSEngineExtensionId
-          : extension_misc::kTTSEngineExtensionId;
+      extension_misc::kComponentUpdaterTTSEngineExtensionId;
   if (extension->id() != extensionId || extension_installed_) {
     return;
   }
@@ -676,8 +684,9 @@ void ReadAnythingUntrustedPageHandler::OnReadAloudAudioStateChange(
     bool playing) {
   // Show the tab audio icon when read aloud is playing, and hide it when it
   // stops playing.
-  content::WebContents* contents =
-      is_pdf_ ? pdf_observer_->web_contents() : main_observer_->web_contents();
+  content::WebContents* contents = !!pdf_observer_
+                                       ? pdf_observer_->web_contents()
+                                       : main_observer_->web_contents();
   if (contents) {
     if (playing) {
       audible_closure_ = contents->MarkAudible();
@@ -875,6 +884,7 @@ void ReadAnythingUntrustedPageHandler::SetUpPdfObserver() {
 void ReadAnythingUntrustedPageHandler::OnActiveAXTreeIDChanged() {
   is_pdf_ = false;
   if (!active_) {
+    VLOG(1) << "Sending unknown tree because not active";
     page_->OnActiveAXTreeIDChanged(ui::AXTreeIDUnknown(), ukm::kInvalidSourceId,
                                    /*is_pdf=*/false);
     return;
@@ -884,6 +894,8 @@ void ReadAnythingUntrustedPageHandler::OnActiveAXTreeIDChanged() {
                                        ? pdf_observer_->web_contents()
                                        : main_observer_->web_contents();
   if (!contents) {
+    VLOG(1) << "Sending unknown tree because no contents. Used pdf: "
+            << !!pdf_observer_;
     page_->OnActiveAXTreeIDChanged(ui::AXTreeIDUnknown(), ukm::kInvalidSourceId,
                                    /*is_pdf=*/false);
     return;
@@ -923,6 +935,7 @@ void ReadAnythingUntrustedPageHandler::OnActiveAXTreeIDChanged() {
     contents->ForEachRenderFrameHost([this](content::RenderFrameHost* rfh) {
       if (rfh->GetProcess()->IsPdf()) {
         is_pdf_ = true;
+        VLOG(1) << "Sending pdf tree with id " << rfh->GetAXTreeID();
         page_->OnActiveAXTreeIDChanged(rfh->GetAXTreeID(),
                                        rfh->GetPageUkmSourceId(),
                                        /*is_pdf=*/true);
@@ -933,6 +946,7 @@ void ReadAnythingUntrustedPageHandler::OnActiveAXTreeIDChanged() {
 #endif  // BUILDFLAG(ENABLE_PDF)
 
   content::RenderFrameHost* rfh = contents->GetPrimaryMainFrame();
+  VLOG(1) << "Sending non-pdf tree with id " << rfh->GetAXTreeID();
   page_->OnActiveAXTreeIDChanged(rfh->GetAXTreeID(), rfh->GetPageUkmSourceId(),
                                  /*is_pdf=*/false);
 }

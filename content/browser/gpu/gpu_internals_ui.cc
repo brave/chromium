@@ -19,6 +19,7 @@
 #include "base/i18n/time_formatting.h"
 #include "base/memory/raw_ref.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -309,7 +310,7 @@ base::Value::Dict GetGpuInfo() {
 
 #if BUILDFLAG(ENABLE_VULKAN)
   if (gpu_info.vulkan_info) {
-    auto blob = gpu_info.vulkan_info->Serialize();
+    auto blob = gpu_info.SerializeVulkanInfo();
     info.Set("vulkanInfo", base::Base64Encode(blob));
   }
 #endif

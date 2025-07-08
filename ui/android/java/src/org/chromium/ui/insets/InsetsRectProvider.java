@@ -20,6 +20,7 @@ import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.insets.InsetObserver.WindowInsetsConsumer;
+import org.chromium.ui.insets.WindowInsetsUtils.UnoccludedRegion;
 
 import java.util.List;
 
@@ -63,7 +64,8 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
     private @Nullable WindowInsetsCompat mCachedInsets;
     private List<Rect> mBoundingRects;
     private Rect mWidestUnoccludedRect = new Rect();
-    private boolean mUnoccludedRectUpdateConsumed;
+    private @Nullable Boolean mUnoccludedRectUpdateConsumed;
+    private boolean mIsUnoccludedRegionComplex;
 
     /**
      * Create a rect provider for a specific inset type. This class should only be used for Android
@@ -83,18 +85,22 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
         mInsetType = insetType;
         mBoundingRects = List.of();
         mInsetObserver = insetObserver;
+        mCachedInsets = initialInsets;
 
         assert VERSION.SDK_INT >= VERSION_CODES.R;
         mInsetObserver.addInsetsConsumer(this, insetConsumerSource);
-        if (initialInsets != null) {
-            maybeUpdateWidestUnoccludedRect(initialInsets);
-        }
     }
 
-    /** Sets the consumer for insets of type |mInsetType|. */
+    /**
+     * Sets the consumer for insets of type |mInsetType|. Expected to be called soon after
+     * instantiation.
+     */
     @Initializer
     public void setConsumer(Consumer consumer) {
         mInsetsRectConsumer = consumer;
+        if (mCachedInsets != null) {
+            maybeUpdateWidestUnoccludedRect(mCachedInsets);
+        }
     }
 
     /** Return the list of bounding rect from the window insets. */
@@ -109,6 +115,14 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
      */
     public Rect getWidestUnoccludedRect() {
         return mWidestUnoccludedRect;
+    }
+
+    /**
+     * @return {@code false} if the unoccluded region in the window insets region is a single rect
+     *     or is empty, {@code true} otherwise.
+     */
+    public boolean isUnoccludedRegionComplex() {
+        return mIsUnoccludedRegionComplex;
     }
 
     /**
@@ -185,8 +199,11 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
         if (windowSize.getWidth() == 0 && windowSize.getHeight() == 0) return false;
 
         Rect windowRect = new Rect(0, 0, windowSize.getWidth(), windowSize.getHeight());
-        if (windowInsetsCompat.equals(mCachedInsets) && windowRect.equals(mWindowRect)) {
-            // Avoid repeated processing if the insets have already been processed.
+        if (windowInsetsCompat.equals(mCachedInsets)
+                && windowRect.equals(mWindowRect)
+                && mUnoccludedRectUpdateConsumed != null) {
+            // Avoid repeated processing if the insets have already been processed and / or
+            // potentially consumed.
             return mUnoccludedRectUpdateConsumed;
         }
 
@@ -194,9 +211,6 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
         mWindowRect.set(windowRect);
 
         updateWidestUnoccludedRect(windowInsetsCompat);
-
-        // Consumer can be null at the time of instantiation of this class.
-        if (mInsetsRectConsumer == null) return false;
 
         // Notify the consumer about the update.
         mUnoccludedRectUpdateConsumed =
@@ -215,11 +229,14 @@ public class InsetsRectProvider implements WindowInsetsConsumer {
         Rect insetRectInWindow = WindowInsetsUtils.toRectInWindow(mWindowRect, insets);
         if (!insetRectInWindow.isEmpty()) {
             mBoundingRects = getBoundingRectsFromInsets(windowInsetsCompat);
-            mWidestUnoccludedRect =
-                    WindowInsetsUtils.getWidestUnoccludedRect(insetRectInWindow, mBoundingRects);
+            UnoccludedRegion unoccludedRegion =
+                    WindowInsetsUtils.getUnoccludedRegion(insetRectInWindow, mBoundingRects);
+            mWidestUnoccludedRect = unoccludedRegion.getWidestUnoccludedRect();
+            mIsUnoccludedRegionComplex = unoccludedRegion.isRegionComplex();
         } else {
             mBoundingRects = List.of();
             mWidestUnoccludedRect = new Rect();
+            mIsUnoccludedRegionComplex = false;
         }
     }
 }

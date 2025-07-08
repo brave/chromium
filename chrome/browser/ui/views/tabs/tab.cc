@@ -28,7 +28,6 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tabs/alert/tab_alert.h"
@@ -228,6 +227,15 @@ Tab::Tab(TabSlotController* controller)
   // inside the tab shape, rather than to its extents.
   SetBorder(views::CreateEmptyBorder(tab_style_views()->GetContentsInsets()));
 
+#if BUILDFLAG(ENABLE_GLIC)
+  // For performance testing, pull a GlicBorderView into the tab UI to mimic use
+  // of a shader-based glow effect.
+  if (base::FeatureList::IsEnabled(features::kGlicTabGlow)) {
+    glic_border_view_ = AddChildView(
+        glic::GlicBorderView::Factory::Create(controller->GetBrowser()));
+  }
+#endif
+
   title_->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
   title_->SetElideBehavior(gfx::FADE_TAIL);
   title_->SetHandlesTooltips(false);
@@ -331,6 +339,13 @@ void Tab::Layout(PassKey) {
   UpdateIconVisibility();
 
   const int start = contents_rect.x();
+
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic_border_view_) {
+    glic_border_view_->SetBoundsRect(contents_rect);
+    glic_border_view_->SetVisible(true);
+  }
+#endif
 
   // The bounds for the favicon will include extra width for the attention
   // indicator, but visually it will be smaller at kFaviconSize wide.
@@ -844,54 +859,6 @@ std::optional<SkColor> Tab::GetGroupColor() const {
       controller_->GetGroupColorId(group().value()));
 }
 
-ui::ColorId Tab::GetAlertIndicatorColor(tabs::TabAlert state) const {
-  const ui::ColorProvider* color_provider = GetColorProvider();
-  if (!color_provider) {
-    return gfx::kPlaceholderColor;
-  }
-
-  int group;
-  switch (state) {
-    case tabs::TabAlert::MEDIA_RECORDING:
-    case tabs::TabAlert::AUDIO_RECORDING:
-    case tabs::TabAlert::VIDEO_RECORDING:
-    case tabs::TabAlert::DESKTOP_CAPTURING:
-      group = 0;
-      break;
-    case tabs::TabAlert::TAB_CAPTURING:
-    case tabs::TabAlert::PIP_PLAYING:
-    case tabs::TabAlert::GLIC_ACCESSING:
-      group = 1;
-      break;
-    case tabs::TabAlert::AUDIO_PLAYING:
-    case tabs::TabAlert::AUDIO_MUTING:
-    case tabs::TabAlert::BLUETOOTH_CONNECTED:
-    case tabs::TabAlert::BLUETOOTH_SCAN_ACTIVE:
-    case tabs::TabAlert::USB_CONNECTED:
-    case tabs::TabAlert::HID_CONNECTED:
-    case tabs::TabAlert::SERIAL_CONNECTED:
-    case tabs::TabAlert::VR_PRESENTING_IN_HEADSET:
-      group = 2;
-      break;
-  }
-
-  static constexpr std::array<std::array<std::array<ui::ColorId, 2>, 2>, 3>
-      color_ids{{{{{kColorTabAlertMediaRecordingInactiveFrameInactive,
-                    kColorTabAlertMediaRecordingInactiveFrameActive},
-                   {kColorTabAlertMediaRecordingActiveFrameInactive,
-                    kColorTabAlertMediaRecordingActiveFrameActive}}},
-                 {{{kColorTabAlertPipPlayingInactiveFrameInactive,
-                    kColorTabAlertPipPlayingInactiveFrameActive},
-                   {kColorTabAlertPipPlayingActiveFrameInactive,
-                    kColorTabAlertPipPlayingActiveFrameActive}}},
-                 {{{kColorTabAlertAudioPlayingInactiveFrameInactive,
-                    kColorTabAlertAudioPlayingInactiveFrameActive},
-                   {kColorTabAlertAudioPlayingActiveFrameInactive,
-                    kColorTabAlertAudioPlayingActiveFrameActive}}}}};
-  return color_ids[group][tab_style_views()->GetApparentActiveState() ==
-                          TabActive::kActive]
-                  [GetWidget()->ShouldPaintAsActive()];
-}
 
 bool Tab::IsActive() const {
   if (split()) {
@@ -1266,6 +1233,14 @@ void Tab::CloseButtonPressed(const ui::Event& event) {
     base::RecordAction(UserMetricsAction("CloseTab_AudioIndicator"));
   } else {
     base::RecordAction(UserMetricsAction("CloseTab_RecordingIndicator"));
+  }
+
+  const std::vector<Tab*>& tabs_in_split = controller()->GetTabsInSplit(this);
+  if (tabs_in_split.size() > 0) {
+    CHECK(tabs_in_split.size() == 2);
+    base::RecordAction(UserMetricsAction(this == tabs_in_split[0]
+                                             ? "CloseTab_StartTabInSplit"
+                                             : "CloseTab_EndTabInSplit"));
   }
 
   const bool from_mouse = event.type() == ui::EventType::kMouseReleased &&

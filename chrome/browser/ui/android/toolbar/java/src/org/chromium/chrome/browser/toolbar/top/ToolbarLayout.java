@@ -9,8 +9,6 @@ import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
-import android.os.Build.VERSION;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -34,7 +32,6 @@ import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.omnibox.LocationBar;
 import org.chromium.chrome.browser.omnibox.LocationBarCoordinator;
@@ -133,6 +130,8 @@ public abstract class ToolbarLayout extends FrameLayout
      * @param historyDelegate Delegate used to display navigation history.
      * @param userEducationHelper Helper for user education flows.
      * @param trackerSupplier Provides a {@link Tracker} when available.
+     * @param homeButtonDisplay The {@link HomeButtonDisplay} to manage the display and behavior of
+     *     home button(s). Should be null on custom tabs.
      */
     @CallSuper
     @Initializer
@@ -146,7 +145,8 @@ public abstract class ToolbarLayout extends FrameLayout
             ObservableSupplier<Tracker> trackerSupplier,
             ToolbarProgressBar progressBar,
             @Nullable ReloadButtonCoordinator reloadButtonCoordinator,
-            @Nullable BackButtonCoordinator backButtonCoordinator) {
+            @Nullable BackButtonCoordinator backButtonCoordinator,
+            @Nullable HomeButtonDisplay homeButtonDisplay) {
         mToolbarDataProvider = toolbarDataProvider;
         mToolbarTabController = tabController;
         mMenuButtonCoordinator = menuButtonCoordinator;
@@ -278,7 +278,7 @@ public abstract class ToolbarLayout extends FrameLayout
      * the method in UiUtils.java instead once JaCoCo issue is resolved.
      */
     protected void setTooltipText(View button, @Nullable String text) {
-        if (button != null && VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (button != null) {
             TooltipCompat.setTooltipText(button, text);
         }
     }
@@ -544,9 +544,10 @@ public abstract class ToolbarLayout extends FrameLayout
      * @param drawable The icon for the button.
      * @param description The content description for the button.
      * @param listener The {@link OnClickListener} to use for clicks to the button.
+     * @param {@link ButtonType} of the button.
      */
     protected void addCustomActionButton(
-            Drawable drawable, String description, OnClickListener listener) {
+            Drawable drawable, String description, OnClickListener listener, int type) {
         // This method should only be called for subclasses that override it.
         assert false;
     }
@@ -721,27 +722,22 @@ public abstract class ToolbarLayout extends FrameLayout
     protected boolean forward(int metaState, String reportingTagPrefix) {
         maybeUnfocusUrlBar();
         if (mToolbarTabController == null) return false;
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_META_CLICK_HISTORY_NAVIGATION)) {
-            boolean hasControl = (metaState & KeyEvent.META_CTRL_ON) != 0;
-            boolean hasShift = (metaState & KeyEvent.META_SHIFT_ON) != 0;
-            if (hasControl && hasShift) {
-                // Holding ALT is allowed as well (reference desktop behavior).
+        boolean hasControl = (metaState & KeyEvent.META_CTRL_ON) != 0;
+        boolean hasShift = (metaState & KeyEvent.META_SHIFT_ON) != 0;
+        if (hasControl && hasShift) {
+            // Holding ALT is allowed as well (reference desktop behavior).
 
-                // Note on recording user actions: "forward" is recorded regardless of whether it
-                // was successful. See
-                // https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarTablet.java;l=196;drc=14aab80e079b7db3e85a8302da6d660bafeddfbc
-                RecordUserAction.record(reportingTagPrefix + "InNewForegroundTab");
-                return mToolbarTabController.forwardInNewTab(/* foregroundNewTab= */ true);
-            } else if (hasControl) {
-                RecordUserAction.record(reportingTagPrefix + "InNewBackgroundTab");
-                return mToolbarTabController.forwardInNewTab(/* foregroundNewTab= */ false);
-            } else if (hasShift) {
-                RecordUserAction.record(reportingTagPrefix + "InNewForegroundWindow");
-                return mToolbarTabController.forwardInNewWindow();
-            } else {
-                RecordUserAction.record(reportingTagPrefix);
-                return mToolbarTabController.forward();
-            }
+            // Note on recording user actions: "forward" is recorded regardless of whether it
+            // was successful. See
+            // https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/top/ToolbarTablet.java;l=196;drc=14aab80e079b7db3e85a8302da6d660bafeddfbc
+            RecordUserAction.record(reportingTagPrefix + "InNewForegroundTab");
+            return mToolbarTabController.forwardInNewTab(/* foregroundNewTab= */ true);
+        } else if (hasControl) {
+            RecordUserAction.record(reportingTagPrefix + "InNewBackgroundTab");
+            return mToolbarTabController.forwardInNewTab(/* foregroundNewTab= */ false);
+        } else if (hasShift) {
+            RecordUserAction.record(reportingTagPrefix + "InNewForegroundWindow");
+            return mToolbarTabController.forwardInNewWindow();
         } else {
             RecordUserAction.record(reportingTagPrefix);
             return mToolbarTabController.forward();
@@ -764,7 +760,7 @@ public abstract class ToolbarLayout extends FrameLayout
     protected void updateOptionalButton(ButtonData buttonData) {}
 
     /** Hide the optional toolbar button. */
-    void hideOptionalButton() {}
+    protected void hideOptionalButton() {}
 
     /**
      * @return Optional button view.

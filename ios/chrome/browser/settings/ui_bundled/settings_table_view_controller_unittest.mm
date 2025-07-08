@@ -9,9 +9,11 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
+#import "components/autofill/core/common/autofill_prefs.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/password_manager/core/browser/password_manager_test_utils.h"
 #import "components/password_manager/core/browser/password_store/test_password_store.h"
+#import "components/password_manager/core/common/password_manager_pref_names.h"
 #import "components/plus_addresses/features.h"
 #import "components/policy/core/common/policy_loader_ios_constants.h"
 #import "components/policy/policy_constants.h"
@@ -26,6 +28,7 @@
 #import "ios/chrome/browser/photos/model/photos_service_factory.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_navigation_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_table_view_controller_constants.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -33,6 +36,7 @@
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_manager_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/browser_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
@@ -48,6 +52,7 @@
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
+#import "ios/chrome/browser/voice/model/voice_search_prefs.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
@@ -147,6 +152,8 @@ class SettingsTableViewControllerTest
                              forProtocol:@protocol(ApplicationCommands)];
     [dispatcher startDispatchingToTarget:mock_settings_handler
                              forProtocol:@protocol(SettingsCommands)];
+    [dispatcher startDispatchingToTarget:mock_settings_handler
+                             forProtocol:@protocol(BrowserCommands)];
     [dispatcher startDispatchingToTarget:mock_snackbar_handler
                              forProtocol:@protocol(SnackbarCommands)];
     [dispatcher startDispatchingToTarget:mock_popup_menu_handler_
@@ -156,6 +163,11 @@ class SettingsTableViewControllerTest
         [[SettingsTableViewController alloc]
                      initWithBrowser:browser_.get()
             hasDefaultBrowserBlueDot:has_default_browser_blue_dot_];
+
+    navigation_controller_ = [[SettingsNavigationController alloc]
+        initWithRootViewController:controller
+                           browser:browser_.get()
+                          delegate:nil];
     controller.applicationHandler =
         HandlerForProtocol(dispatcher, ApplicationCommands);
     controller.settingsHandler =
@@ -203,6 +215,7 @@ class SettingsTableViewControllerTest
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   IOSChromeScopedTestingVariationsService scoped_testing_variations_service_;
   TestProfileManagerIOS profile_manager_;
+  SettingsNavigationController* navigation_controller_;
 
   FakeSystemIdentity* fake_identity_ = nullptr;
   raw_ptr<AuthenticationService> auth_service_ = nullptr;
@@ -387,10 +400,6 @@ TEST_F(SettingsTableViewControllerTest,
   CreateController();
   CheckController();
 
-  // Create a navigation controller to avoid hitting the CHECK.
-  [[maybe_unused]] UINavigationController* nav_controller =
-      [[UINavigationController alloc] initWithRootViewController:controller()];
-
   OCMExpect([mock_popup_menu_handler_ updateToolsMenuBlueDotVisibility]);
 
   // Tap on the default browser settings.
@@ -410,10 +419,6 @@ TEST_F(SettingsTableViewControllerTest,
 
   OCMReject([mock_popup_menu_handler_ updateToolsMenuBlueDotVisibility]);
 
-  // Create a navigation controller to avoid hitting the CHECK.
-  [[maybe_unused]] UINavigationController* nav_controller =
-      [[UINavigationController alloc] initWithRootViewController:controller()];
-
   // Tap on the default browser settings.
   [controller() tableView:controller().tableView
       didSelectRowAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:1]];
@@ -423,7 +428,7 @@ TEST_F(SettingsTableViewControllerTest,
 
 // Tests that updating search engines does not cause a crash.
 // See crbug.com/408017580 for more details.
-TEST_F(SettingsTableViewControllerTest, SearchEngineChnagedDoesntCrash) {
+TEST_F(SettingsTableViewControllerTest, SearchEngineChangedDoesntCrash) {
   // Make sure the controller is initialized without creating the view/model.
   CreateControllerWithoutView();
 
@@ -434,4 +439,18 @@ TEST_F(SettingsTableViewControllerTest, SearchEngineChnagedDoesntCrash) {
   // table view controller). This should not crash, even though the view
   // controller has not loaded its model yet.
   template_url_service->Load();
+}
+
+// Tests that updating observed preferences before the model is loaded
+// does not cause a crash. See crbug.com/419661932 for more details.
+TEST_F(SettingsTableViewControllerTest, ObservedPreferencesChangedDoesntCrash) {
+  CreateControllerWithoutView();
+  profile_->GetPrefs()->SetString(prefs::kVoiceSearchLocale, "en-US");
+  profile_->GetPrefs()->SetBoolean(
+      password_manager::prefs::kCredentialsEnableService, NO);
+  profile_->GetPrefs()->SetBoolean(autofill::prefs::kAutofillProfileEnabled,
+                                   NO);
+  profile_->GetPrefs()->SetBoolean(autofill::prefs::kAutofillCreditCardEnabled,
+                                   NO);
+  CheckController();
 }

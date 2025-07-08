@@ -13,6 +13,10 @@
 #include "base/task/single_thread_task_executor.h"
 #include "content/public/browser/browser_main_parts.h"
 
+namespace content {
+class SyntheticTrialSyncer;
+}
+
 namespace crash_reporter {
 class ChildExitObserver;
 }
@@ -45,6 +49,7 @@ class AwBrowserMainParts : public content::BrowserMainParts {
   void PostCreateThreads() override;
 
   static bool isWebViewStartupTasksExperimentEnabled();
+  static bool isWebViewStartupTasksExperimentEnabledP2();
 
  private:
   void RegisterSyntheticTrials();

@@ -622,10 +622,13 @@ export class SpeechController {
     // Therefore, when a user toggles the play/pause button, we call
     // synth.pause() and synth.resume() for speech to resume from where it left
     // off.
+    // If we're stopping because of an interrupt, then speech was already
+    // canceled, so we shouldn't cancel again, in case we are queuing up speech
+    // in another tab.
     if (this.isPausedFromButton()) {
       this.logSpeechPlaySession_();
       this.speech_.pause();
-    } else {
+    } else if (pauseSource !== PauseActionSource.ENGINE_INTERRUPT) {
       // Canceling clears all the Utterances that are queued up via synth.play()
       this.speech_.cancel();
     }
@@ -758,6 +761,8 @@ export class SpeechController {
 
   private onSpeechFinished_() {
     this.clearReadAloudState();
+    chrome.readingMode.resetGranularityIndex();
+
     this.model_.setPauseSource(PauseActionSource.SPEECH_FINISHED);
     this.logger_.logSpeechStopSource(
         chrome.readingMode.contentFinishedStopSource);
@@ -797,7 +802,7 @@ export class SpeechController {
     this.model_.setSavedWordBoundaryState({...this.wordBoundaries_.state});
   }
 
-  setPreviousReadingPositionIfExists() {
+  setPreviousReadingPositionIfExists(): boolean {
     const savedSpeechPlayingState = this.model_.getSavedSpeechPlayingState();
     const savedWordBoundaryState = this.model_.getSavedWordBoundaryState();
     const lastPosition = this.model_.getLastPosition();
@@ -805,7 +810,7 @@ export class SpeechController {
     this.model_.setSavedWordBoundaryState(null);
     if (!savedWordBoundaryState || !savedSpeechPlayingState ||
         !savedSpeechPlayingState.hasSpeechBeenTriggered || !lastPosition) {
-      return;
+      return false;
     }
 
     if (this.nodeStore_.getDomNode(lastPosition.nodeId)) {
@@ -816,8 +821,10 @@ export class SpeechController {
       // we're paused, redraw the highlight after moving the traversal state to
       // the right spot above.
       this.highlightCurrentGranularity_(chrome.readingMode.getCurrentText());
+      return true;
     } else {
       this.model_.setLastPosition(null);
+      return false;
     }
   }
 

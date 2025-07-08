@@ -161,6 +161,7 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
 @synthesize backButton = _backButton;
 @synthesize forwardButton = _forwardButton;
 @synthesize tabGridButton = _tabGridButton;
+@synthesize diamondPrototypeButton = _diamondPrototypeButton;
 @synthesize stopButton = _stopButton;
 @synthesize reloadButton = _reloadButton;
 @synthesize locationBarContainer = _locationBarContainer;
@@ -340,7 +341,6 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   _tabGroupIndicatorView.translatesAutoresizingMaskIntoConstraints = NO;
   _tabGroupIndicatorView.backgroundColor =
       self.buttonFactory.toolbarConfiguration.backgroundColor;
-  _tabGroupIndicatorView.delegate = self;
   [self addSubview:_tabGroupIndicatorView];
 
   _tabGroupIndicatorHeightConstraint = [_tabGroupIndicatorView.heightAnchor

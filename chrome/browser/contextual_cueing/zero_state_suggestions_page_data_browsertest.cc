@@ -49,8 +49,7 @@ class ZeroStateSuggestionsPageDataBrowserTest
     }
     scoped_feature_list_.InitWithFeaturesAndParameters(
         {{contextual_cueing::kContextualCueing, {}},
-         {contextual_cueing::kGlicZeroStateSuggestions, zss_params},
-         {optimization_guide::features::kRemoteOptimizationGuideFetching, {}}},
+         {contextual_cueing::kGlicZeroStateSuggestions, zss_params}},
         /*disabled_features=*/{});
   }
 
@@ -172,7 +171,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest, BasicFlow) {
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(3u, future.Get().value().size());
   EXPECT_EQ("suggestion 1", future.Get().value()[0]);
@@ -200,9 +200,11 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
   // Set up two concurrent calls (simulates mouse down and then on load).
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   base::test::TestFuture<std::optional<std::vector<std::string>>> future2;
-  page_data->FetchSuggestions(/*is_fre=*/false, future2.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future2.GetCallback());
 
   // Wait until page is extracted.
   optimization_guide::RetryForHistogramUntilCountReached(
@@ -265,7 +267,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(3u, future.Get().value().size());
   EXPECT_EQ("hints 1", future.Get().value()[0]);
@@ -285,7 +288,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(std::nullopt, future.Get());
 }
@@ -304,7 +308,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(3u, future.Get().value().size());
   EXPECT_EQ("suggestion 1", future.Get().value()[0]);
@@ -328,7 +333,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest, CacheBehavior) {
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_EQ(3u, future.Get().value().size());
     EXPECT_EQ("suggestion 1", future.Get().value()[0]);
@@ -345,7 +351,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest, CacheBehavior) {
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_EQ(3u, future.Get().value().size());
     EXPECT_EQ("suggestion 1", future.Get().value()[0]);
@@ -387,7 +394,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_FALSE(future.Get().has_value());
     histogram_tester.ExpectTotalCount(
@@ -402,7 +410,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_FALSE(future.Get().has_value());
     histogram_tester.ExpectTotalCount(
@@ -440,7 +449,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_FALSE(future.Get().has_value());
     histogram_tester.ExpectTotalCount(
@@ -456,7 +466,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
     auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
         web_contents->GetPrimaryPage());
-    page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+    page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                                future.GetCallback());
     ASSERT_TRUE(future.Wait());
     EXPECT_EQ(3u, future.Get().value().size());
     EXPECT_EQ("suggestion 1", future.Get().value()[0]);
@@ -481,7 +492,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest, NonMSBBFlow) {
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(3u, future.Get().value().size());
   EXPECT_EQ("on demand 1", future.Get().value()[0]);
@@ -503,7 +515,8 @@ IN_PROC_BROWSER_TEST_P(ZeroStateSuggestionsPageDataBrowserTest,
 
   auto* page_data = ZeroStateSuggestionsPageData::GetOrCreateForPage(
       web_contents->GetPrimaryPage());
-  page_data->FetchSuggestions(/*is_fre=*/false, future.GetCallback());
+  page_data->FetchSuggestions(/*is_fre=*/false, /*supported_tools=*/{},
+                              future.GetCallback());
   ASSERT_TRUE(future.Wait());
   EXPECT_EQ(std::nullopt, future.Get());
 }

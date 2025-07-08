@@ -226,8 +226,8 @@ D3D12VideoEncodeDelegate::Encode(
     input_frame_subresource = 0;
   }
 
-  auto impl_result =
-      EncodeImpl(input_frame.Get(), input_frame_subresource, options);
+  auto impl_result = EncodeImpl(input_frame.Get(), input_frame_subresource,
+                                options, input_frame_color_space);
   if (!impl_result.has_value()) {
     return std::move(impl_result).error();
   }
@@ -506,6 +506,19 @@ void D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::ReplaceWithCurrentFrame(
   CHECK_GT(resources_.size(), 0u);
   std::swap(raw_resources_[position], raw_resources_.back());
   std::swap(subresources_[position], subresources_.back());
+}
+
+template <size_t maxDpbSize>
+void D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::EraseFrame(
+    size_t position) {
+  CHECK_LT(position, size());
+  base::span raw_resources_span =
+      base::span(raw_resources_).first(size()).subspan(position);
+  std::ranges::rotate(raw_resources_span,
+                      std::next(raw_resources_span.begin()));
+  base::span subresources_span =
+      base::span(subresources_).first(size()).subspan(position);
+  std::ranges::rotate(subresources_span, std::next(subresources_span.begin()));
 }
 
 template <size_t maxDpbSize>

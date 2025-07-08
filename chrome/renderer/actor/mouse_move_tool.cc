@@ -38,17 +38,25 @@ blink::WebMouseEvent CreateMouseEvent(blink::WebInputEvent::Type event_type,
 
 namespace actor {
 
-MouseMoveTool::MouseMoveTool(mojom::MouseMoveActionPtr action,
-                             content::RenderFrame& frame)
-    : frame_(frame), action_(std::move(action)) {}
+MouseMoveTool::MouseMoveTool(content::RenderFrame& frame,
+                             Journal::TaskId task_id,
+                             Journal& journal,
+                             mojom::MouseMoveActionPtr action,
+                             mojom::ToolTargetPtr target,
+                             mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 MouseMoveTool::~MouseMoveTool() = default;
 
-void MouseMoveTool::Execute(ToolFinishedCallback callback) {
+mojom::ActionResultPtr MouseMoveTool::Execute() {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    std::move(callback).Run(std::move(validated_result.error()));
-    return;
+    return std::move(validated_result.error());
   }
 
   gfx::PointF move_point = validated_result.value();
@@ -64,25 +72,22 @@ void MouseMoveTool::Execute(ToolFinishedCallback callback) {
   // Note: KNotHandled probably shouldn't result in an error.
   if (move_result == blink::WebInputEventResult::kNotHandled ||
       move_result == blink::WebInputEventResult::kHandledSuppressed) {
-    std::move(callback).Run(
-        MakeResult(mojom::ActionResultCode::kMouseMoveEventSuppressed));
-    return;
+    return MakeResult(mojom::ActionResultCode::kMouseMoveEventSuppressed);
   }
-  std::move(callback).Run(MakeOkResult());
+
+  return MakeOkResult();
 }
 
 std::string MouseMoveTool::DebugString() const {
-  return absl::StrFormat("MouseMoveTool[%s]", ToDebugString(action_->target));
+  return absl::StrFormat("MouseMoveTool[%s]", ToDebugString(target_));
 }
 
 MouseMoveTool::ValidatedResult MouseMoveTool::Validate() const {
-  if (!frame_->GetWebFrame() || !frame_->GetWebFrame()->FrameWidget()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kFrameWentAway));
-  }
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
 
-  if (action_->target->is_coordinate()) {
-    gfx::PointF move_point = gfx::PointF(action_->target->get_coordinate());
+  if (target_->is_coordinate()) {
+    gfx::PointF move_point = gfx::PointF(target_->get_coordinate());
     if (!IsPointWithinViewport(move_point, frame_.get())) {
       return base::unexpected(
           MakeResult(mojom::ActionResultCode::kCoordinatesOutOfBounds,
@@ -92,8 +97,7 @@ MouseMoveTool::ValidatedResult MouseMoveTool::Validate() const {
     return move_point;
   }
 
-  blink::WebNode node =
-      GetNodeFromId(frame_.get(), action_->target->get_dom_node_id());
+  blink::WebNode node = GetNodeFromId(frame_.get(), target_->get_dom_node_id());
   if (node.IsNull()) {
     return base::unexpected(
         MakeResult(mojom::ActionResultCode::kInvalidDomNodeId));

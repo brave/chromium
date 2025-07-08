@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_utils.h"
 
+#import "components/search_engines/util.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_util.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 
@@ -11,4 +12,8 @@ bool ShouldShowTopOfFeedSyncPromo() {
   // Checks the flag and ensures that the user is not in first run.
   return IsDiscoverFeedTopSyncPromoEnabled() &&
          !ShouldPresentFirstRunExperience();
+}
+
+GURL GetUrlForAim(TemplateURLService* turl_service) {
+  return GetUrlForAim(turl_service, "47");
 }

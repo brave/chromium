@@ -158,8 +158,6 @@ set(ABSL_INTERNAL_DLL_FILES
   "hash/internal/hash.h"
   "hash/internal/hash.cc"
   "hash/internal/spy_hash_state.h"
-  "hash/internal/low_level_hash.h"
-  "hash/internal/low_level_hash.cc"
   "hash/internal/weakly_mixed_integer.h"
   "log/absl_check.h"
   "log/absl_log.h"
@@ -717,8 +715,10 @@ int main() { return 0; }
 
 if(ABSL_INTERNAL_AT_LEAST_CXX20)
   set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_20)
-else()
+elseif(ABSL_INTERNAL_AT_LEAST_CXX17)
   set(ABSL_INTERNAL_CXX_STD_FEATURE cxx_std_17)
+else()
+  message(FATAL_ERROR "The compiler defaults to or is configured for C++ < 17. C++ >= 17 is required and Abseil and all libraries that use Abseil must use the same C++ language standard")
 endif()
 
 function(absl_internal_dll_contains)

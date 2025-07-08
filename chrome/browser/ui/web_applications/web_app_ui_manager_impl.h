@@ -43,9 +43,9 @@ namespace base {
 class FilePath;
 }
 
-namespace views {
+namespace ui {
 class NativeWindowTracker;
-}  // namespace views
+}  // namespace ui
 
 namespace webapps {
 enum class WebappUninstallSource;
@@ -96,6 +96,10 @@ class WebAppUiManagerImpl : public BrowserListObserver,
       const std::vector<base::FilePath>& file_paths,
       const webapps::AppId& app_id,
       WebAppLaunchAcceptanceCallback launch_callback) override;
+  void ShowWebAppProtocolLaunchDialog(
+      const GURL& protocol_url,
+      const webapps::AppId& app_id,
+      WebAppLaunchAcceptanceCallback launch_callback) override;
   void ShowWebAppIdentityUpdateDialog(
       const std::string& app_id,
       bool title_change,
@@ -143,6 +147,12 @@ class WebAppUiManagerImpl : public BrowserListObserver,
       const GURL& install_url,
       const std::optional<GURL>& manifest_id,
       InstallCallback callback) override;
+  void TriggerLaunchDialogForBackgroundInstall(
+      content::WebContents* initiating_web_contents,
+      const webapps::AppId& app_id,
+      Profile* profile,
+      const std::string& app_name,
+      WebInstallAppLaunchAcceptanceCallback callback) override;
 
   void PresentUserUninstallDialog(
       const webapps::AppId& app_id,
@@ -162,6 +172,10 @@ class WebAppUiManagerImpl : public BrowserListObserver,
       gfx::NativeWindow parent_window,
       UninstallCompleteCallback callback,
       UninstallScheduledCallback scheduled_callback) override;
+
+  void ShowIntentPicker(const GURL& url,
+                        content::WebContents* web_contents,
+                        ShowIntentPickerBubbleCallback callback) override;
 
   void LaunchOrFocusIsolatedWebAppInstaller(
       const base::FilePath& bundle_path) override;
@@ -208,7 +222,7 @@ class WebAppUiManagerImpl : public BrowserListObserver,
       const webapps::AppId& app_id,
       webapps::WebappUninstallSource uninstall_source,
       gfx::NativeWindow parent_window,
-      std::unique_ptr<views::NativeWindowTracker> parent_window_tracker,
+      std::unique_ptr<ui::NativeWindowTracker> parent_window_tracker,
       UninstallCompleteCallback complete_callback,
       UninstallScheduledCallback uninstall_scheduled_callback,
       std::map<SquareSizePx, SkBitmap> icon_bitmaps);
@@ -232,13 +246,13 @@ class WebAppUiManagerImpl : public BrowserListObserver,
       webapps::UninstallResultCode uninstall_code);
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  void ShowIPHPromoForAppsLaunchedViaLinkCapturing(const Browser* browser,
+  void ShowIPHPromoForAppsLaunchedViaLinkCapturing(Browser* browser,
                                                    const webapps::AppId& app_id,
                                                    bool is_activated);
-  void OnIPHPromoResponseForLinkCapturing(const Browser* browser,
+  void OnIPHPromoResponseForLinkCapturing(Browser* browser,
                                           const webapps::AppId& app_id);
 
-  void OnTabChangedDuringIph(const Browser* browser);
+  void OnTabChangedDuringIph(Browser* browser);
 
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 

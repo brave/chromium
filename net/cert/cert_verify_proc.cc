@@ -598,6 +598,14 @@ int CertVerifyProc::Verify(X509Certificate* cert,
   return rv;
 }
 
+scoped_refptr<X509Certificate> CertVerifyProc::Verify2QwacBinding(
+    std::string_view binding,
+    const std::string& hostname,
+    base::span<const uint8_t> tls_cert,
+    const NetLogWithSource& net_log) {
+  return nullptr;
+}
+
 int CertVerifyProc::Verify2Qwac(X509Certificate* cert,
                                 const std::string& hostname,
                                 CertVerifyResult* verify_result,
@@ -797,8 +805,8 @@ bool CertVerifyProc::HasNameConstraintsViolation(
 
 // static
 bool CertVerifyProc::HasTooLongValidity(const X509Certificate& cert) {
-  const base::Time& start = cert.valid_start();
-  const base::Time& expiry = cert.valid_expiry();
+  base::Time start = cert.valid_start();
+  base::Time expiry = cert.valid_expiry();
   if (start.is_max() || start.is_null() || expiry.is_max() ||
       expiry.is_null() || start > expiry) {
     return true;

@@ -15,6 +15,7 @@
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -220,10 +221,6 @@ ResultExpr RestrictPrctl() {
              Allow())
       .Cases({PR_SET_VMA},
              If(arg == PR_SET_VMA_ANON_NAME, Allow()).Else(CrashSIGSYSPrctl()))
-#if defined(ARCH_CPU_ARM64)
-      // This is required by TFLite. EINVAL means that it is not supported.
-      .Cases({PR_SME_GET_VL}, Error(EINVAL))
-#endif
       .Default(
           If(option == PR_SET_PTRACER, Error(EPERM)).Else(CrashSIGSYSPrctl()));
 }
@@ -509,6 +506,72 @@ ResultExpr RestrictGoogle3Threading(int sysno) {
 ResultExpr RestrictPipe2() {
   const Arg<int> flags(1);
   return If((flags & ~(O_CLOEXEC|O_DIRECT|O_NONBLOCK)) == 0, Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictSockRecvFlags(int sysno) {
+  size_t argIndex;
+  switch (sysno) {
+#if defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_recv:
+      argIndex = 3;
+      break;
+#endif
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || \
+    defined(__mips__) || defined(__aarch64__)
+    case __NR_recvfrom:  // Could specify source.
+      argIndex = 3;
+      break;
+    case __NR_recvmsg:  // Could specify source.
+      argIndex = 2;
+      break;
+#endif
+    case __NR_recvmmsg:  // Could specify source.
+      argIndex = 3;
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  // In particular, does not include MSG_OOB due to its history of security
+  // vulnerabilities, see crbug.com/428177287.
+  const Arg<int> flags(argIndex);
+  return If((flags &
+             ~(MSG_CMSG_CLOEXEC | MSG_DONTWAIT | MSG_PEEK | MSG_WAITALL)) == 0,
+            Allow())
+      .Else(CrashSIGSYS());
+}
+
+SANDBOX_EXPORT bpf_dsl::ResultExpr RestrictSockSendFlags(int sysno) {
+  size_t argIndex;
+  switch (sysno) {
+#if defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_send:
+      argIndex = 3;
+      break;
+#endif
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || \
+    defined(__mips__) || defined(__aarch64__)
+    case __NR_sendto:  // Could specify destination.
+      argIndex = 3;
+      break;
+    case __NR_sendmsg:  // Could specify destination.
+      argIndex = 2;
+      break;
+#endif
+    case __NR_sendmmsg:  // Could specify destination.
+      argIndex = 3;
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  // In particular, does not include MSG_OOB due to its history of security
+  // vulnerabilities, see crbug.com/428177287.
+  const Arg<int> flags(argIndex);
+  return If((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) == 0, Allow())
       .Else(CrashSIGSYS());
 }
 

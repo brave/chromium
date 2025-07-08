@@ -16,6 +16,8 @@
 #include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/browser/permission_settings_info.h"
+#include "components/content_settings/core/browser/permission_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
@@ -56,6 +58,15 @@ const ContentSetting kContentSettingOrder[] = {
     CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
     CONTENT_SETTING_ASK,
     CONTENT_SETTING_BLOCK
+    // clang-format on
+};
+
+// PermissionOptions sorted from most to least permissive.
+const PermissionOption kPermissionOptionOrder[] = {
+    // clang-format off
+    PermissionOption::kAllowed,
+    PermissionOption::kAsk,
+    PermissionOption::kDenied,
     // clang-format on
 };
 
@@ -142,10 +153,27 @@ bool IsMorePermissive(ContentSetting a, ContentSetting b) {
   // Check whether |a| or |b| is reached first in kContentSettingOrder.
   // If |a| is first, it means that |a| is more permissive than |b|.
   for (ContentSetting setting : kContentSettingOrder) {
-    if (setting == b)
+    if (setting == b) {
       return false;
-    if (setting == a)
+    }
+    if (setting == a) {
       return true;
+    }
+  }
+  NOTREACHED();
+}
+
+bool IsMorePermissive(PermissionOption a, PermissionOption b) {
+  // Check whether |a| or |b| is reached first in
+  // kPermissionOptionOrder. If |a| is first, it means that |a| is more
+  // permissive than |b|.
+  for (PermissionOption setting : kPermissionOptionOrder) {
+    if (setting == b) {
+      return false;
+    }
+    if (setting == a) {
+      return true;
+    }
   }
   NOTREACHED();
 }
@@ -196,35 +224,46 @@ base::TimeDelta GetCoarseVisitedTimePrecision() {
 }
 
 bool CanBeAutoRevoked(ContentSettingsType type,
-                      ContentSetting setting,
-                      bool is_one_time) {
-  return CanBeAutoRevoked(type, ContentSettingToValue(setting), is_one_time);
-}
-
-bool CanBeAutoRevoked(ContentSettingsType type,
                       const base::Value& value,
                       bool is_one_time) {
   // The Permissions module in Safety check will revoke permissions after
   // a finite amount of time.
   // We're only interested in expiring permissions that are either
-  // A. regular permissions (= ContentSettingsRegistry-based), which
+  // A. permission settings (= PermissionSettingsRegistry-based), which
+  //    1. query the delegate.
+  // B. regular permissions (= ContentSettingsRegistry-based), which
   //    1. Are ALLOWed.
   //    2. Fall back to ASK.
   //    3. Are not already a one-time grant.
-  // B. chooser permissions (= WebsiteSettingsRegistry-based), which
+  // C. chooser permissions (= WebsiteSettingsRegistry-based), which
   //    1. Are allowlisted.
   //    2. Have a non-empty value.
-
-  auto* info =
-      content_settings::ContentSettingsRegistry::GetInstance()->Get(type);
-  if (info) {
-    return !is_one_time &&
-           ValueToContentSetting(value) == CONTENT_SETTING_ALLOW &&
-           CanTrackLastVisit(type);
+  auto* permission_settings_info =
+      content_settings::PermissionSettingsRegistry::GetInstance()->Get(type);
+  if (permission_settings_info) {
+    auto setting = permission_settings_info->delegate().FromValue(value);
+    DCHECK(setting);
+    if (!setting.has_value()) {
+      return false;
+    }
+    return permission_settings_info->delegate().CanBeAutoRevoked(
+        setting.value(), is_one_time);
+  } else {
+    // TODO(crbug.com/425642101): Migrate to using the
+    // |PermissionSettingsInfo::Delegate| once content settings are migrated to
+    // the PermissionSettingsRegistry.
+    auto* info =
+        content_settings::ContentSettingsRegistry::GetInstance()->Get(type);
+    if (info) {
+      return !is_one_time &&
+             ValueToContentSetting(value) == CONTENT_SETTING_ALLOW &&
+             CanTrackLastVisit(type);
+    } else {
+      // If the value is already empty, no need to revoke the permission.
+      return IsChooserPermissionEligibleForAutoRevocation(type) &&
+             !value.is_none();
+    }
   }
-
-  // If the value is already empty, no need to revoke the permission.
-  return IsChooserPermissionEligibleForAutoRevocation(type) && !value.is_none();
 }
 
 bool IsChooserPermissionEligibleForAutoRevocation(ContentSettingsType type) {
@@ -272,6 +311,21 @@ bool ShouldTypeExpireActively(ContentSettingsType type) {
   return base::FeatureList::IsEnabled(
              content_settings::features::kActiveContentSettingExpiry) &&
          base::Contains(GetTypesWithTemporaryGrantsInHcsm(), type);
+}
+
+PermissionSetting ValueToPermissionSetting(const PermissionSettingsInfo* info,
+                                           const base::Value& value) {
+  auto setting = info->delegate().FromValue(value);
+  DCHECK(setting.has_value()) << value.DebugString();
+  DCHECK(info->delegate().IsValid(*setting)) << value.DebugString();
+  return setting.value_or(info->GetInitialDefaultSetting());
+}
+
+base::Value PermissionSettingToValue(const PermissionSettingsInfo* info,
+                                     const PermissionSetting& setting) {
+  DCHECK(info->delegate().IsValid(setting));
+  auto value = info->delegate().ToValue(setting);
+  return value;
 }
 
 }  // namespace content_settings

@@ -26,7 +26,8 @@ v8::Local<v8::Private> GetPrivatePropertyName(v8::Isolate* isolate,
 
 }  // namespace
 
-gin::WrapperInfo APIBindingBridge::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo APIBindingBridge::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 APIBindingBridge::APIBindingBridge(APIBindingHooks* hooks,
                                    v8::Local<v8::Context> context,
@@ -34,7 +35,7 @@ APIBindingBridge::APIBindingBridge(APIBindingHooks* hooks,
                                    const ExtensionId& extension_id,
                                    const std::string& context_type)
     : extension_id_(extension_id), context_type_(context_type) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Object> wrapper = GetWrapper(isolate).ToLocalChecked();
   v8::Maybe<bool> result = wrapper->SetPrivate(
       context, GetPrivatePropertyName(isolate, kApiObjectKey), api_object);
@@ -53,7 +54,8 @@ APIBindingBridge::~APIBindingBridge() = default;
 
 gin::ObjectTemplateBuilder APIBindingBridge::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return Wrappable<APIBindingBridge>::GetObjectTemplateBuilder(isolate)
+  return DeprecatedWrappable<APIBindingBridge>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("registerCustomHook", &APIBindingBridge::RegisterCustomHook);
 }
 
@@ -88,7 +90,7 @@ void APIBindingBridge::RegisterCustomHook(v8::Isolate* isolate,
   if (!result.IsJust() || !result.FromJust())
     return;
 
-  result = hook_object->SetPrototype(context, v8::Null(isolate));
+  result = hook_object->SetPrototypeV2(context, v8::Null(isolate));
   if (!result.IsJust() || !result.FromJust())
     return;
 

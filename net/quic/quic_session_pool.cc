@@ -64,6 +64,7 @@
 #include "net/quic/quic_context.h"
 #include "net/quic/quic_crypto_client_stream_factory.h"
 #include "net/quic/quic_server_info.h"
+#include "net/quic/quic_session_attempt_manager.h"
 #include "net/quic/quic_session_key.h"
 #include "net/quic/quic_session_pool_direct_job.h"
 #include "net/quic/quic_session_pool_job.h"
@@ -79,6 +80,7 @@
 #include "net/third_party/quiche/src/quiche/quic/core/crypto/quic_random.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_clock.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_connection.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_tag.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_utils.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 #include "net/third_party/quiche/src/quiche/quic/platform/api/quic_flags.h"
@@ -519,23 +521,6 @@ void QuicSessionRequest::SetSession(
   session_ = std::move(session);
 }
 
-QuicEndpoint::QuicEndpoint(quic::ParsedQuicVersion quic_version,
-                           IPEndPoint ip_endpoint,
-                           ConnectionEndpointMetadata metadata)
-    : quic_version(quic_version),
-      ip_endpoint(ip_endpoint),
-      metadata(metadata) {}
-
-QuicEndpoint::~QuicEndpoint() = default;
-
-base::Value::Dict QuicEndpoint::ToValue() const {
-  base::Value::Dict dict;
-  dict.Set("quic_version", quic::ParsedQuicVersionToString(quic_version));
-  dict.Set("ip_endpoint", ip_endpoint.ToString());
-  dict.Set("metadata", metadata.ToValue());
-  return dict;
-}
-
 QuicSessionPool::QuicCryptoClientConfigOwner::QuicCryptoClientConfigOwner(
     std::unique_ptr<quic::ProofVerifier> proof_verifier,
     std::unique_ptr<quic::QuicClientSessionCache> session_cache,
@@ -672,7 +657,9 @@ QuicSessionPool::QuicSessionPool(
           quic_context->params()->skip_dns_with_origin_frame),
       ignore_ip_matching_when_finding_existing_sessions_(
           quic_context->params()
-              ->ignore_ip_matching_when_finding_existing_sessions) {
+              ->ignore_ip_matching_when_finding_existing_sessions),
+      session_attempt_manager_(
+          std::make_unique<QuicSessionAttemptManager>(this)) {
   DCHECK(transport_security_state_);
   DCHECK(http_server_properties_);
   if (params_.disable_tls_zero_rtt) {
@@ -688,6 +675,10 @@ QuicSessionPool::~QuicSessionPool() {
                             all_sessions_.size());
   CloseAllSessions(ERR_ABORTED, quic::QUIC_CONNECTION_CANCELLED);
   all_sessions_.clear();
+
+  // Reset session attempt manager to ensure there is no active crypto config
+  // map.
+  session_attempt_manager_.reset();
 
   // Clear the active jobs, first moving out of the instance variable so that
   // calls to CancelRequest for any pending requests do not cause recursion.
@@ -1561,7 +1552,18 @@ QuicChromiumClientSession* QuicSessionPool::HasMatchingIpSession(
     const std::set<std::string>& aliases,
     bool use_dns_aliases) {
   const quic::QuicServerId& server_id(key.server_id());
-  DCHECK(!HasActiveSession(key.session_key()));
+
+  // There could be an existing session when HappyEyeballsV3 is enabled because
+  // there could be multiple QuicSessionAttempts for the same destination at
+  // a time and the attempt may complete after another attempt has already
+  // activated a session.
+  // TODO(crbug.com/416364483): Stop bypassing DCHECK in the HEv3 code path.
+  // Instead, implement a way to notify session activation to
+  // HttpStreamPool::AttemptManagers of which destinations match the session
+  // key. Upon receiving notifications, AttemptManagers should cancel in flight
+  // QUIC attempts.
+  DCHECK(IsHappyEyeballsV3Enabled() || !HasActiveSession(key.session_key()));
+
   for (const auto& address : ip_endpoints) {
     if (!base::Contains(ip_aliases_, address)) {
       continue;
@@ -1972,6 +1974,9 @@ QuicSessionPool::CreateSessionHelper(
     config.SetIdleNetworkTimeout(quic::QuicTime::Delta::FromSeconds(
         connection_management_config->keep_alive_config
             ->idle_timeout_in_seconds));
+    config.AddConnectionOptionsToSend(
+        quic::ParseQuicTagVector(connection_management_config->keep_alive_config
+                                     ->quic_connection_options));
     keep_alive_timeout = quic::QuicTime::Delta::FromSeconds(
         connection_management_config->keep_alive_config
             ->ping_interval_in_seconds);

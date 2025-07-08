@@ -25,20 +25,21 @@ constexpr char kUncheckedErrorPrefix[] = "Unchecked runtime.lastError: ";
 // property ('message') with the last error. This object is stored on the parent
 // (chrome.runtime in production) as a private property, and is returned via an
 // accessor which marks the error as accessed.
-class LastErrorObject final : public gin::Wrappable<LastErrorObject> {
+class LastErrorObject final : public gin::DeprecatedWrappable<LastErrorObject> {
  public:
   explicit LastErrorObject(const std::string& error) : error_(error) {}
 
   LastErrorObject(const LastErrorObject&) = delete;
   LastErrorObject& operator=(const LastErrorObject&) = delete;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
-  // gin::Wrappable:
+  // gin::DeprecatedWrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override {
     DCHECK(isolate);
-    return Wrappable<LastErrorObject>::GetObjectTemplateBuilder(isolate)
+    return DeprecatedWrappable<LastErrorObject>::GetObjectTemplateBuilder(
+               isolate)
         .SetProperty("message", &LastErrorObject::error);
   }
 
@@ -56,7 +57,8 @@ class LastErrorObject final : public gin::Wrappable<LastErrorObject> {
   bool accessed_ = false;
 };
 
-gin::WrapperInfo LastErrorObject::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo LastErrorObject::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 // An accessor to retrieve the last error property (curried in through data),
 // and mark it as accessed.
@@ -64,7 +66,7 @@ void LastErrorGetter(v8::Local<v8::Name> property,
                      const v8::PropertyCallbackInfo<v8::Value>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Object> holder = info.Holder();
+  v8::Local<v8::Object> holder = info.HolderV2();
   v8::Local<v8::Context> context = holder->GetCreationContextChecked(isolate);
 
   v8::Local<v8::Value> last_error;
@@ -103,7 +105,7 @@ void LastErrorSetter(v8::Local<v8::Name> property,
                      const v8::PropertyCallbackInfo<void>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Object> holder = info.Holder();
+  v8::Local<v8::Object> holder = info.HolderV2();
   v8::Local<v8::Context> context = holder->GetCreationContextChecked(isolate);
 
   v8::Local<v8::Private> script_value_key = v8::Private::ForApi(
@@ -125,7 +127,7 @@ APILastError::~APILastError() = default;
 
 void APILastError::SetError(v8::Local<v8::Context> context,
                             const std::string& error) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   DCHECK(isolate);
   v8::HandleScope handle_scope(isolate);
 
@@ -147,7 +149,7 @@ void APILastError::SetError(v8::Local<v8::Context> context,
 
 void APILastError::ClearError(v8::Local<v8::Context> context,
                               bool report_if_unchecked) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Object> parent;
@@ -168,7 +170,7 @@ void APILastError::ClearError(v8::Local<v8::Context> context,
     v8::Local<v8::Value> error;
     // Access through GetPrivate() so that we don't trigger accessed().
     if (!parent->GetPrivate(context, private_key).ToLocal(&error) ||
-        !gin::Converter<LastErrorObject*>::FromV8(context->GetIsolate(), error,
+        !gin::Converter<LastErrorObject*>::FromV8(isolate, error,
                                                   &last_error)) {
       return;
     }
@@ -193,7 +195,7 @@ void APILastError::ClearError(v8::Local<v8::Context> context,
 }
 
 bool APILastError::HasError(v8::Local<v8::Context> context) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
 
   // See comment in SetError().
@@ -211,13 +213,12 @@ bool APILastError::HasError(v8::Local<v8::Context> context) {
     return false;
 
   LastErrorObject* last_error = nullptr;
-  return gin::Converter<LastErrorObject*>::FromV8(context->GetIsolate(), error,
-                                                  &last_error);
+  return gin::Converter<LastErrorObject*>::FromV8(isolate, error, &last_error);
 }
 
 std::optional<std::string> APILastError::GetErrorMessage(
     v8::Local<v8::Context> context) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
 
   // See comment in SetError().
@@ -238,8 +239,7 @@ std::optional<std::string> APILastError::GetErrorMessage(
   }
 
   LastErrorObject* last_error = nullptr;
-  if (gin::Converter<LastErrorObject*>::FromV8(context->GetIsolate(), error,
-                                               &last_error)) {
+  if (gin::Converter<LastErrorObject*>::FromV8(isolate, error, &last_error)) {
     return last_error->error();
   }
   return std::nullopt;
@@ -255,7 +255,7 @@ void APILastError::SetErrorOnPrimaryParent(v8::Local<v8::Context> context,
                                            const std::string& error) {
   if (parent.IsEmpty())
     return;
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::String> key = gin::StringToSymbol(isolate, kLastErrorProperty);
   v8::Local<v8::Value> v8_error;
   // Two notes: this Get() is visible to external script, and this will actually
@@ -306,7 +306,7 @@ void APILastError::SetErrorOnSecondaryParent(
   // {message: <error>}.
   // TODO(devlin): Gather metrics on how frequently this is checked. It'd be
   // nice to get rid of it.
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::String> key = gin::StringToSymbol(isolate, kLastErrorProperty);
   // This CreateDataProperty() can fail, but there's nothing to do if it does
   // (the exception will be caught by the TryCatch in SetError()).

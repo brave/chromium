@@ -10,6 +10,7 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -260,7 +261,7 @@ void FakeSkiaOutputSurface::CopyOutput(
   }
 
   if (request->result_destination() ==
-      CopyOutputResult::Destination::kNativeTextures) {
+      CopyOutputResult::Destination::kSharedImage) {
     // NOTE: This implementation is incomplete and doesn't copy anything into
     // the mailbox, but currently the only tests that use this don't actually
     // check the returned texture data. A corollary to this fact is that the
@@ -283,10 +284,9 @@ void FakeSkiaOutputSurface::CopyOutput(
             &FakeSkiaOutputSurface::DestroyCopyOutputTexture,
             weak_ptr_factory_.GetWeakPtr(), std::move(client_shared_image))));
 
-    request->SendResult(std::make_unique<CopyOutputTextureResult>(
-        CopyOutputResult::Format::RGBA, geometry.result_bounds,
-        CopyOutputResult::TextureResult(local_mailbox, color_space),
-        std::move(release_callbacks)));
+    request->SendResult(std::make_unique<CopyOutputSharedImageResult>(
+        CopyOutputResult::Format::RGBA, geometry.result_bounds, local_mailbox,
+        color_space, "CopyOutput", std::move(release_callbacks)));
     return;
   }
 
@@ -343,7 +343,6 @@ bool FakeSkiaOutputSurface::GetGrBackendTexture(
   DCHECK(!image_context.mailbox().IsZero());
 
   auto* gl = context_provider()->ContextGL();
-  gl->WaitSyncTokenCHROMIUM(image_context.sync_token().GetConstData());
   auto texture_id = gl->CreateAndTexStorage2DSharedImageCHROMIUM(
       image_context.mailbox().name);
   auto gl_format_desc = gpu::GLFormatCaps().ToGLFormatDesc(

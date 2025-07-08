@@ -146,6 +146,8 @@ TabGridPage ThirdTabGridPage() {
 
 // The grey background for all the segments.
 @property(nonatomic, weak) UIView* background;
+// The contentView in which views should be added.
+@property(nonatomic, weak) UIView* contentView;
 
 // Layout guides used to position segment-specific content.
 @property(nonatomic, weak) UILayoutGuide* incognitoGuide;
@@ -278,10 +280,13 @@ TabGridPage ThirdTabGridPage() {
 
   _scrolledToEdge = scrolledToEdge;
 
-  CGFloat backgroundAlpha =
-      scrolledToEdge ? kScrolledToTopBackgroundAlpha : kBackgroundAlpha;
-  self.background.backgroundColor = [UIColor colorWithWhite:1
-                                                      alpha:backgroundAlpha];
+  if (@available(iOS 26, *)) {
+  } else {
+    CGFloat backgroundAlpha =
+        scrolledToEdge ? kScrolledToTopBackgroundAlpha : kBackgroundAlpha;
+    self.background.backgroundColor = [UIColor colorWithWhite:1
+                                                        alpha:backgroundAlpha];
+  }
 }
 
 #pragma mark - Public Properties
@@ -376,7 +381,7 @@ TabGridPage ThirdTabGridPage() {
   highlightBackground.backgroundColor = [UIColor colorNamed:kBlueColor];
   highlightBackground.layer.cornerRadius = kSliderCornerRadius;
 
-  [self insertSubview:highlightBackground aboveSubview:self.background];
+  [self.contentView insertSubview:highlightBackground atIndex:0];
 
   UILayoutGuide* pageGuide;
   [NSLayoutConstraint activateConstraints:@[
@@ -638,10 +643,14 @@ TabGridPage ThirdTabGridPage() {
     }
   }
 
-  iconNotSelected.tintColor = [UIColor colorNamed:kStaticGrey300Color];
+  if (@available(iOS 26, *)) {
+    iconNotSelected.tintColor = UIColor.whiteColor;
+  } else {
+    iconNotSelected.tintColor = [UIColor colorNamed:kStaticGrey300Color];
+  }
   iconSelected.tintColor = UIColor.blackColor;
 
-  [self insertSubview:iconNotSelected belowSubview:self.sliderView];
+  [self.contentView insertSubview:iconNotSelected belowSubview:self.sliderView];
   [self.selectedImageView addSubview:iconSelected];
 }
 
@@ -650,17 +659,35 @@ TabGridPage ThirdTabGridPage() {
 - (void)setupViews {
   self.scrolledToEdge = YES;
 
-  UIView* backgroundView = [[UIView alloc]
-      initWithFrame:CGRectMake(0, 0, kOverallWidth, kSegmentHeight)];
-  backgroundView.backgroundColor =
-      [UIColor colorWithWhite:1 alpha:kScrolledToTopBackgroundAlpha];
-  backgroundView.userInteractionEnabled = NO;
-  backgroundView.layer.cornerRadius = kBackgroundCornerRadius;
-  backgroundView.layer.masksToBounds = YES;
-  [self addSubview:backgroundView];
-  backgroundView.center =
-      CGPointMake(kOverallWidth / 2.0, kOverallHeight / 2.0);
-  self.background = backgroundView;
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    UIGlassEffect* glassEffect = [[UIGlassEffect alloc] init];
+    glassEffect.interactive = YES;
+    UIVisualEffectView* backgroundView =
+        [[UIVisualEffectView alloc] initWithEffect:glassEffect];
+    backgroundView.frame = CGRectMake(0, 0, kOverallWidth, kSegmentHeight);
+    [self addSubview:backgroundView];
+    backgroundView.center =
+        CGPointMake(kOverallWidth / 2.0, kOverallHeight / 2.0);
+    self.background = backgroundView;
+    self.contentView = backgroundView.contentView;
+  } else {
+#endif
+    UIView* backgroundView = [[UIView alloc]
+        initWithFrame:CGRectMake(0, 0, kOverallWidth, kSegmentHeight)];
+    backgroundView.backgroundColor =
+        [UIColor colorWithWhite:1 alpha:kScrolledToTopBackgroundAlpha];
+    backgroundView.userInteractionEnabled = NO;
+    backgroundView.layer.cornerRadius = kBackgroundCornerRadius;
+    backgroundView.layer.masksToBounds = YES;
+    [self addSubview:backgroundView];
+    backgroundView.center =
+        CGPointMake(kOverallWidth / 2.0, kOverallHeight / 2.0);
+    self.background = backgroundView;
+    self.contentView = backgroundView;
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  }
+#endif
 
   // Set up the layout guides for the segments.
   UILayoutGuide* incognitoGuide = [[UILayoutGuide alloc] init];
@@ -709,10 +736,15 @@ TabGridPage ThirdTabGridPage() {
   ]];
 
   // Add the slider above the section images and labels.
+  CGFloat verticalMargin = kSliderVerticalMargin;
   CGRect sliderFrame =
-      CGRectMake(0, kSliderVerticalMargin, kSliderWidth, kSliderHeight);
+      CGRectMake(0, verticalMargin, kSliderWidth, kSliderHeight);
   UIView* slider = [[UIView alloc] initWithFrame:sliderFrame];
-  slider.layer.cornerRadius = kSliderCornerRadius;
+  if (@available(iOS 26, *)) {
+    slider.layer.cornerRadius = kSliderHeight / 2.0;
+  } else {
+    slider.layer.cornerRadius = kSliderCornerRadius;
+  }
   slider.layer.masksToBounds = YES;
   slider.backgroundColor = UIColor.whiteColor;
   if (ios::provider::IsRaccoonEnabled()) {
@@ -722,7 +754,7 @@ TabGridPage ThirdTabGridPage() {
               [UIShape rectShapeWithCornerRadius:kBackgroundCornerRadius]];
     }
   }
-  [self addSubview:slider];
+  [self.contentView addSubview:slider];
   self.sliderView = slider;
 
   // Selected images and labels are added to the selected image view so they
@@ -738,7 +770,7 @@ TabGridPage ThirdTabGridPage() {
   [self addTabsIcon:ThirdTabGridPage()];
 
   UILabel* regularLabel = [self labelSelected:NO];
-  [self insertSubview:regularLabel belowSubview:self.sliderView];
+  [self.contentView insertSubview:regularLabel belowSubview:self.sliderView];
   self.regularLabel = regularLabel;
   UILabel* regularSelectedLabel = [self labelSelected:YES];
   [self.selectedImageView addSubview:regularSelectedLabel];
@@ -862,7 +894,7 @@ TabGridPage ThirdTabGridPage() {
               [UIShape rectShapeWithCornerRadius:kBackgroundCornerRadius]];
     }
   }
-  [self insertSubview:hoverView belowSubview:self.sliderView];
+  [self.contentView insertSubview:hoverView belowSubview:self.sliderView];
   [hoverView
       addInteraction:[[UIPointerInteraction alloc] initWithDelegate:self]];
   return hoverView;

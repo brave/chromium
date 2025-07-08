@@ -21,7 +21,8 @@ namespace {
 class ActorKeyedServiceTest : public testing::Test {
  public:
   ActorKeyedServiceTest()
-      : testing_profile_manager_(TestingBrowserProcess::GetGlobal()) {}
+      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
+        testing_profile_manager_(TestingBrowserProcess::GetGlobal()) {}
   ~ActorKeyedServiceTest() override = default;
 
   // testing::Test:
@@ -42,13 +43,26 @@ class ActorKeyedServiceTest : public testing::Test {
   raw_ptr<TestingProfile> profile_;
 };
 
-// Adds a task to ActorKeyedService, and then checks that fetching the
-// ActorKeyedService from a profile shows that task.
-TEST_F(ActorKeyedServiceTest, AddTask) {
-  ActorKeyedService::Get(profile())->AddTask(std::make_unique<ActorTask>());
-  ASSERT_EQ(ActorKeyedService::Get(profile())->GetTasks().size(), 1u);
-  EXPECT_EQ(ActorKeyedService::Get(profile())->GetTasks()[0]->GetState(),
+// Adds a task to ActorKeyedService
+TEST_F(ActorKeyedServiceTest, AddActiveTask) {
+  auto* actor_service = ActorKeyedService::Get(profile());
+  actor_service->AddActiveTask(std::make_unique<ActorTask>());
+  ASSERT_EQ(actor_service->GetActiveTasks().size(), 1u);
+  EXPECT_EQ(actor_service->GetActiveTasks().begin()->second->GetState(),
             ActorTask::State::kCreated);
+}
+
+// Stops a task.
+TEST_F(ActorKeyedServiceTest, StopActiveTask) {
+  auto* actor_service = ActorKeyedService::Get(profile());
+  TaskId id = actor_service->AddActiveTask(std::make_unique<ActorTask>());
+  actor_service->StopTask(id);
+  ASSERT_EQ(actor_service->GetActiveTasks().size(), 0u);
+  ASSERT_EQ(actor_service->GetInactiveTasks().size(), 1u);
+  EXPECT_EQ(actor_service->GetInactiveTasks().begin()->second->GetState(),
+            ActorTask::State::kFinished);
+  EXPECT_EQ(actor_service->GetInactiveTasks().begin()->second->GetEndTime(),
+            base::Time::Now());
 }
 
 }  // namespace

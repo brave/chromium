@@ -59,8 +59,10 @@ _HEADER = '''
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 import("//build/config/android/config.gni")
+import("//components/optimization_guide/features.gni")
+import("//third_party/xnnpack/build_defs.gni")
 
-config("xnnpack_config") {
+config("xnnpack_public_config") {
   include_dirs = [
     "//third_party/pthreadpool/src/include",
     "src/deps/clog/include",
@@ -69,39 +71,22 @@ config("xnnpack_config") {
     "src",
   ]
 
-  cflags=[
-    "-Wno-unused-function",
-    "-Wno-deprecated-comma-subscript",
-  ]
-
   if (is_android && current_cpu == "arm64") {
     asmflags = [ "-mmark-bti-property" ]
   }
 
   defines = [
     "CHROMIUM",
-    "XNN_ENABLE_ASSEMBLY=1",
-    "XNN_ENABLE_GEMM_M_SPECIALIZATION=1",
-    "XNN_ENABLE_MEMOPT=1",
-    "XNN_ENABLE_CPUINFO=1",
-    "XNN_ENABLE_SPARSE=1",
     "XNN_LOG_LEVEL=0",
     "XNN_LOG_TO_STDIO=0",
-    "XNN_ENABLE_AVX512BF16=0",
+  ] + xnn_defines
+}
+
+config("xnnpack_private_config") {
+  cflags = [
+    "-Wno-unused-function",
+    "-Wno-deprecated-comma-subscript",
   ]
-
-  if (current_cpu == "arm64") {
-    defines += [
-      "XNN_ENABLE_ARM_DOTPROD=1",
-      "XNN_ENABLE_ARM_I8MM=1",
-    ]
-  }
-
-  if (current_cpu == "x86" || current_cpu == "x64") {
-    defines += [
-      "XNN_ENABLE_AVXVNNI=1",
-    ]
-  }
 }
 '''.strip()
 
@@ -112,6 +97,7 @@ source_set("xnnpack") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [ "//build/config/compiler:no_chromium_code" ]
   configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+  configs += [ ":xnnpack_private_config" ]
 
   sources = [
   "src/include/xnnpack.h",
@@ -126,34 +112,37 @@ source_set("xnnpack") {
     "//third_party/pthreadpool",
   ]
 
-  public_configs = [ ":xnnpack_config" ]
+  public_configs = [ ":xnnpack_public_config" ]
 }
 
 # This is a target that cannot depend on //base.
-source_set("xnnpack_standalone") {
-  public = [ "src/include/xnnpack.h" ]
+if (build_with_internal_optimization_guide) {
+  source_set("xnnpack_standalone") {
+    public = [ "src/include/xnnpack.h" ]
 
-  configs -= [ "//build/config/compiler:chromium_code" ]
-  configs += [ "//build/config/compiler:no_chromium_code" ]
-  configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
+    configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+    configs += [ ":xnnpack_private_config" ]
 
-  sources = [
-  "src/include/xnnpack.h",
-  "build_identifier.c",
-%SRCS%
-  ]
+    sources = [
+    "src/include/xnnpack.h",
+    "build_identifier.c",
+  %SRCS%
+    ]
 
-  deps = xnnpack_standalone_deps + [
-    "//third_party/cpuinfo",
-    "//third_party/fp16",
-    "//third_party/fxdiv",
-    "//third_party/pthreadpool:pthreadpool_standalone",
-  ]
+    deps = xnnpack_standalone_deps + [
+      "//third_party/cpuinfo",
+      "//third_party/fp16",
+      "//third_party/fxdiv",
+      "//third_party/pthreadpool:pthreadpool_standalone",
+    ]
 
-  public_configs = [ ":xnnpack_config" ]
+    public_configs = [ ":xnnpack_public_config" ]
 
-  if (!(is_android && use_order_profiling)) {
-    assert_no_deps = [ "//base" ]
+    if (!(is_android && use_order_profiling)) {
+      assert_no_deps = [ "//base" ]
+    }
   }
 }
 '''.strip()
@@ -172,6 +161,7 @@ source_set("%TARGET_NAME%") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [ "//build/config/compiler:no_chromium_code" ]
   configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+  configs += [ ":xnnpack_private_config" ]
 
   deps = [
     "//third_party/cpuinfo",
@@ -180,35 +170,38 @@ source_set("%TARGET_NAME%") {
     "//third_party/pthreadpool",
   ]
 
-  public_configs = [ ":xnnpack_config" ]
+  public_configs = [ ":xnnpack_public_config" ]
 }
 
 # This is a target that cannot depend on //base.
-source_set("%TARGET_NAME%_standalone") {
-  cflags = [
-%CFLAGS%
-  ]
-%ASMFLAGS%
-  sources = [
-    "src/include/xnnpack.h",
-%SRCS%
-  ]
+if (build_with_internal_optimization_guide) {
+  source_set("%TARGET_NAME%_standalone") {
+    cflags = [
+  %CFLAGS%
+    ]
+  %ASMFLAGS%
+    sources = [
+      "src/include/xnnpack.h",
+  %SRCS%
+    ]
 
-  configs -= [ "//build/config/compiler:chromium_code" ]
-  configs += [ "//build/config/compiler:no_chromium_code" ]
-  configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
+    configs += [ "//build/config/sanitizers:cfi_icall_generalize_pointers" ]
+    configs += [ ":xnnpack_private_config" ]
 
-  deps = [
-    "//third_party/cpuinfo",
-    "//third_party/fp16",
-    "//third_party/fxdiv",
-    "//third_party/pthreadpool:pthreadpool_standalone",
-  ]
+    deps = [
+      "//third_party/cpuinfo",
+      "//third_party/fp16",
+      "//third_party/fxdiv",
+      "//third_party/pthreadpool:pthreadpool_standalone",
+    ]
 
-  public_configs = [ ":xnnpack_config" ]
+    public_configs = [ ":xnnpack_public_config" ]
 
-  if (!(is_android && use_order_profiling)) {
-    assert_no_deps = [ "//base" ]
+    if (!(is_android && use_order_profiling)) {
+      assert_no_deps = [ "//base" ]
+    }
   }
 }
 '''.strip()
@@ -236,7 +229,10 @@ _PLATFORMS = [
     _Platform(gn_cpu='x64', bazel_cpu='k8', bazel_platform='//:linux_x64'),
     _Platform(gn_cpu='arm64',
               bazel_cpu='aarch64',
-              bazel_platform='//:linux_aarch64')
+              bazel_platform='//:linux_aarch64'),
+    _Platform(gn_cpu='riscv64',
+              bazel_cpu='riscv64',
+              bazel_platform='//:linux_riscv64')
 ]
 
 
@@ -463,14 +459,18 @@ def _generate_per_platform_dep_lists(
 {xnnpack_deps}
   ]
 
-  xnnpack_standalone_deps = [
+  if (build_with_internal_optimization_guide) {{
+    xnnpack_standalone_deps = [
 {xnnpack_standalone_deps}
-  ]
+    ]
+  }}
 '''
     deps_list += '} else {\n'
     deps_list += '  xnnpack_deps = []\n'
-    deps_list += '  xnnpack_standalone_deps = []\n'
-    deps_list += '}'
+    deps_list += '  if (build_with_internal_optimization_guide) {\n'
+    deps_list += '    xnnpack_standalone_deps = []\n'
+    deps_list += '  }\n'
+    deps_list += '}\n'
 
     return deps_list
 

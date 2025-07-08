@@ -680,10 +680,18 @@ void TabDragController::EndDrag(EndDragReason reason) {
   // Some drags need to react to the model being mutated before the model can
   // change its state.
   if (reason == END_DRAG_MODEL_ADDED_TAB) {
-    // if the drag is not a header drag, ignore this signal. We must place the
+    // If a group is being dragged, we must place the
     // drag at the current position in the tabstrip or else we will be
     // re-entering into tabstrip mutation code.
-    if (drag_data_.group_drag_data_.has_value()) {
+    bool group_dragged = false;
+
+    for (const TabDragData& tab_drag_datum : drag_data_.tab_drag_data_) {
+      if (tab_drag_datum.view_type == TabSlotView::ViewType::kTabGroupHeader) {
+        group_dragged = true;
+      }
+    }
+
+    if (group_dragged) {
       EndDragImpl(source_context_ == attached_context_ ? CANCELED : NORMAL);
     }
     return;
@@ -1475,7 +1483,6 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
     // attached to is hidden and thus can't start the drag session.
     return StartSystemDnDSessionIfNecessary(source_context_, point_in_screen);
   }
-
   AdjustTabBoundsForDrag(previous_tab_area_width, first_tab_leading_x,
                          drag_bounds);
 
@@ -1485,6 +1492,8 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
   // Windows. See https://crbug.com/394529650
   dragged_widget->SetBounds(
       gfx::Rect(point_in_screen - drag_offset, dragged_widget->GetSize()));
+#else
+  const gfx::Size widget_size = dragged_widget->GetSize();
 #endif
 
   dragged_widget->SetVisibilityChangedAnimationsEnabled(false);
@@ -1494,8 +1503,8 @@ TabDragController::DetachIntoNewBrowserAndRunMoveLoop(
 #if BUILDFLAG(IS_MAC)
   // Set the window origin after making it visible, to avoid child windows (such
   // as the find bar) being misplaced on Mac. See https://crbug.com/403129048
-  dragged_widget->SetBounds(
-      gfx::Rect(point_in_screen - drag_offset, dragged_widget->GetSize()));
+  dragged_widget->SetBoundsConstrained(
+      gfx::Rect(point_in_screen - drag_offset, widget_size));
 #endif
 
   // Activate may trigger a focus loss, destroying us.
@@ -1900,12 +1909,9 @@ void TabDragController::RevertSplitAt(size_t drag_index) {
       tabs::TabInterface::GetFromContents(tab_data.contents);
   split_tabs::SplitTabId split_id = tab->GetSplit().value();
 
-  // The split can be reverted into its original group if it still exists.
+  // The split will be reverted into its original group.
   const std::optional<tab_groups::TabGroupId> existing_group =
-      tab_data.tab_group_data.has_value() &&
-              source_context_->GetTabStripModel()
-                  ->group_model()
-                  ->ContainsTabGroup(tab_data.tab_group_data->group_id)
+      tab_data.tab_group_data.has_value()
           ? std::make_optional(tab_data.tab_group_data->group_id)
           : std::nullopt;
 
@@ -1965,12 +1971,9 @@ void TabDragController::RevertTabAt(size_t drag_index) {
 
   const TabDragData tab_data = drag_data_.tab_drag_data_[drag_index];
 
-  // The tab can be reverted into its original group if it still exists.
+  // The tab will be reverted into its original group.
   const std::optional<tab_groups::TabGroupId> existing_group =
-      tab_data.tab_group_data.has_value() &&
-              source_context_->GetTabStripModel()
-                  ->group_model()
-                  ->ContainsTabGroup(tab_data.tab_group_data->group_id)
+      tab_data.tab_group_data.has_value()
           ? std::make_optional(tab_data.tab_group_data->group_id)
           : std::nullopt;
 
@@ -2056,8 +2059,8 @@ void TabDragController::CompleteDrag() {
 
   if (drag_data_.group_drag_data_.has_value()) {
     // Manually reset the selection to just the active tab in the group.
-    // Otherwise, it's easy to accidentally delete the fully-selected group
-    // by dragging on any of its still-selected members.
+    // For multi tab select keep the selection model as the user used it as the
+    // original selection.
     TabStripModel* model = attached_context_
                                ? attached_context_->GetTabStripModel()
                                : source_context_->GetTabStripModel();

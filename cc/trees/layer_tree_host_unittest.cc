@@ -37,7 +37,7 @@
 #include "cc/layers/view_transition_content_layer.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
 #include "cc/metrics/events_metrics_manager.h"
-#include "cc/metrics/ukm_smoothness_data.h"
+#include "cc/metrics/ukm_dropped_frames_data.h"
 #include "cc/paint/image_animation_count.h"
 #include "cc/resources/ui_resource_manager.h"
 #include "cc/test/fake_content_layer_client.h"
@@ -654,9 +654,10 @@ class LayerTreeHostContextCacheTest : public LayerTreeHostTest {
   // This is called before DestroyLayerTreeHost. The MockContextSupport
   // objects are owned by the TestContextProvider and will be destroyed as part
   // of LayerTreeHost d'tor, so clean them up here to avoid dangling pointers.
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     mock_main_context_support_ = nullptr;
     mock_worker_context_support_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   raw_ptr<MockContextSupport> mock_main_context_support_;
@@ -1413,10 +1414,11 @@ class LayerTreeHostTestLayerListSurfaceDamage : public LayerTreeHostTest {
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the root_ pointer before LayerTreeHost is destroyed to avoid
     // a dangling pointer.
     root_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   void DidCommit() override {
@@ -5982,11 +5984,12 @@ class LayerTreeHostTestElasticOverscroll : public LayerTreeHostTest {
     }
   }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clean up non-owned pointers before the LayerTreeHost is destroyed and
     // releases the objects they point to.
     root_layer_ = nullptr;
     scroll_elasticity_helper_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
  private:
@@ -6798,10 +6801,11 @@ class LayerTreeHostTestGpuRasterizationEnabledWithMSAA : public LayerTreeTest {
     EndTest();
   }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the non-ref pointer before LayerTreeHost is destroyed to avoid a
     // dangling pointer.
     layer_ = nullptr;
+    LayerTreeTest::AfterTest();
   }
 
   FakeContentLayerClient layer_client_;
@@ -9703,79 +9707,6 @@ class LayerTreeHostTestIgnoreEventsMetricsForNoUpdate
 // TODO(crbug.com/40756887): Disabled because test is flaky on Linux and CrOS.
 // MULTI_THREAD_TEST_F(LayerTreeHostTestIgnoreEventsMetricsForNoUpdate);
 
-class LayerTreeHostUkmSmoothnessMetric : public LayerTreeTest {
- public:
-  LayerTreeHostUkmSmoothnessMetric() = default;
-  ~LayerTreeHostUkmSmoothnessMetric() override = default;
-
-  void InitializeSettings(LayerTreeSettings* settings) override {
-    settings->commit_to_active_tree = false;
-  }
-
-  void SetupTree() override {
-    LayerTreeTest::SetupTree();
-    shmem_region_ = layer_tree_host()->CreateSharedMemoryForSmoothnessUkm();
-    shmem_region_dropped_frames_ =
-        layer_tree_host()->CreateSharedMemoryForDroppedFramesUkm();
-  }
-
-  void BeginTest() override {
-    // Start with requesting main-frames.
-    PostSetNeedsCommitToMainThread();
-  }
-
-  void AfterTest() override {
-    ASSERT_TRUE(shmem_region_.IsValid());
-    auto mapping = shmem_region_.Map();
-    auto* smoothness = mapping.GetMemoryAs<UkmSmoothnessDataShared>();
-    ASSERT_TRUE(smoothness);
-    // It is not always possible to guarantee an exact number of dropped frames.
-    // So validate that there are non-zero dropped frames.
-    EXPECT_GT(smoothness->data.avg_smoothness, 0);
-
-    ASSERT_TRUE(shmem_region_dropped_frames_.IsValid());
-    // TODO(crbug.com/395868899): Test that values are exported here.
-  }
-
-  void WillBeginImplFrameOnThread(LayerTreeHostImpl* host_impl,
-                                  const viz::BeginFrameArgs& args,
-                                  bool has_damage) override {
-    last_args_ = args;
-    if (!fcp_sent_) {
-      host_impl->dropped_frame_counter()->OnFirstContentfulPaintReceived();
-      fcp_sent_ = true;
-    }
-    host_impl->frame_sorter_for_testing()->AddNewFrame(last_args_);
-  }
-
-  void DidFinishImplFrameOnThread(LayerTreeHostImpl* host_impl) override {
-    if (TestEnded())
-      return;
-
-    if (frames_counter_ == 0) {
-      EndTest();
-      return;
-    }
-
-    // Mark every frame as a dropped frame affecting smoothness.
-    // Delegates to DFC::AddSortedFrame, which calls DFC::OnEndFrame.
-    host_impl->frame_sorter_for_testing()->AddFrameResult(
-        last_args_, CreateFakeImplDroppedFrameInfo());
-    host_impl->SetNeedsRedraw();
-    --frames_counter_;
-  }
-
- private:
-  const uint32_t kTotalFramesForTest = 5;
-  uint32_t frames_counter_ = kTotalFramesForTest;
-  bool fcp_sent_ = false;
-  viz::BeginFrameArgs last_args_;
-  base::ReadOnlySharedMemoryRegion shmem_region_;
-  base::ReadOnlySharedMemoryRegion shmem_region_dropped_frames_;
-};
-
-MULTI_THREAD_TEST_F(LayerTreeHostUkmSmoothnessMetric);
-
 class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
  public:
   LayerTreeHostUkmSmoothnessMemoryOwnership() = default;
@@ -9798,7 +9729,6 @@ class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
                                   bool has_damage) override {
     last_args_ = args;
     if (!fcp_sent_) {
-      host_impl->dropped_frame_counter()->OnFirstContentfulPaintReceived();
       fcp_sent_ = true;
     }
     host_impl->SetNeedsCommit();
@@ -9823,17 +9753,11 @@ class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
     --frames_counter_;
   }
 
-  void DidBeginMainFrame() override {
-    // Re-request the shared memory region in each frame.
-    shmem_region_ = layer_tree_host()->CreateSharedMemoryForSmoothnessUkm();
-  }
-
  private:
   const uint32_t kTotalFramesForTest = 50;
   uint32_t frames_counter_ = kTotalFramesForTest;
   bool fcp_sent_ = false;
   viz::BeginFrameArgs last_args_;
-  base::ReadOnlySharedMemoryRegion shmem_region_;
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostUkmSmoothnessMemoryOwnership);
@@ -10504,10 +10428,11 @@ class LayerTreeHostTestBeginFramePausedChanged : public LayerTreeHostTest {
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the non-ref pointers before LayerTreeHost is destroyed to avoid a
     // dangling pointer.
     layer_tree_frame_sink_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   void ReadyToCommitOnThread(LayerTreeHostImpl* host_impl) override {

@@ -21,10 +21,8 @@ ci.defaults.set(
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
     health_spec = health_spec.DEFAULT,
     notifies = ["chrome-rust-experiments"],
-    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
-    siso_enabled = True,
     siso_project = siso.project.DEFAULT_TRUSTED,
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
@@ -45,7 +43,6 @@ def rust_fyi_configs(*args):
     return list(args) + [
         "enable_rust_mojo",
         "enable_rust_mojom_bindings",
-        "enable_rust_png",
     ]
 
 ci.builder(
@@ -89,7 +86,7 @@ ci.builder(
             "rust_build_tests",
         ],
         mixins = [
-            "chromium_pixel_2_pie",
+            "chromium_pixel_2_q",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -138,7 +135,7 @@ ci.builder(
             "rust_build_tests",
         ],
         mixins = [
-            "chromium_pixel_2_pie",
+            "chromium_pixel_2_q",
         ],
     ),
     console_view_entry = consoles.console_view_entry(
@@ -188,7 +185,7 @@ ci.builder(
             "rust_build_tests",
         ],
         mixins = [
-            "chromium_pixel_2_pie",
+            "chromium_pixel_2_q",
         ],
     ),
     console_view_entry = consoles.console_view_entry(

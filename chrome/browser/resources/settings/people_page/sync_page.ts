@@ -13,7 +13,7 @@ import '//resources/cr_elements/cr_shared_style.css.js';
 import '//resources/cr_elements/cr_shared_vars.css.js';
 import '//resources/cr_elements/cr_expand_button/cr_expand_button.js';
 import '//resources/cr_elements/cr_icon/cr_icon.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import '//resources/cr_elements/cr_toast/cr_toast.js';
 // </if>
 
@@ -21,7 +21,7 @@ import './sync_encryption_options.js';
 import '../privacy_page/personalization_options.js';
 import '../settings_shared.css.js';
 import '../settings_vars.css.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import './sync_account_control.js';
 
 // </if>
@@ -42,14 +42,13 @@ import type {FocusConfig} from '../focus_config.js';
 import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
-import type {PageVisibility} from '../page_visibility.js';
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 import type {SettingsPersonalizationOptionsElement} from '../privacy_page/personalization_options.js';
 // </if>
 
 import {RouteObserverMixin, Router} from '../router.js';
 
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 import type {SettingsSyncEncryptionOptionsElement} from './sync_encryption_options.js';
 // </if>
 
@@ -108,14 +107,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         type: String,
         value: PageStatus.CONFIGURE,
       },
-
-      /**
-       * Dictionary defining page visibility.
-       * TODO(dpapad): Restore the type information here
-       * (PrivacyPageVisibility), when this file is no longer shared with
-       * chrome://os-settings.
-       */
-      pageVisibility: Object,
 
       /**
        * The current sync preferences, supplied by SyncBrowserProxy.
@@ -179,7 +170,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
             'syncPrefs.trustedVaultKeysRequired)',
       },
 
-      // <if expr="not chromeos_ash">
+      // <if expr="not is_chromeos">
       showSetupCancelDialog_: {
         type: Boolean,
         value: false,
@@ -229,7 +220,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   declare prefs: {[key: string]: any};
   declare focusConfig: FocusConfig;
   declare private pageStatus_: PageStatus;
-  declare pageVisibility: PageVisibility;
   declare syncPrefs?: SyncPrefs;
   declare syncStatus: SyncStatus;
   declare private dataEncrypted_: boolean;
@@ -244,7 +234,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   declare private isEeaChoiceCountry_: boolean;
   declare private personalizationCollapseExpanded_: boolean;
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   declare private showSetupCancelDialog_: boolean;
   // </if>
 
@@ -332,7 +322,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
   }
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   getEncryptionOptions(): SettingsSyncEncryptionOptionsElement|null {
     return this.shadowRoot!.querySelector('settings-sync-encryption-options');
   }
@@ -370,7 +360,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         });
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private onSetupCancelDialogBack_() {
     this.shadowRoot!.querySelector<CrDialogElement>(
                         '#setupCancelDialog')!.cancel();
@@ -413,7 +403,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
       return;
     }
 
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     const userActionCancelsSetup = this.syncStatus &&
         this.syncStatus.firstSetupInProgress && this.didAbort_;
     if (userActionCancelsSetup && !this.setupCancelConfirmed_) {
@@ -649,7 +639,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private shouldShowSyncAccountControl_(): boolean {
     return this.syncStatus !== undefined &&
         !!this.syncStatus.syncSystemEnabled &&

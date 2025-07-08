@@ -649,6 +649,12 @@
   <message name="IDS_OS_SETTINGS_TAG_POWER_ADAPTIVE_CHARGING" desc="Text for search result item which, when clicked, navigates the user to power settings, with an option to enable adaptive charging.">
     Adaptive charging
   </message>
+  <message name="IDS_OS_SETTINGS_TAG_POWER_OPTIMIZED_CHARGING" desc="Text for search result item which, when clicked, navigates the user to power settings, with an option to enable optimized charging." translateable="false">
+    Optimized charging
+  </message>
+  <message name="IDS_OS_SETTINGS_TAG_POWER_CHARGE_LIMIT" desc="Text for search result item which, when clicked, navigates the user to power settings, with an option to enable a charge limit." translateable="false">
+    Charge limit
+  </message>
   <message name="IDS_OS_SETTINGS_TAG_TOUCHPAD" desc="Text for search result item which, when clicked, navigates the user to touchpad settings. Alternate phrase for: 'Trackpad'">
     Touchpad
   </message>
@@ -902,6 +908,12 @@
   </message>
   <message name="IDS_OS_SETTINGS_TAG_MAGIC_BOOST_HMW" desc="Text for search result item which, when clicked, navigates the user to Help Me Write settings, with an option to turn functionality on.">
     Help Me Write
+  </message>
+  <message name="IDS_OS_SETTINGS_TAG_MAGIC_BOOST_LOBSTER" desc="Text for search result item which, when clicked, navigates the user to Create Image settings, with an option to turn functionality on.">
+    Create Image
+  </message>
+  <message name="IDS_OS_SETTINGS_TAG_SUGGESTED_ACTIONS" desc="Text for search result item which, when clicked, navigates the user to Suggested actions when searching your screen settings, with an option to turn functionality on.">
+    Suggested actions when searching your screen
   </message>
 
   <!-- Apps section. -->
@@ -1192,9 +1204,6 @@
   </message>
   <message name="IDS_OS_SETTINGS_TAG_LANGUAGES_PERSONAL_INFORMATION_SUGGESTIONS" desc="Text for search result item which, when clicked, navigates the user to suggestions settings, which with a toggle to enable/disable showing personal information suggestions.">
     Personal information suggestions
-  </message>
-  <message name="IDS_OS_SETTINGS_TAG_LANGUAGES_HELP_ME_WRITE_SUGGESTIONS" desc="Text for search result item which, when clicked, navigates the user to suggestions settings, with a section having a toggle to enable/disable showing Help me write after an user types a word.">
-    Help me write
   </message>
   <message name="IDS_OS_SETTINGS_TAG_LANGUAGES_EMOJI_SUGGESTIONS" desc="Text for search result item which, when clicked, navigates the user to suggestions settings, with a section having a toggle to enable/disable showing emoji suggestions after an user types a word.">
     Emoji suggestions

@@ -14,8 +14,6 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/feature_engagement/public/tracker.h"
-#import "components/omnibox/browser/actions/omnibox_action_concepts.h"
-#import "components/omnibox/browser/autocomplete_result.h"
 #import "components/omnibox/common/omnibox_features.h"
 #import "components/password_manager/core/browser/manage_passwords_referrer.h"
 #import "components/strings/grit/components_strings.h"
@@ -27,11 +25,11 @@
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_util.h"
 #import "ios/chrome/browser/omnibox/coordinator/popup/omnibox_popup_mediator+Testing.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_match_formatter.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_image_fetcher.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_pedal_swift.h"
-#import "ios/chrome/browser/omnibox/model/suggest_action.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_match_formatter.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/omnibox_pedal_swift.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/suggest_action.h"
 #import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item.h"
 #import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item_menu_provider.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_consumer.h"
@@ -60,10 +58,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 /// highlighted on down arrow key.
 @property(nonatomic, assign) NSInteger preselectedGroupIndex;
 
-// Whether the omnibox has a thumbnail.
-@property(nonatomic, assign) BOOL hasThumbnail;
-
-// Holds the current suggestion groups.
+/// Holds the current suggestion groups.
 @property(nonatomic, strong)
     NSArray<id<AutocompleteSuggestionGroup>>* suggestionGroups;
 
@@ -120,12 +115,6 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
     didUpdateSemanticContentAttribute:
         (UISemanticContentAttribute)semanticContentAttribute {
   [self.consumer setSemanticContentAttribute:semanticContentAttribute];
-}
-
-- (void)omniboxAutocompleteController:
-            (OmniboxAutocompleteController*)omniboxAutocompleteController
-                didUpdateHasThumbnail:(BOOL)hasThumbnail {
-  self.hasThumbnail = hasThumbnail;
 }
 
 - (void)omniboxAutocompleteController:

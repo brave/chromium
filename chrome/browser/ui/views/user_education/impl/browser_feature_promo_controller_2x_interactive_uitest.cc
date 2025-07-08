@@ -17,6 +17,7 @@
 #include "base/time/time.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/toolbar_controller_util.h"
@@ -30,6 +31,7 @@
 #include "chrome/browser/ui/views/user_education/impl/browser_feature_promo_preconditions.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
@@ -207,28 +209,28 @@ class BrowserFeaturePromoController2xUiTestBase
   }
 
   auto PressEscAndWaitForClose(ElementSpecifier spec) {
-    auto native_view =
-        base::MakeRefCounted<base::RefCountedData<gfx::NativeView>>(
-            gfx::NativeView());
+    auto widget =
+        base::MakeRefCounted<base::RefCountedData<const views::Widget*>>(
+            nullptr);
     return Steps(
         WaitForShow(spec),
         IfView(
             spec,
-            [native_view](const views::View* view) {
-              native_view.get()->data = view->GetWidget()->GetNativeView();
+            [widget](const views::View* view) {
+              widget.get()->data = view->GetWidget();
               return !view->GetWidget()->IsActive();
             },
             Then(ObserveState(views::test::kCurrentWidgetFocus),
-                 WaitForState(
-                     views::test::kCurrentWidgetFocus,
-                     [native_view]() { return native_view.get()->data; }))),
+                 WaitForState(views::test::kCurrentWidgetFocus,
+                              [widget]() { return widget.get()->data; }))),
         SendAccelerator(spec,
                         ui::Accelerator(ui::VKEY_ESCAPE, ui::MODIFIER_NONE)),
         WaitForHide(spec));
   }
 
   user_education::FeaturePromoController* promo_controller() const {
-    return browser()->window()->GetFeaturePromoControllerForTesting();
+    return BrowserUserEducationInterface::From(browser())
+        ->GetFeaturePromoControllerForTesting();
   }
 
  protected:
@@ -419,6 +421,10 @@ IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xUiTest,
       user_education::test::TestCustomHelpBubbleView::kBubbleId;
   RunTestSequence(
       MaybeShowPromo(kCustomUiTestFeature, CustomHelpBubbleShown{kBubbleId}),
+      CheckView(kBubbleId,
+                [](views::BubbleDialogDelegateView* bubble) {
+                  return bubble->GetBubbleFrameView()->GetDisplayVisibleArrow();
+                }),
       WithView(kBubbleId,
                [](views::View* view) { view->GetWidget()->Close(); }),
       WaitForHide(kBubbleId), CheckPromoRequested(kCustomUiTestFeature, false),
@@ -532,15 +538,18 @@ INSTANTIATE_V2X_TEST(BrowserFeaturePromoController2xLiveTrackerUiTest);
 // Regression test with live tracker for https://crbug.com/396344371
 IN_PROC_BROWSER_TEST_P(BrowserFeaturePromoController2xLiveTrackerUiTest,
                        ShowPromoTwice) {
-  RunTestSequence(WithView(kBrowserViewElementId,
-                           [](BrowserView* browser_view) {
-                             browser_view->MaybeShowFeaturePromo(kFeature);
-                           }),
-                  WithView(kBrowserViewElementId,
-                           [](BrowserView* browser_view) {
-                             browser_view->MaybeShowFeaturePromo(kFeature);
-                           }),
-                  WaitForPromo(kFeature));
+  RunTestSequence(
+      WithView(kBrowserViewElementId,
+               [](BrowserView* browser_view) {
+                 BrowserUserEducationInterface::From(browser_view->browser())
+                     ->MaybeShowFeaturePromo(kFeature);
+               }),
+      WithView(kBrowserViewElementId,
+               [](BrowserView* browser_view) {
+                 BrowserUserEducationInterface::From(browser_view->browser())
+                     ->MaybeShowFeaturePromo(kFeature);
+               }),
+      WaitForPromo(kFeature));
 }
 
 // Using the base interactive browser test re-enables window activation
@@ -562,7 +571,8 @@ class BrowserFeaturePromoController20CanShowPromoForElementUiTest
         spec,
         [this](ui::TrackedElement* anchor) {
           return static_cast<BrowserFeaturePromoController20*>(
-                     browser()->window()->GetFeaturePromoControllerForTesting())
+                     BrowserUserEducationInterface::From(browser())
+                         ->GetFeaturePromoControllerForTesting())
               ->CanShowPromoForElement(anchor);
         },
         expected);
@@ -605,8 +615,7 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20ActivationUiTest,
                  widget->Activate();
                }),
       // Wait for widget activation to move to the new widget.
-      WaitForState(views::test::kCurrentWidgetFocus,
-                   [&widget]() { return widget->GetNativeView(); }),
+      WaitForState(views::test::kCurrentWidgetFocus, widget.get()),
       // Verify that we can no longer show the promo, since the browser is not
       // the active window.
       CheckCanShowPromoForElement(
@@ -640,7 +649,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
       WithElement(kTabId,
                   [this](ui::TrackedElement* tab) {
                     browser()
-                        ->exclusive_access_manager()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
                         ->fullscreen_controller()
                         ->EnterFullscreenModeForTab(
                             AsInstrumentedWebContents(tab)
@@ -650,7 +660,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
       CheckResult(
           [this]() {
             return browser()
-                ->exclusive_access_manager()
+                ->GetFeatures()
+                .exclusive_access_manager()
                 ->fullscreen_controller()
                 ->IsTabFullscreen();
           },
@@ -671,7 +682,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
       WithElement(kTabId,
                   [this](ui::TrackedElement* tab) {
                     browser()
-                        ->exclusive_access_manager()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
                         ->fullscreen_controller()
                         ->EnterFullscreenModeForTab(
                             AsInstrumentedWebContents(tab)
@@ -681,7 +693,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
       WithElement(kTabId,
                   [this](ui::TrackedElement* tab) {
                     browser()
-                        ->exclusive_access_manager()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
                         ->fullscreen_controller()
                         ->ExitFullscreenModeForTab(
                             AsInstrumentedWebContents(tab)->web_contents());
@@ -689,7 +702,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoController20FullscreenUiTest,
       CheckResult(
           [this]() {
             return browser()
-                ->exclusive_access_manager()
+                ->GetFeatures()
+                .exclusive_access_manager()
                 ->fullscreen_controller()
                 ->IsTabFullscreen();
           },

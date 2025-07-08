@@ -357,12 +357,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   GREYWaitForAppToIdle(@"App failed to idle");
 }
 
-- (void)simulateAddAccountFromWeb {
-  [ChromeEarlGreyAppInterface simulateAddAccountFromWeb];
-  [self waitForPageToFinishLoading];
-  GREYWaitForAppToIdle(@"App failed to idle");
-}
-
 - (void)closeCurrentTab {
   [ChromeEarlGreyAppInterface closeCurrentTab];
   GREYWaitForAppToIdle(@"App failed to idle");
@@ -1341,6 +1335,13 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
       result.success, @"An error was produced during the script's execution");
 }
 
+- (void)evaluateJavaScriptInIsolatedWorldForSideEffect:(NSString*)javaScript {
+  JavaScriptExecutionResult* result =
+      [ChromeEarlGreyAppInterface executeJavaScriptInIsolatedWorld:javaScript];
+  EG_TEST_HELPER_ASSERT_TRUE(
+      result.success, @"An error was produced during the script's execution");
+}
+
 - (NSString*)mobileUserAgentString {
   return [ChromeEarlGreyAppInterface mobileUserAgentString];
 }
@@ -1586,6 +1587,13 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   return success ? value->GetInt() : 0;
 }
 
+- (double)userDoublePref:(const std::string&)prefName {
+  std::optional<base::Value> value = [self userPrefValue:prefName];
+  BOOL success = value && value->is_double();
+  EG_TEST_HELPER_ASSERT_TRUE(success, @"Expected double");
+  return success ? value->GetDouble() : 0.0;
+}
+
 - (std::string)userStringPref:(const std::string&)prefName {
   std::optional<base::Value> value = [self userPrefValue:prefName];
   BOOL success = value && value->is_string();
@@ -1609,6 +1617,12 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   NSString* prefName = base::SysUTF8ToNSString(UTF8PrefName);
   return [ChromeEarlGreyAppInterface setIntegerValue:value
                                          forUserPref:prefName];
+}
+
+- (void)setDoubleValue:(double)value
+           forUserPref:(const std::string&)UTF8PrefName {
+  NSString* prefName = base::SysUTF8ToNSString(UTF8PrefName);
+  return [ChromeEarlGreyAppInterface setDoubleValue:value forUserPref:prefName];
 }
 
 - (bool)prefWithNameIsDefaultValue:(const std::string&)prefName {
@@ -1739,14 +1753,14 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration) {
   if (@available(iOS 17, *)) {
     XCUIApplication* currentApplication = [[XCUIApplication alloc] init];
     BOOL hostStringPresent = [currentApplication.otherElements[hostString]
-        waitForExistenceWithTimeout:2];
+        waitForExistenceWithTimeout:kWaitForUIElementTimeout.InSecondsF()];
     BOOL pageTitlePresent = [currentApplication.otherElements[pageTitle]
-        waitForExistenceWithTimeout:2];
+        waitForExistenceWithTimeout:kWaitForUIElementTimeout.InSecondsF()];
     GREYAssert(hostStringPresent || pageTitlePresent,
                @"Either hostString %d or pageTitle %d was not present",
                hostStringPresent, pageTitlePresent);
   } else {
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
     // The activity view share sheet blocks EarlGrey's synchronization on
     // the simulators. Ref:
     // github.com/google/EarlGrey/blob/master/docs/features.md#visibility-checks

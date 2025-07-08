@@ -12,7 +12,6 @@ import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.task.ChainedTasks;
 import org.chromium.base.task.TaskTraits;
@@ -68,7 +67,7 @@ public class ChromeBrowserInitializer {
             task.run();
         } else {
             if (mTasksToRunWithFullBrowser == null) {
-                mTasksToRunWithFullBrowser = new ArrayList<Runnable>();
+                mTasksToRunWithFullBrowser = new ArrayList<>();
             }
             mTasksToRunWithFullBrowser.add(task);
         }
@@ -260,6 +259,8 @@ public class ChromeBrowserInitializer {
                             LibraryProcessType.PROCESS_BROWSER,
                             startGpuProcess,
                             startMinimalBrowser,
+                            /* singleProcess= */ false,
+                            /* scheduleFlushStartupTasks= */ false,
                             callback);
         } finally {
             TraceEvent.end("ChromeBrowserInitializer.startChromeBrowserProcessesAsync");
@@ -273,7 +274,6 @@ public class ChromeBrowserInitializer {
             StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
             LibraryLoader.getInstance().ensureInitialized();
             StrictMode.setThreadPolicy(oldPolicy);
-            LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
             getBrowserStartupController()
                     .startBrowserProcessesSync(
                             LibraryProcessType.PROCESS_BROWSER,

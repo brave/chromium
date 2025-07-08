@@ -9,8 +9,26 @@
 
 namespace blink {
 
+namespace {
+
+void AdjustMasonryItemSpan(Member<GridItemData>& masonry_item,
+                           const GridLineResolver& line_resolver,
+                           const GridTrackSizingDirection grid_axis_direction) {
+  CHECK(masonry_item);
+
+  // Resolve the positions of the items based on style. We can only resolve
+  // the number of spans for each item based on the grid axis.
+  GridSpan item_span = line_resolver.ResolveGridPositionsFromStyle(
+      masonry_item->node.Style(), grid_axis_direction);
+
+  masonry_item->resolved_position.SetSpan(item_span, grid_axis_direction);
+}
+
+}  // namespace
+
 MasonryItemGroups MasonryNode::CollectItemGroups(
     const GridLineResolver& line_resolver,
+    const GridItems& masonry_items,
     wtf_size_t& max_end_line,
     wtf_size_t& start_offset) const {
   const auto grid_axis_direction = Style().MasonryTrackSizingDirection();
@@ -18,7 +36,11 @@ MasonryItemGroups MasonryNode::CollectItemGroups(
   start_offset = 0;
   MasonryItemGroupMap item_group_map;
 
-  for (auto child = FirstChild(); child; child = child.NextSibling()) {
+  for (wtf_size_t index = 0; index < masonry_items.Size(); ++index) {
+    const Member<GridItemData>& masonry_item = masonry_items[index];
+    DCHECK(masonry_item);
+
+    const BlockNode& child = masonry_item->node;
     if (child.IsOutOfFlowPositioned()) {
       continue;
     }
@@ -36,9 +58,9 @@ MasonryItemGroups MasonryNode::CollectItemGroups(
     const auto group_it = item_group_map.find(item_properties);
     if (group_it == item_group_map.end()) {
       item_group_map.insert(item_properties,
-                            HeapVector<BlockNode, 16>({To<BlockNode>(child)}));
+                            GridItems::GridItemDataVector({masonry_item}));
     } else {
-      group_it->value.emplace_back(To<BlockNode>(child));
+      group_it->value.emplace_back(masonry_item);
     }
   }
 
@@ -65,10 +87,10 @@ MasonryItemGroups MasonryNode::CollectItemGroups(
 }
 
 GridItems MasonryNode::ConstructMasonryItems(
-    const GridLineResolver& line_resolver,
-    wtf_size_t start_offset) const {
-  const auto& style = Style();
-  const auto grid_axis_direction = style.MasonryTrackSizingDirection();
+    const GridLineResolver& line_resolver) const {
+  const ComputedStyle& style = Style();
+  const GridTrackSizingDirection grid_axis_direction =
+      style.MasonryTrackSizingDirection();
 
   GridItems masonry_items;
   {
@@ -77,24 +99,14 @@ GridItems MasonryNode::ConstructMasonryItems(
 
     // This collects all our children, and orders them by their order property.
     for (auto child = FirstChild(); child; child = child.NextSibling()) {
-      const auto& child_style = child.Style();
-      auto* masonry_item = MakeGarbageCollected<GridItemData>(
+      Member<GridItemData> masonry_item = MakeGarbageCollected<GridItemData>(
           To<BlockNode>(child), /*parent_style=*/style);
 
       // We'll need to sort when we encounter a non-initial order property.
       should_sort_masonry_items_by_order_property |=
-          child_style.Order() != initial_order;
+          child.Style().Order() != initial_order;
 
-      // Resolve the positions of the items based on style. We can only resolve
-      // the number of spans for each item based on the grid axis.
-      auto item_span = line_resolver.ResolveGridPositionsFromStyle(
-          child_style, grid_axis_direction);
-
-      if (item_span.IsUntranslatedDefinite()) {
-        item_span.Translate(start_offset);
-      }
-
-      masonry_item->resolved_position.SetSpan(item_span, grid_axis_direction);
+      AdjustMasonryItemSpan(masonry_item, line_resolver, grid_axis_direction);
       masonry_items.Append(masonry_item);
     }
 
@@ -104,6 +116,16 @@ GridItems MasonryNode::ConstructMasonryItems(
     }
   }
   return masonry_items;
+}
+
+void MasonryNode::AdjustMasonryItemSpans(
+    GridItems& masonry_items,
+    const GridLineResolver& line_resolver) const {
+  const GridTrackSizingDirection grid_axis_direction =
+      Style().MasonryTrackSizingDirection();
+  for (Member<GridItemData> masonry_item : masonry_items) {
+    AdjustMasonryItemSpan(masonry_item, line_resolver, grid_axis_direction);
+  }
 }
 
 }  // namespace blink

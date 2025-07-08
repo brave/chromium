@@ -174,8 +174,10 @@ public class ChildProcessRankingTest {
         ChildProcessConnection c3 = createConnection();
         ChildProcessConnection c4 = createConnection();
         ChildProcessConnection c5 = createConnection();
+        ChildProcessConnection c6 = createConnection();
+        ChildProcessConnection c7 = createConnection();
 
-        ChildProcessRanking ranking = new ChildProcessRanking(5);
+        ChildProcessRanking ranking = new ChildProcessRanking(7);
         ranking.enableServiceGroupImportance();
 
         // Insert in lowest ranked to highest ranked order.
@@ -195,28 +197,45 @@ public class ChildProcessRankingTest {
                 ChildProcessImportance.PERCEPTIBLE);
         ranking.addConnection(
                 c3,
+                /* visible= */ true,
+                /* frameDepth= */ 1,
+                /* intersectsViewport= */ false,
+                /* isSpareRenderer= */ false,
+                ChildProcessImportance.NORMAL);
+        ranking.addConnection(
+                c4,
                 /* visible= */ false,
                 /* frameDepth= */ 0,
                 /* intersectsViewport= */ false,
                 /* isSpareRenderer= */ false,
                 ChildProcessImportance.MODERATE);
         ranking.addConnection(
-                c4,
+                c5,
                 /* visible= */ false,
                 /* frameDepth= */ 1,
                 /* intersectsViewport= */ false,
                 /* isSpareRenderer= */ false,
                 ChildProcessImportance.IMPORTANT);
         ranking.addConnection(
-                c5,
+                c6,
                 /* visible= */ false,
                 /* frameDepth= */ 0,
                 /* intersectsViewport= */ false,
                 /* isSpareRenderer= */ false,
                 ChildProcessImportance.IMPORTANT);
+        // Visible main frame should be ChildProcessImportance.MODERATE or higher. But there can be
+        // a race of inconsistency.
+        ranking.addConnection(
+                c7,
+                /* visible= */ true,
+                /* frameDepth= */ 0,
+                /* intersectsViewport= */ false,
+                /* isSpareRenderer= */ false,
+                ChildProcessImportance.PERCEPTIBLE);
 
-        assertRankingAndRemoveAll(ranking, new ChildProcessConnection[] {c5, c4, c3, c2, c1});
-        assertNotInGroup(new ChildProcessConnection[] {c5, c4, c3, c2});
+        assertRankingAndRemoveAll(
+                ranking, new ChildProcessConnection[] {c7, c6, c5, c4, c3, c2, c1});
+        assertNotInGroup(new ChildProcessConnection[] {c7, c6, c5, c4});
         assertInGroupOrderedByImportance(new ChildProcessConnection[] {c1});
     }
 
@@ -489,5 +508,50 @@ public class ChildProcessRankingTest {
                 ChildProcessImportance.NORMAL);
 
         assertRankingAndRemoveAll(ranking, new ChildProcessConnection[] {c2, c3, c1});
+    }
+
+    // Regression test for crbug.com/428626207
+    @Test
+    public void testSpareRendererVisible() {
+        FeatureOverrides.overrideParam(
+                ContentFeatureList.sSpareRendererLowestRanking.getFeatureName(),
+                ContentFeatureList.sSpareRendererLowestRanking.getName(),
+                true);
+
+        ChildProcessConnection c1 = createConnection();
+        ChildProcessConnection c2 = createConnection();
+        ChildProcessConnection c3 = createConnection();
+        ChildProcessRanking ranking = new ChildProcessRanking();
+        ranking.enableServiceGroupImportance();
+
+        ranking.addConnection(
+                c1,
+                /* visible= */ true,
+                /* frameDepth= */ 10,
+                /* intersectsViewport= */ false,
+                /* isSpareRenderer= */ false,
+                ChildProcessImportance.NORMAL);
+        ranking.addConnection(
+                c2,
+                /* visible= */ true,
+                /* frameDepth= */ 0,
+                /* intersectsViewport= */ true,
+                /* isSpareRenderer= */ false,
+                ChildProcessImportance.IMPORTANT);
+        // If the spare renderer is marked as intersectsViewPort,
+        // the spare renderer attribute should be ignored. Thus
+        // c3 should be of higher rank than the non-visible c1.
+        ranking.addConnection(
+                c3,
+                /* visible= */ true,
+                /* frameDepth= */ 10,
+                /* intersectsViewport= */ true,
+                /* isSpareRenderer= */ true,
+                ChildProcessImportance.NORMAL);
+
+        assertRankingAndRemoveAll(ranking, new ChildProcessConnection[] {c2, c3, c1});
+        // Moreover, verify that c3 is not in the low ranking group.
+        assertNotInGroup(new ChildProcessConnection[] {c3, c2});
+        assertInGroupOrderedByImportance(new ChildProcessConnection[] {c1});
     }
 }

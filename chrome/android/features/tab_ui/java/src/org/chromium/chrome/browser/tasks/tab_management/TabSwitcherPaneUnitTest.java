@@ -250,6 +250,7 @@ public class TabSwitcherPaneUnitTest {
                         mHairlineVisibilityCallbackCaptor.capture(),
                         anyBoolean(),
                         any(),
+                        any(),
                         any());
         when(mTabSwitcherPaneCoordinatorFactory.getTabListMode()).thenReturn(TabListMode.GRID);
         when(mTabSwitcherPaneCoordinator.getHandleBackPressChangedSupplier())
@@ -291,7 +292,8 @@ public class TabSwitcherPaneUnitTest {
                         mEdgeToEdgeSupplier,
                         mCompositorViewHolderSupplier,
                         mUiFlow,
-                        mMockArchivedTabsAutoDeletePromoManager);
+                        mMockArchivedTabsAutoDeletePromoManager,
+                        /* xrSpaceModeObservableSupplier= */ null);
         ShadowLooper.runUiThreadTasks();
         verify(mSharedPreferences)
                 .registerOnSharedPreferenceChangeListener(

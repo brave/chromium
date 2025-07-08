@@ -1685,7 +1685,7 @@ bool SwapChainPresenter::PresentToSwapChain(DCLayerOverlayParams& params,
     return false;
   }
 
-  HRESULT hr, device_removed_reason;
+  HRESULT hr;
   if (first_present_) {
     first_present_ = false;
     UINT flags = DXGI_PRESENT_USE_DURATION;
@@ -1727,27 +1727,9 @@ bool SwapChainPresenter::PresentToSwapChain(DCLayerOverlayParams& params,
     hr = dxgi_device2->EnqueueSetEvent(event.handle());
     if (SUCCEEDED(hr)) {
       event.Wait();
-    } else {
-      device_removed_reason = d3d11_device_->GetDeviceRemovedReason();
-      base::debug::Alias(&hr);
-      base::debug::Alias(&device_removed_reason);
-
-      // Add a crash key. The minidump might be discarded due to large size.
-      static auto* hr_enqueue_set_event_key =
-          base::debug::AllocateCrashKeyString(
-              "hr-EnqueueSetEvent", base::debug::CrashKeySize::Size64);
-      base::debug::ScopedCrashKeyString scoped_crash_key_1(
-          hr_enqueue_set_event_key, base::StringPrintf("0x%x", hr));
-      static auto* hr_device_removed_reason_key =
-          base::debug::AllocateCrashKeyString(
-              "hr-DeviceRemovedReason", base::debug::CrashKeySize::Size64);
-      base::debug::ScopedCrashKeyString scoped_crash_key_2(
-          hr_device_removed_reason_key,
-          base::StringPrintf("0x%x", device_removed_reason));
-
-      base::debug::DumpWithoutCrashing();
     }
   }
+
   UINT flags = DXGI_PRESENT_USE_DURATION;
   UINT interval = 1;
   if (DirectCompositionSwapChainTearingEnabled()) {
@@ -1814,6 +1796,19 @@ bool SwapChainPresenter::PresentToSwapChain(DCLayerOverlayParams& params,
 // static
 bool SwapChainPresenter::CreateSurfaceHandleHelperForTesting(HANDLE* handle) {
   return CreateSurfaceHandleHelper(handle);
+}
+
+SwapChainPresenter::PresentationMode
+SwapChainPresenter::GetLastPresentationMode() const {
+  if (IsMediaFoundationSurfaceProxy()) {
+    return PresentationMode::kMfSurfaceProxy;
+  } else if (decode_swap_chain_) {
+    return PresentationMode::kDecodeSwapChain;
+  } else if (staging_texture_) {
+    return PresentationMode::kVpBltWithStagingTexture;
+  } else {
+    return PresentationMode::kVpBlt;
+  }
 }
 
 void SwapChainPresenter::RecordPresentationStatistics() {
@@ -1917,7 +1912,9 @@ bool SwapChainPresenter::PresentDCOMPSurface(DCLayerOverlayParams& params,
                               kDestSizeTolerance) &&
       params.z_order > 0;
 
-  if (is_fullscreen_letterboxing_overlay_scenario) {
+  if (is_fullscreen_letterboxing_overlay_scenario &&
+      base::FeatureList::IsEnabled(
+          features::kDesktopPlaneRemovalForMFFullScreenLetterbox)) {
     const gfx::Rect monitor_rect =
         gfx::Rect(gfx::ToRoundedSize(dest_size.value()));
     mapped_rect = monitor_rect;
@@ -1944,9 +1941,6 @@ bool SwapChainPresenter::PresentDCOMPSurface(DCLayerOverlayParams& params,
   // instead of allowing clipping to a portion of the video.
 
   dcomp_surface_proxy->SetRect(mapped_rect);
-
-  dcomp_surface_proxy->SetProtectedVideoType(
-      params.video_params.protected_video_type);
 
   // If |dcomp_surface_proxy| size is {1, 1}, the texture was initialized
   // without knowledge of output size; reset |content_| so it's not added to the
@@ -2533,6 +2527,15 @@ bool SwapChainPresenter::RevertSwapChainToSDR(
   }
 
   return true;
+}
+
+bool SwapChainPresenter::IsMediaFoundationSurfaceProxy() const {
+  if (last_overlay_image_ &&
+      last_overlay_image_->type() == DCLayerOverlayType::kDCompSurfaceProxy) {
+    CHECK(last_overlay_image_->dcomp_surface_proxy());
+    return true;
+  }
+  return false;
 }
 
 }  // namespace gl

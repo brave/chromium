@@ -30,7 +30,6 @@
 #include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/filling/autofill_ai/field_filling_entity_util.h"
 #include "components/autofill/core/browser/filling/field_filling_util.h"
@@ -41,7 +40,7 @@
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/foundations/test_autofill_driver.h"
 #include "components/autofill/core/browser/foundations/test_browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/autofill_ai/mock_autofill_ai_delegate.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/mock_autofill_ai_manager.h"
 #include "components/autofill/core/browser/integrators/compose/autofill_compose_delegate.h"
 #include "components/autofill/core/browser/integrators/compose/mock_autofill_compose_delegate.h"
 #include "components/autofill/core/browser/integrators/identity_credential/mock_identity_credential_delegate.h"
@@ -55,6 +54,7 @@
 #include "components/autofill/core/browser/payments/mock_iban_access_manager.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/test/mock_bnpl_manager.h"
+#include "components/autofill/core/browser/payments/test/mock_save_and_fill_manager.h"
 #include "components/autofill/core/browser/payments/test_payments_autofill_client.h"
 #include "components/autofill/core/browser/single_field_fillers/mock_single_field_fill_router.h"
 #include "components/autofill/core/browser/studies/autofill_experiments.h"
@@ -557,15 +557,13 @@ TEST_F(AutofillExternalDelegateTest, GetMainFillingProduct) {
   EXPECT_EQ(external_delegate().GetMainFillingProduct(),
             FillingProduct::kAutocomplete);
 
-  // Show only datalist suggestion with autocomplete suggestion in the popup.
+  // Show only datalist suggestion in the popup.
   OnSuggestionsReturned(
       queried_field().global_id(),
       {test::CreateAutofillSuggestion(SuggestionType::kDatalistEntry,
-                                      u"datalist"),
-       test::CreateAutofillSuggestion(SuggestionType::kAutocompleteEntry,
-                                      u"autocomplete")});
+                                      u"datalist")});
   EXPECT_EQ(external_delegate().GetMainFillingProduct(),
-            FillingProduct::kAutocomplete);
+            FillingProduct::kDataList);
 
   // Show auxiliary helper suggestion in the popup.
   OnSuggestionsReturned(
@@ -2339,6 +2337,18 @@ TEST_F(AutofillExternalDelegateTest,
 }
 
 TEST_F(AutofillExternalDelegateTest,
+       AcceptSaveAndFillCreditCardSuggestion_CallsSaveAndFillManager) {
+  IssueOnQuery();
+
+  EXPECT_CALL(*client().GetPaymentsAutofillClient()->GetSaveAndFillManager(),
+              OnDidAcceptCreditCardSaveAndFillSuggestion());
+  external_delegate().DidAcceptSuggestion(
+      test::CreateAutofillSuggestion(
+          SuggestionType::kSaveAndFillCreditCardEntry),
+      SuggestionPosition{.row = 0});
+}
+
+TEST_F(AutofillExternalDelegateTest,
        Compose_AcceptNeverShowOnThisWebsiteAgain_CallsComposeDelegate) {
   MockAutofillComposeDelegate compose_delegate;
   ON_CALL(client(), GetComposeDelegate)
@@ -2748,34 +2758,6 @@ TEST_F(AutofillExternalDelegateTest, RemoveSuggestion_ServerCard) {
                                      Suggestion::Guid(server_card.guid()))));
   EXPECT_TRUE(
       pdm().payments_data_manager().GetCreditCardByGUID(server_card.guid()));
-}
-
-// Tests that the home and address suggestions are not removed.
-TEST_F(AutofillExternalDelegateTest, RemoveHomeAndWorkAddressSuggestion) {
-  autofill::AutofillProfile profile1 = autofill::test::GetFullProfile();
-  test_api(profile1).set_record_type(
-      autofill::AutofillProfile::RecordType::kAccountHome);
-
-  autofill::AutofillProfile profile2 = autofill::test::GetFullProfile2();
-  test_api(profile2).set_record_type(
-      autofill::AutofillProfile::RecordType::kAccountWork);
-
-  pdm().address_data_manager().AddProfile(profile1);
-  pdm().address_data_manager().AddProfile(profile2);
-  ASSERT_TRUE(pdm().address_data_manager().GetProfileByGUID(profile1.guid()));
-  ASSERT_TRUE(pdm().address_data_manager().GetProfileByGUID(profile2.guid()));
-
-  EXPECT_FALSE(external_delegate().RemoveSuggestion(
-      test::CreateAutofillSuggestion(SuggestionType::kAddressEntry, u"address1",
-                                     Suggestion::AutofillProfilePayload(
-                                         Suggestion::Guid(profile1.guid())))));
-  EXPECT_TRUE(pdm().address_data_manager().GetProfileByGUID(profile1.guid()));
-
-  EXPECT_FALSE(external_delegate().RemoveSuggestion(
-      test::CreateAutofillSuggestion(SuggestionType::kAddressEntry, u"address2",
-                                     Suggestion::AutofillProfilePayload(
-                                         Suggestion::Guid(profile2.guid())))));
-  EXPECT_TRUE(pdm().address_data_manager().GetProfileByGUID(profile2.guid()));
 }
 
 TEST_F(AutofillExternalDelegateTest, RecordSuggestionTypeOnSuggestionAccepted) {

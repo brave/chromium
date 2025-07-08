@@ -469,7 +469,8 @@ class CORE_EXPORT CSSAnimations final {
                                           const CSSAnimationData* data,
                                           wtf_size_t animation_index,
                                           const CSSAnimationUpdate& update,
-                                          AnimationTrigger* existing_trigger);
+                                          AnimationTrigger* existing_trigger,
+                                          float zoom);
 
   class AnimationEventDelegate final : public AnimationEffect::EventDelegate {
    public:
@@ -525,7 +526,7 @@ class CORE_EXPORT CSSAnimations final {
     void Trace(Visitor*) const override;
 
    private:
-    void EnqueueEvent(const WTF::AtomicString& type,
+    void EnqueueEvent(const AtomicString& type,
                       const AnimationTimeDelta& elapsed_time);
 
     const Element& TransitionTarget() const { return *transition_target_; }

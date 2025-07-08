@@ -16,6 +16,8 @@
 #include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
 #include "base/strings/pattern.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -1339,7 +1341,8 @@ void InterceptionJob::ProcessRedirectByClient(const GURL& redirect_url) {
       net::RedirectInfo::ComputeRedirectInfo(
           request.method, request.url, request.site_for_cookies,
           first_party_url_policy, request.referrer_policy,
-          request.referrer.spec(), headers.response_code(), redirect_url,
+          request.referrer.spec(), request.request_initiator,
+          headers.response_code(), redirect_url,
           net::RedirectUtil::GetReferrerPolicyHeader(&headers),
           false /* insecure_scheme_was_upgraded */, true /* copy_fragment */));
 

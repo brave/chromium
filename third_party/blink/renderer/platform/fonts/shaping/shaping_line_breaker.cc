@@ -211,8 +211,7 @@ inline void ShapingLineBreaker::SetBreakOffset(unsigned break_offset,
                                                const String& text,
                                                Result* result) {
   result->break_offset = break_offset;
-  result->is_hyphenated =
-      text[result->break_offset - 1] == kSoftHyphenCharacter;
+  result->is_hyphenated = text[result->break_offset - 1] == uchar::kSoftHyphen;
 }
 
 inline void ShapingLineBreaker::SetBreakOffset(
@@ -220,9 +219,8 @@ inline void ShapingLineBreaker::SetBreakOffset(
     const String& text,
     Result* result) {
   result->break_offset = break_opportunity.offset;
-  result->is_hyphenated =
-      break_opportunity.is_hyphenated ||
-      text[result->break_offset - 1] == kSoftHyphenCharacter;
+  result->is_hyphenated = break_opportunity.is_hyphenated ||
+                          text[result->break_offset - 1] == uchar::kSoftHyphen;
 }
 
 // Shapes a line of text by finding a valid and appropriate break opportunity
@@ -286,8 +284,7 @@ const ShapeResultView* ShapingLineBreaker::ShapeLine(
       !(IsStartOfWrappedLine(start) &&
         ShouldTrimStartOfWrappedLine(text_spacing_trim_)) &&
       // Disable if the line start needs reshape.
-      result_->IsStartSafeToBreak() &&
-      RuntimeEnabledFeatures::LineBreakEarlyReturnEnabled()) [[unlikely]] {
+      result_->IsStartSafeToBreak()) [[unlikely]] {
 #if EXPENSIVE_DCHECKS_ARE_ON()
     result_->EnsurePositionData();
     const EdgeOffset first_safe = FirstSafeOffset(start);

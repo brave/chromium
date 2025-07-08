@@ -20,6 +20,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/memory.h"
+#include "base/strings/string_view_util.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -124,7 +125,8 @@ void AsanPoisonString(const String& string) {
   if (string.Impl()->IsAtomic())
     return;
 
-  ASAN_POISON_MEMORY_REGION(string.Bytes(), string.CharactersSizeInBytes());
+  ASAN_POISON_MEMORY_REGION(string.RawByteSpan().data(),
+                            string.CharactersSizeInBytes());
 #endif  // defined(ADDRESS_SANITIZER)
 }
 
@@ -133,7 +135,8 @@ void AsanUnpoisonString(const String& string) {
   if (string.IsNull())
     return;
 
-  ASAN_UNPOISON_MEMORY_REGION(string.Bytes(), string.CharactersSizeInBytes());
+  ASAN_UNPOISON_MEMORY_REGION(string.RawByteSpan().data(),
+                              string.CharactersSizeInBytes());
 #endif  // defined(ADDRESS_SANITIZER)
 }
 

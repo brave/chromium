@@ -98,16 +98,6 @@ using signin_metrics::PromoAction;
                                              continuationProvider:provider];
       break;
     }
-    case AuthenticationOperation::kAddAccount: {
-      signinCoordinator = [SigninCoordinator
-          addAccountCoordinatorWithBaseViewController:baseViewController
-                                              browser:browser
-                                         contextStyle:command.contextStyle
-                                          accessPoint:command.accessPoint
-                                 continuationProvider:
-                                     command.changeProfileContinuationProvider];
-      break;
-    }
     case AuthenticationOperation::kInstantSignin: {
       signinCoordinator = [SigninCoordinator
           instantSigninCoordinatorWithBaseViewController:baseViewController
@@ -147,7 +137,8 @@ using signin_metrics::PromoAction;
                                                browser:browser
                                           contextStyle:command.contextStyle
                                            accessPoint:command.accessPoint
-                                           promoAction:command.promoAction];
+                                           promoAction:command.promoAction
+                                          showSnackbar:command.showSnackbar];
       break;
     }
   }
@@ -336,12 +327,14 @@ using signin_metrics::PromoAction;
                                      accessPoint:(signin_metrics::AccessPoint)
                                                      accessPoint
                                      promoAction:(signin_metrics::PromoAction)
-                                                     promoAction {
+                                                     promoAction
+                                    showSnackbar:(BOOL)showSnackbar {
   return [[HistorySyncSigninCoordinator alloc]
       initWithBaseViewController:viewController
                          browser:browser
                     contextStyle:contextStyle
-                     accessPoint:accessPoint];
+                     accessPoint:accessPoint
+                    showSnackbar:showSnackbar];
 }
 
 #pragma mark - SigninCoordinator

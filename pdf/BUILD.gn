@@ -23,6 +23,7 @@ buildflag_header("buildflags") {
   flags = [
     "ENABLE_INK=$enable_ink",
     "ENABLE_PDF_INK2=$enable_pdf_ink2",
+    "ENABLE_PDF_SAVE_TO_DRIVE=$enable_pdf_save_to_drive",
     "ENABLE_PDF=$enable_pdf",
   ]
 }
@@ -107,6 +108,9 @@ if (enable_pdf) {
       "paint_ready_rect.h",
       "parsed_params.cc",
       "parsed_params.h",
+      "pdf_caret.cc",
+      "pdf_caret.h",
+      "pdf_caret_client.h",
       "pdf_init.cc",
       "pdf_init.h",
       "pdf_transform.cc",
@@ -148,6 +152,8 @@ if (enable_pdf) {
       "pdfium/pdfium_unsupported_features.h",
       "preview_mode_client.cc",
       "preview_mode_client.h",
+      "region_data.cc",
+      "region_data.h",
       "text_search.cc",
       "text_search.h",
       "ui/document_properties.cc",
@@ -411,6 +417,7 @@ if (enable_pdf) {
       ":buildflags",
       ":internal",
       "//base",
+      "//base/test:test_support",
       "//cc:test_support",
       "//pdf/loader",
       "//printing",
@@ -434,6 +441,7 @@ if (enable_pdf) {
       "page_orientation_unittest.cc",
       "paint_manager_unittest.cc",
       "parsed_params_unittest.cc",
+      "pdf_caret_unittest.cc",
       "pdf_transform_unittest.cc",
       "pdf_utils/dates_unittest.cc",
       "pdf_view_web_plugin_unittest.cc",

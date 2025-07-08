@@ -597,8 +597,8 @@ void OpenNewWindowForFirstRun(const base::CommandLine& command_line,
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Returns the app id of the kiosk app associated with the current user session.
-// Returns nullopt for non-kiosk user sessions, since crash recovery is not
-// supported there.
+// Returns nullopt for non-kiosk user sessions and for ARCVM kiosk sessions,
+// since crash recovery is not supported there.
 std::optional<ash::KioskAppId> GetAppId(const base::CommandLine& command_line,
                                         Profile* profile) {
   const user_manager::User* user =
@@ -609,11 +609,11 @@ std::optional<ash::KioskAppId> GetAppId(const base::CommandLine& command_line,
   }
 
   switch (user->GetType()) {
-    case user_manager::UserType::kKioskApp:
+    case user_manager::UserType::kKioskChromeApp:
       return ash::KioskAppId::ForChromeApp(
           command_line.GetSwitchValueASCII(::switches::kAppId),
           user->GetAccountId());
-    case user_manager::UserType::kWebKioskApp:
+    case user_manager::UserType::kKioskWebApp:
       return ash::KioskAppId::ForWebApp(user->GetAccountId());
     case user_manager::UserType::kKioskIWA:
       return ash::KioskAppId::ForIsolatedWebApp(user->GetAccountId());
@@ -621,10 +621,18 @@ std::optional<ash::KioskAppId> GetAppId(const base::CommandLine& command_line,
     case user_manager::UserType::kChild:
     case user_manager::UserType::kGuest:
     case user_manager::UserType::kPublicAccount:
+    case user_manager::UserType::kKioskArcvmApp:
       return std::nullopt;
   }
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+bool ShouldForceLaunchIntoProfileWithEmail(
+    const base::CommandLine& command_line) {
+  return command_line.HasSwitch(switches::kCreateProfileEmailIfNotExists) &&
+         !command_line.GetSwitchValueASCII(switches::kProfileEmail).empty() &&
+         base::FeatureList::IsEnabled(features::kCreateProfileIfNoneExists);
+}
 
 }  // namespace
 
@@ -636,6 +644,7 @@ StartupProfileMode StartupProfileModeFromReason(
 
     case StartupProfileModeReason::kMultipleProfiles:
     case StartupProfileModeReason::kPickerForcedByPolicy:
+    case StartupProfileModeReason::kProfileEmailSwitchCreateProfile:
       return StartupProfileMode::kProfilePicker;
 
     case StartupProfileModeReason::kGuestModeRequested:
@@ -721,7 +730,8 @@ void StartupBrowserCreator::LaunchBrowser(
   profile = GetPrivateProfileIfRequested(
       command_line, {profile, StartupProfileMode::kBrowserWindow});
 
-  if (!IsSilentLaunchEnabled(command_line, profile)) {
+  if (!IsSilentLaunchEnabled(command_line, profile) &&
+      !ShouldForceLaunchIntoProfileWithEmail(command_line)) {
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
     auto* fre_service = FirstRunServiceFactory::GetForBrowserContext(profile);
     if (fre_service && fre_service->ShouldOpenFirstRun()) {
@@ -771,6 +781,13 @@ void StartupBrowserCreator::LaunchBrowserForLastProfiles(
 #if BUILDFLAG(IS_CHROMEOS)
     NOTREACHED();
 #else
+    if (ShouldForceLaunchIntoProfileWithEmail(command_line)) {
+      std::string email =
+          command_line.GetSwitchValueASCII(switches::kProfileEmail);
+      ProfilePicker::Show(ProfilePicker::Params::FromStartupWithEmail(email));
+      return;
+    }
+
     ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
         process_startup == chrome::startup::IsProcessStartup::kYes
             ? ProfilePicker::EntryPoint::kOnStartup
@@ -1652,6 +1669,15 @@ StartupProfilePathInfo GetStartupProfilePath(
       if (!profile_dir.empty()) {
         return {.path = profile_dir,
                 .reason = StartupProfileModeReason::kProfileEmailSwitch};
+      }
+      if (base::FeatureList::IsEnabled(features::kCreateProfileIfNoneExists) &&
+          command_line.HasSwitch(switches::kCreateProfileEmailIfNotExists)) {
+        // Return the profile picker instead of choosing a default profile.
+        // TODO (crbug.com/395127068): Investigate why the email sometimes does
+        // not get prefilled.
+        return {.path = base::FilePath(),
+                .reason =
+                    StartupProfileModeReason::kProfileEmailSwitchCreateProfile};
       }
     }
   }

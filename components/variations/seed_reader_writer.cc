@@ -23,6 +23,14 @@
 namespace variations {
 namespace {
 
+// A struct to hold the permanent country code and version. Because they're
+// stored in a single pref, we need to read them together.
+// TODO(crbug.com/411431524): Remove this once it's stored in the Seed File.
+struct PermanentCountryVersion {
+  std::string_view country;
+  std::string_view version;
+};
+
 // Histogram suffix used by ImportantFileWriter for recording seed file write
 // information.
 constexpr char kSeedWriterHistogramSuffix[] = "VariationsSeedsV1";
@@ -83,17 +91,99 @@ void SetUpSeedFileTrial(
   trial->AppendGroup(kSeedFilesGroup, group_probability);
 }
 
+// Returns the permanent country code and version. For the safe seed, version
+// always will be empty.
+PermanentCountryVersion GetPermanentCountryVersion(PrefService* local_state,
+                                                   std::string_view pref_name) {
+  // TODO(crbug.com/411431524): Remove this once it's stored in the Seed File.
+  // We need to check because the safe seed pref is a string while the latest
+  // seed pref is a list.
+  if (pref_name == prefs::kVariationsSafeSeedPermanentConsistencyCountry) {
+    return {.country = local_state->GetString(pref_name), .version = ""};
+  }
+  const auto& list_value = local_state->GetList(pref_name);
+  PermanentCountryVersion result;
+  if (list_value.size() == 2) {
+    const std::string* stored_version = nullptr;
+    // We don't need to check the validity of the version here, as it's done
+    // later by
+    // VariationsFieldTrialCreatorBase::LoadPermanentConsistencyCountry().
+    if ((stored_version = list_value[0].GetIfString())) {
+      result.version = *stored_version;
+    }
+    const std::string* stored_country = nullptr;
+    if ((stored_country = list_value[1].GetIfString())) {
+      result.country = *stored_country;
+    }
+  }
+  return result;
+}
+
+// Stores the permanent country code and version in local state. For the safe
+// seed, the version is always empty.
+void SetPermanentCountryVersion(PrefService* local_state,
+                                std::string_view pref_name,
+                                std::string_view country_code,
+                                std::string_view version) {
+  // TODO(crbug.com/411431524): Remove this once it's stored in the Seed File.
+  // We need to check because the safe seed pref is a string while the latest
+  // seed pref is a list.
+  const bool is_safe_seed =
+      pref_name == prefs::kVariationsSafeSeedPermanentConsistencyCountry;
+  if (is_safe_seed) {
+    local_state->SetString(pref_name, country_code);
+  } else {
+    base::Value::List list_value;
+    list_value.Append(version);
+    list_value.Append(country_code);
+    local_state->SetList(pref_name, std::move(list_value));
+  }
+}
+
 }  // namespace
 
 const SeedFieldsPrefs kRegularSeedFieldsPrefs = {
     .seed = prefs::kVariationsCompressedSeed,
     .signature = prefs::kVariationsSeedSignature,
-    .milestone = prefs::kVariationsSeedMilestone};
+    .milestone = prefs::kVariationsSeedMilestone,
+    .seed_date = prefs::kVariationsSeedDate,
+    .client_fetch_time = prefs::kVariationsLastFetchTime,
+    .session_country_code = prefs::kVariationsCountry,
+    .permanent_country_code_version =
+        prefs::kVariationsPermanentConsistencyCountry,
+};
 
 const SeedFieldsPrefs kSafeSeedFieldsPrefs = {
     .seed = prefs::kVariationsSafeCompressedSeed,
     .signature = prefs::kVariationsSafeSeedSignature,
-    .milestone = prefs::kVariationsSafeSeedMilestone};
+    .milestone = prefs::kVariationsSafeSeedMilestone,
+    .seed_date = prefs::kVariationsSafeSeedDate,
+    .client_fetch_time = prefs::kVariationsSafeSeedFetchTime,
+    .session_country_code = prefs::kVariationsSafeSeedSessionConsistencyCountry,
+    .permanent_country_code_version =
+        prefs::kVariationsSafeSeedPermanentConsistencyCountry,
+};
+
+StoredSeed::StoredSeed(StorageFormat storage_format,
+                       std::string_view data,
+                       std::string_view signature,
+                       int milestone,
+                       base::Time seed_date,
+                       base::Time client_fetch_time,
+                       std::string_view session_country_code,
+                       std::string_view permanent_country_code,
+                       std::string_view permanent_country_version)
+    : storage_format(storage_format),
+      data(data),
+      signature(signature),
+      milestone(milestone),
+      seed_date(seed_date),
+      client_fetch_time(client_fetch_time),
+      session_country_code(session_country_code),
+      permanent_country_code(permanent_country_code),
+      permanent_country_version(permanent_country_version) {}
+
+StoredSeed::~StoredSeed() = default;
 
 SeedReaderWriter::SeedReaderWriter(
     PrefService* local_state,
@@ -107,6 +197,7 @@ SeedReaderWriter::SeedReaderWriter(
       fields_prefs_(fields_prefs),
       file_task_runner_(std::move(file_task_runner)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(local_state_) << "SeedReaderWriter needs a valid local state.";
   if (!seed_file_dir.empty()) {
     seed_writer_ = std::make_unique<base::ImportantFileWriter>(
         GetFilePath(seed_file_dir, seed_filename), file_task_runner_,
@@ -122,7 +213,7 @@ SeedReaderWriter::SeedReaderWriter(
 
 SeedReaderWriter::~SeedReaderWriter() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (seed_writer_ && seed_writer_->HasPendingWrite()) {
+  if (HasPendingWrite()) {
     seed_writer_->DoScheduledWrite();
   }
 }
@@ -145,6 +236,9 @@ void SeedReaderWriter::ClearSeedInfo() {
     local_state_->ClearPref(fields_prefs_->seed);
     local_state_->ClearPref(fields_prefs_->signature);
     local_state_->ClearPref(fields_prefs_->milestone);
+    local_state_->ClearPref(fields_prefs_->seed_date);
+    local_state_->ClearPref(fields_prefs_->client_fetch_time);
+    local_state_->ClearPref(fields_prefs_->session_country_code);
     // Although only clients in the treatment group write seeds to dedicated
     // seed files, attempt to delete the seed file for clients with
     // Local-State-based seeds. If a client switches experiment groups or
@@ -154,20 +248,37 @@ void SeedReaderWriter::ClearSeedInfo() {
     }
   }
 }
+
 StoredSeed SeedReaderWriter::GetSeedData() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (ShouldUseSeedFile()) {
-    return StoredSeed{.storage_format = StoredSeed::StorageFormat::kCompressed,
-                      .data = seed_info_.data,
-                      .signature = seed_info_.signature,
-                      .milestone = seed_info_.milestone};
+    return StoredSeed(
+        /*storage_format=*/StoredSeed::StorageFormat::kCompressed,
+        /*data=*/seed_info_.data,
+        /*signature=*/seed_info_.signature,
+        /*milestone=*/seed_info_.milestone,
+        /*seed_date=*/seed_info_.seed_date,
+        /*client_fetch_time=*/seed_info_.client_fetch_time,
+        /*session_country_code=*/seed_info_.session_country_code,
+        /*permanent_country_code=*/seed_info_.permanent_country_code,
+        /*permanent_country_version=*/seed_info_.permanent_country_version);
   } else {
-    return StoredSeed{
-        .storage_format =
-            StoredSeed::StorageFormat::kCompressedAndBase64Encoded,
-        .data = local_state_->GetString(fields_prefs_->seed),
-        .signature = local_state_->GetString(fields_prefs_->signature),
-        .milestone = local_state_->GetInteger(fields_prefs_->milestone)};
+    PermanentCountryVersion permanent_country_version =
+        GetPermanentCountryVersion(
+            local_state_, fields_prefs_->permanent_country_code_version);
+    return StoredSeed(
+        /*storage_format=*/StoredSeed::StorageFormat::
+            kCompressedAndBase64Encoded,
+        /*data=*/local_state_->GetString(fields_prefs_->seed),
+        /*signature=*/local_state_->GetString(fields_prefs_->signature),
+        /*milestone=*/local_state_->GetInteger(fields_prefs_->milestone),
+        /*seed_date=*/local_state_->GetTime(fields_prefs_->seed_date),
+        /*client_fetch_time=*/
+        local_state_->GetTime(fields_prefs_->client_fetch_time),
+        /*session_country_code=*/
+        local_state_->GetString(fields_prefs_->session_country_code),
+        /*permanent_country_code=*/permanent_country_version.country,
+        /*permanent_country_version=*/permanent_country_version.version);
   }
 }
 
@@ -177,6 +288,60 @@ void SeedReaderWriter::SetTimerForTesting(base::OneShotTimer* timer_override) {
     seed_writer_->SetTimerForTesting(timer_override);  // IN-TEST
   }
 }
+
+void SeedReaderWriter::SetSeedDate(base::Time server_date_fetched) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Both groups write the seed date to local state.
+  // TODO(crbug.com/380465790): Update seed date in seed files instead of local
+  // state if the client is in the treatment group.
+  if (ShouldUseSeedFile()) {
+    seed_info_.seed_date = server_date_fetched;
+  }
+  local_state_->SetTime(fields_prefs_->seed_date, server_date_fetched);
+}
+
+void SeedReaderWriter::SetFetchTime(base::Time fetch_time) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Both groups write the fetch time to local state.
+  // TODO(crbug.com/380465790): Update fetch time in seed files instead of local
+  // state if the client is in the treatment group.
+  if (ShouldUseSeedFile()) {
+    seed_info_.client_fetch_time = fetch_time;
+  }
+  local_state_->SetTime(fields_prefs_->client_fetch_time, fetch_time);
+}
+
+bool SeedReaderWriter::HasPendingWrite() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return seed_writer_ && seed_writer_->HasPendingWrite();
+}
+
+void SeedReaderWriter::ClearPermanentConsistencyCountryAndVersion() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (ShouldUseSeedFile()) {
+    // TODO(crbug.com/380465790): Clear the values from the seed file if the
+    // client is in the treatment group.
+    seed_info_.permanent_country_code.clear();
+    seed_info_.permanent_country_version.clear();
+  }
+  local_state_->ClearPref(fields_prefs_->permanent_country_code_version);
+}
+
+void SeedReaderWriter::SetPermanentConsistencyCountryAndVersion(
+    std::string_view country,
+    std::string_view version) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (ShouldUseSeedFile()) {
+    seed_info_.permanent_country_code = country;
+    seed_info_.permanent_country_version = version;
+  }
+  SetPermanentCountryVersion(local_state_,
+                             fields_prefs_->permanent_country_code_version,
+                             country, version);
+}
+
+SeedReaderWriter::SeedInfo::SeedInfo() = default;
+SeedReaderWriter::SeedInfo::~SeedInfo() = default;
 
 base::ImportantFileWriter::BackgroundDataProducerCallback
 SeedReaderWriter::GetSerializedDataProducerForBackgroundSequence() {
@@ -202,6 +367,18 @@ void SeedReaderWriter::ScheduleSeedFileWrite(ValidatedSeedInfo seed_info) {
   seed_info_.data = seed_info.compressed_seed_data;
   seed_info_.signature = seed_info.signature;
   seed_info_.milestone = seed_info.milestone;
+  seed_info_.seed_date = seed_info.seed_date;
+  seed_info_.client_fetch_time = seed_info.client_fetch_time;
+  // Only update the latest country code if it is not empty.
+  if (!seed_info.session_country_code.empty()) {
+    seed_info_.session_country_code = seed_info.session_country_code;
+  }
+  if (!seed_info.permanent_country_code.empty()) {
+    seed_info_.permanent_country_code = seed_info.permanent_country_code;
+  }
+  if (!seed_info.permanent_country_version.empty()) {
+    seed_info_.permanent_country_version = seed_info.permanent_country_version;
+  }
   // `seed_writer_` will eventually call
   // GetSerializedDataProducerForBackgroundSequence() on *this* object to get
   // a callback that will be run asynchronously. This callback will be used to
@@ -216,6 +393,20 @@ void SeedReaderWriter::ScheduleSeedFileWrite(ValidatedSeedInfo seed_info) {
   // migration is complete, stop updating local state.
   local_state_->SetString(fields_prefs_->signature, seed_info_.signature);
   local_state_->SetInteger(fields_prefs_->milestone, seed_info_.milestone);
+  local_state_->SetTime(fields_prefs_->seed_date, seed_info_.seed_date);
+  local_state_->SetTime(fields_prefs_->client_fetch_time,
+                        seed_info_.client_fetch_time);
+  if (!seed_info.session_country_code.empty()) {
+    local_state_->SetString(fields_prefs_->session_country_code,
+                            seed_info_.session_country_code);
+  }
+  // Version could be empty in case of the SafeSeed.
+  if (!seed_info.permanent_country_code.empty()) {
+    SetPermanentCountryVersion(local_state_,
+                               fields_prefs_->permanent_country_code_version,
+                               seed_info_.permanent_country_code,
+                               seed_info_.permanent_country_version);
+  }
 }
 
 void SeedReaderWriter::ScheduleSeedFileClear() {
@@ -224,11 +415,12 @@ void SeedReaderWriter::ScheduleSeedFileClear() {
   // serialization and can be changed multiple times before a scheduled write
   // completes, in which case the background serializer will use the
   // `seed_info_.data` set at the last call of this function.
-  seed_info_ = {
-      .data = "",
-      .signature = "",
-      .milestone = 0,
-  };
+  seed_info_.data.clear();
+  seed_info_.signature.clear();
+  seed_info_.milestone = 0;
+  seed_info_.seed_date = base::Time();
+  seed_info_.client_fetch_time = base::Time();
+  seed_info_.session_country_code.clear();
   // `seed_writer_` will eventually call
   // GetSerializedDataProducerForBackgroundSequence() on *this* object to get
   // a callback that will be run asynchronously. This callback will be used to
@@ -243,6 +435,9 @@ void SeedReaderWriter::ScheduleSeedFileClear() {
   // migration is complete, stop updating local state.
   local_state_->ClearPref(fields_prefs_->signature);
   local_state_->ClearPref(fields_prefs_->milestone);
+  local_state_->ClearPref(fields_prefs_->seed_date);
+  local_state_->ClearPref(fields_prefs_->client_fetch_time);
+  local_state_->ClearPref(fields_prefs_->session_country_code);
 }
 
 void SeedReaderWriter::DeleteSeedFile() {
@@ -267,6 +462,16 @@ void SeedReaderWriter::ReadSeedFile() {
     // once it's stored there.
     seed_info_.signature = local_state_->GetString(fields_prefs_->signature);
     seed_info_.milestone = local_state_->GetInteger(fields_prefs_->milestone);
+    seed_info_.seed_date = local_state_->GetTime(fields_prefs_->seed_date);
+    seed_info_.client_fetch_time =
+        local_state_->GetTime(fields_prefs_->client_fetch_time);
+    seed_info_.session_country_code =
+        local_state_->GetString(fields_prefs_->session_country_code);
+    PermanentCountryVersion permanent_country_version =
+        GetPermanentCountryVersion(
+            local_state_, fields_prefs_->permanent_country_code_version);
+    seed_info_.permanent_country_code = permanent_country_version.country;
+    seed_info_.permanent_country_version = permanent_country_version.version;
   } else {
     // Export seed data from Local State to a seed file in the following cases.
     // 1. Seed file does not exist because this is the first run. For Windows,
@@ -278,10 +483,20 @@ void SeedReaderWriter::ReadSeedFile() {
     std::string decoded_data;
     if (base::Base64Decode(local_state_->GetString(fields_prefs_->seed),
                            &decoded_data)) {
+      PermanentCountryVersion permanent_country_version =
+          GetPermanentCountryVersion(
+              local_state_, fields_prefs_->permanent_country_code_version);
       ScheduleSeedFileWrite(ValidatedSeedInfo{
           .compressed_seed_data = decoded_data,
           .signature = local_state_->GetString(fields_prefs_->signature),
           .milestone = local_state_->GetInteger(fields_prefs_->milestone),
+          .seed_date = local_state_->GetTime(fields_prefs_->seed_date),
+          .client_fetch_time =
+              local_state_->GetTime(fields_prefs_->client_fetch_time),
+          .session_country_code =
+              local_state_->GetString(fields_prefs_->session_country_code),
+          .permanent_country_code = permanent_country_version.country,
+          .permanent_country_version = permanent_country_version.version,
       });
 
       // Record whether empty data is written to the seed file. This can happen
@@ -315,6 +530,19 @@ void SeedReaderWriter::ScheduleLocalStateWrite(ValidatedSeedInfo seed_info) {
   local_state_->SetString(fields_prefs_->seed, seed_info.base64_seed_data);
   local_state_->SetString(fields_prefs_->signature, seed_info.signature);
   local_state_->SetInteger(fields_prefs_->milestone, seed_info.milestone);
+  local_state_->SetTime(fields_prefs_->seed_date, seed_info.seed_date);
+  local_state_->SetTime(fields_prefs_->client_fetch_time,
+                        seed_info.client_fetch_time);
+  if (!seed_info.session_country_code.empty()) {
+    local_state_->SetString(fields_prefs_->session_country_code,
+                            seed_info.session_country_code);
+  }
+  // Version could be empty in case of the SafeSeed.
+  if (!seed_info.permanent_country_code.empty()) {
+    SetPermanentCountryVersion(
+        local_state_, fields_prefs_->permanent_country_code_version,
+        seed_info.permanent_country_code, seed_info.permanent_country_version);
+  }
 }
 
 bool SeedReaderWriter::ShouldUseSeedFile() const {
@@ -322,10 +550,6 @@ bool SeedReaderWriter::ShouldUseSeedFile() const {
   // client-side in VariationsSeedStore SetUpSeedFileTrial().
   return seed_writer_ &&
          base::FieldTrialList::FindFullName(kSeedFileTrial) == kSeedFilesGroup;
-}
-
-bool SeedReaderWriter::HasPendingWrite() const {
-  return seed_writer_ && seed_writer_->HasPendingWrite();
 }
 
 }  // namespace variations

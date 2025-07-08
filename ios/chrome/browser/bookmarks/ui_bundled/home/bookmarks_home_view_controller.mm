@@ -30,6 +30,7 @@
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_signin_promo_item.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_bridge_observer.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
@@ -68,6 +69,7 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/ui/elements/home_waiting_view.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_url_item.h"
@@ -243,6 +245,8 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
   // Whether the navigation controller is being dismissed.
   // In which case, do not open anything on top of it.
   BOOL _isBeingDismissed;
+  // The Signin coordinator displayed, if any.
+  SigninCoordinator* _signinCoordinator;
 }
 
 @synthesize editingFolderCell = _editingFolderCell;
@@ -273,6 +277,7 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 
 - (void)shutdown {
   _isShutDown = YES;
+  [self stopSigninCoordinator];
   [self.editingFolderCell stopEdit];
   [self stopFolderChooserCoordinator];
   [self.bookmarksCoordinator stop];
@@ -417,6 +422,11 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 
   // Place the search bar in the navigation bar.
   self.navigationItem.searchController = self.searchController;
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+  if (@available(iOS 26, *)) {
+    self.navigationItem.searchBarPlacementAllowsToolbarIntegration = NO;
+  }
+#endif
   self.navigationItem.hidesSearchBarWhenScrolling = NO;
 
   self.searchTerm = @"";
@@ -525,7 +535,7 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 }
 
 - (void)keyCommand_close {
-  base::RecordAction(base::UserMetricsAction("MobileKeyCommandClose"));
+  base::RecordAction(base::UserMetricsAction(kMobileKeyCommandClose));
   [self navigationBarCancel:nil];
 }
 
@@ -691,8 +701,16 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 }
 
 - (void)showSignin:(ShowSigninCommand*)command {
-  [self.applicationCommandsHandler showSignin:command
-                           baseViewController:self.navigationController];
+  __weak __typeof(self) weakSelf = self;
+  [command addSigninCompletion:^(SigninCoordinatorResult result,
+                                 id<SystemIdentity>) {
+    [weakSelf signinDidCompleteWithResult:result];
+  }];
+  _signinCoordinator = [SigninCoordinator
+      signinCoordinatorWithCommand:command
+                           browser:_browser.get()
+                baseViewController:self.navigationController];
+  [_signinCoordinator start];
 }
 
 - (void)configureSigninPromoWithConfigurator:
@@ -717,6 +735,13 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 - (void)showAccountSettings {
   [self ensureBookmarksCoordinator];
   [self.bookmarksCoordinator showAccountSettings];
+}
+
+#pragma mark - BookmarksHomeConsumer Helper
+
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  [self.mediator signinDidCompleteWithResult:result];
+  [self stopSigninCoordinator];
 }
 
 #pragma mark - Action sheet callbacks
@@ -1369,7 +1394,7 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
   // No-op
 }
 
-#pragma mark - Accessibility
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityPerformEscape {
   if ([self isDisplayingBookmarkRoot]) {
@@ -1381,6 +1406,11 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 }
 
 #pragma mark - private
+
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
 
 // Returns the profile.
 - (ProfileIOS*)profile {
@@ -1468,12 +1498,9 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 
 - (UIBarButtonItem*)customizedDoneButton {
   UIBarButtonItem* doneButton = [[UIBarButtonItem alloc]
-      initWithTitle:GetNSString(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON)
-              style:UIBarButtonItemStyleDone
-             target:self
-             action:@selector(navigationBarCancel:)];
-  doneButton.accessibilityLabel =
-      GetNSString(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON);
+      initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                           target:self
+                           action:@selector(navigationBarCancel:)];
   doneButton.accessibilityIdentifier =
       kBookmarksHomeNavigationBarDoneButtonIdentifier;
   return doneButton;

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/commerce/commerce_ui_tab_helper.h"
 
+#include <memory>
+
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
@@ -13,19 +15,23 @@
 #include "base/time/time.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/commerce/commerce_page_action_controller.h"
 #include "chrome/browser/ui/commerce/discounts_page_action_controller.h"
 #include "chrome/browser/ui/commerce/price_tracking_page_action_controller.h"
 #include "chrome/browser/ui/commerce/product_specifications_entry_point_controller.h"
 #include "chrome/browser/ui/commerce/product_specifications_page_action_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/commerce/discounts_bubble_dialog_view.h"
+#include "chrome/browser/ui/views/commerce/discounts_page_action_view_controller.h"
 #include "chrome/browser/ui/views/commerce/price_insights_icon_view.h"
 #include "chrome/browser/ui/views/commerce/price_insights_page_action_view_controller.h"
+#include "chrome/browser/ui/views/commerce/product_specifications_page_action_view_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
@@ -69,6 +75,13 @@ END_METADATA
 
 namespace commerce {
 
+DEFINE_USER_DATA(CommerceUiTabHelper);
+
+// static
+CommerceUiTabHelper* CommerceUiTabHelper::From(tabs::TabModel* tab) {
+  return Get(tab->GetUnownedUserDataHost());
+}
+
 CommerceUiTabHelper::CommerceUiTabHelper(
     tabs::TabInterface& tab_interface,
     ShoppingService* shopping_service,
@@ -80,7 +93,8 @@ CommerceUiTabHelper::CommerceUiTabHelper(
       bookmark_model_(model),
       image_fetcher_(image_fetcher),
       side_panel_registry_(side_panel_registry),
-      price_insights_label_type_(PriceInsightsIconLabelType::kNone) {
+      price_insights_label_type_(PriceInsightsIconLabelType::kNone),
+      scoped_unowned_user_data_(tab_interface.GetUnownedUserDataHost(), *this) {
   if (!image_fetcher_) {
     CHECK_IS_TEST();
   }
@@ -116,6 +130,9 @@ CommerceUiTabHelper::CommerceUiTabHelper(
               base::BindRepeating(&CommerceUiTabHelper::UpdateDiscountsIconView,
                                   weak_ptr_factory_.GetWeakPtr())),
           shopping_service_);
+
+  discounts_bubble_coordinator_ =
+      std::make_unique<DiscountsBubbleCoordinator>();
 }
 
 CommerceUiTabHelper::~CommerceUiTabHelper() = default;
@@ -198,7 +215,7 @@ void CommerceUiTabHelper::DidFinishNavigation(
 
   if (BrowserWindowInterface* bwi = tab().GetBrowserWindowInterface()) {
     auto* product_specifications_entry_point_controller =
-        bwi->GetFeatures().product_specifications_entry_point_controller();
+        commerce::ProductSpecificationsEntryPointController::From(bwi);
     if (product_specifications_entry_point_controller) {
       product_specifications_entry_point_controller->DidFinishNavigation(
           web_contents());
@@ -473,6 +490,7 @@ void CommerceUiTabHelper::OnOpenComparePageClicked() {
   }
 
   int active_index = tab_strip_model->active_index();
+
   chrome::AddTabAt(
       tab().GetBrowserWindowInterface()->GetBrowserForMigrationOnly(),
       comparison_table_url, active_index + 1, true,
@@ -498,6 +516,18 @@ void CommerceUiTabHelper::UpdatePriceTrackingIconView() {
 }
 
 void CommerceUiTabHelper::UpdateProductSpecificationsIconView() {
+  if (IsPageActionMigrated(PageActionIconType::kProductSpecifications)) {
+    tab()
+        .GetTabFeatures()
+        ->commerce_product_specifications_page_action_view_controller()
+        ->UpdatePageIcon(ShouldShowProductSpecificationsIconView(),
+                         ShouldExpandPageActionIcon(
+                             PageActionIconType::kProductSpecifications),
+                         IsInRecommendedSet(),
+                         GetProductSpecificationsLabel(IsInRecommendedSet()));
+    return;
+  }
+
   UpdatePageActionIconView(PageActionIconType::kProductSpecifications);
 }
 
@@ -559,8 +589,57 @@ CommerceUiTabHelper::GetPriceInsightsInfo() {
   return price_insights_info_;
 }
 
+void CommerceUiTabHelper::ShowDiscountBubble(
+    const DiscountInfo& discount,
+    base::OnceClosure one_bubble_closing_callback) {
+  discounts_bubble_coordinator_->Show(GetDiscountsIconView(),
+                                      tab().GetContents(), discount,
+                                      std::move(one_bubble_closing_callback));
+}
+
 void CommerceUiTabHelper::UpdateDiscountsIconView() {
+  if (IsPageActionMigrated(PageActionIconType::kDiscounts)) {
+    tab()
+        .GetTabFeatures()
+        ->commerce_discounts_page_action_view_controller()
+        ->UpdatePageIcon(
+            ShouldShowDiscountsIconView(),
+            ShouldExpandPageActionIcon(PageActionIconType::kDiscounts));
+    return;
+  }
+
   UpdatePageActionIconView(PageActionIconType::kDiscounts);
+}
+
+const DiscountsBubbleCoordinator&
+CommerceUiTabHelper::GetDiscountsBubbleCoordinator() const {
+  return *discounts_bubble_coordinator_;
+}
+
+views::View* CommerceUiTabHelper::GetDiscountsIconView() {
+  BrowserWindowInterface* bwi = tab().GetBrowserWindowInterface();
+  CHECK(bwi);
+
+  // TODO(https://crbug.com/425953501): Remove GetBrowserForMigrationOnly since
+  // Browser* will not be needed once ToolBarButtonProvider is migrated to
+  // BrowserWindowInterface.
+  auto* browser_view =
+      BrowserView::GetBrowserViewForBrowser(bwi->GetBrowserForMigrationOnly());
+  if (!browser_view) {
+    return nullptr;
+  }
+
+  auto* toolbar_button_provider = browser_view->toolbar_button_provider();
+  if (!toolbar_button_provider) {
+    return nullptr;
+  }
+
+  if (IsPageActionMigrated(PageActionIconType::kDiscounts)) {
+    return toolbar_button_provider->GetPageActionView(kActionCommerceDiscounts);
+  }
+
+  return toolbar_button_provider->GetPageActionIconView(
+      PageActionIconType::kDiscounts);
 }
 
 void CommerceUiTabHelper::ComputePageActionToExpand() {
@@ -798,6 +877,9 @@ void CommerceUiTabHelper::UpdatePageActionIconView(PageActionIconType type) {
     return;
   }
 
+  // TODO(https://crbug.com/376283687): Remove GetBrowserForMigrationOnly during
+  // the Discounts Page Actions Post Migration Cleanups since it will no longer
+  // be needed.
   bwi->GetBrowserForMigrationOnly()->window()->UpdatePageActionIcon(type);
 }
 

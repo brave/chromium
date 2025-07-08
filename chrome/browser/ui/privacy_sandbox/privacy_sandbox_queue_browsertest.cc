@@ -158,9 +158,9 @@ class PrivacySandboxQueueNoticeBrowserTest : public InProcessBrowserTest {
       "shadowRoot.querySelector('#notice').shadowRoot.querySelector('#"
       "ackButton')";
 
- private:
-  base::test::ScopedFeatureList feature_list_;
+ protected:
   base::CallbackListSubscription create_services_subscription_;
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Navigate to a invalid then valid webpage. Ensure handle is held throughout.
@@ -402,17 +402,17 @@ class PrivacySandboxQueueNoticeFeatureDisabledBrowserTest
   void SetUpInProcessBrowserTestFixture() override {
     feature_list_.InitWithFeatures(
         /*enabled=*/{}, {privacy_sandbox::kPrivacySandboxNoticeQueue});
-  }
 
-  void SetUpOnMainThread() override {
-    privacy_sandbox_service()->ForceChromeBuildForTests(true);
-    g_browser_process->variations_service()->OverrideStoredPermanentCountry(
-        "be");
-    base::CommandLine::ForCurrentProcess()->RemoveSwitch(switches::kNoFirstRun);
+    create_services_subscription_ =
+        BrowserContextDependencyManager::GetInstance()
+            ->RegisterCreateServicesCallbackForTesting(
+                base::BindRepeating([](content::BrowserContext* context) {
+                  PrivacySandboxServiceFactory::GetInstance()
+                      ->SetTestingFactory(
+                          context,
+                          base::BindRepeating(&BuildPrivacySandboxServiceTest));
+                }));
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 // Navigate to a page and click a button.

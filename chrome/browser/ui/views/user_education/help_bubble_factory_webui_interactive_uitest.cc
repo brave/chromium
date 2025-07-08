@@ -25,6 +25,7 @@
 #include "chrome/browser/ui/views/side_panel/side_panel_entry.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_util.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -196,8 +197,8 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
   }
 
   user_education::HelpBubbleFactoryRegistry* GetHelpBubbleFactory() {
-    auto* const controller =
-        browser()->window()->GetFeaturePromoControllerForTesting();
+    auto* const controller = BrowserUserEducationInterface::From(browser())
+                                 ->GetFeaturePromoControllerForTesting();
     return static_cast<user_education::FeaturePromoControllerCommon*>(
                controller)
         ->bubble_factory_registry();

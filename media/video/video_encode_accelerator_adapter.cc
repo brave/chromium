@@ -222,8 +222,7 @@ class VideoEncodeAcceleratorAdapter::GpuMemoryBufferVideoFramePool
   // |shared_image| will be used when MappableSI is enabled. It will be null
   // otherwise.
   void ReuseFrame(scoped_refptr<gpu::ClientSharedImage> shared_image,
-                  const gpu::SyncToken& token,
-                  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer) {
+                  const gpu::SyncToken& token) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     constexpr size_t kMaxPooledFrames = 5;
     if (shared_image && (available_shared_images_.size() < kMaxPooledFrames)) {
@@ -1055,8 +1054,7 @@ VideoEncodeAcceleratorAdapter::PrepareCpuFrame(
                               : src_frame;
   auto shared_frame = VideoFrame::WrapExternalData(
       PIXEL_FORMAT_I420, dest_coded_size, dest_visible_rect,
-      dest_visible_rect.size(), static_cast<const uint8_t*>(mapping->memory()),
-      mapping->size(), src_frame->timestamp());
+      dest_visible_rect.size(), *mapping, src_frame->timestamp());
 
   if (!shared_frame || !mapped_src_frame)
     return EncoderStatus(EncoderStatus::Codes::kSystemAPICallError);
@@ -1130,10 +1128,6 @@ VideoEncodeAcceleratorAdapter::PrepareGpuFrame(
 
   // |mapped_gpu_frame| has the color space respecting the color conversion in
   // ConvertAndScale().
-#if BUILDFLAG(IS_MAC)
-  gpu_frame->shared_image()->SetColorSpaceOnNativeBuffer(
-      mapped_gpu_frame->ColorSpace());
-#endif
   gpu_frame->set_color_space(mapped_gpu_frame->ColorSpace());
 
   return gpu_frame;

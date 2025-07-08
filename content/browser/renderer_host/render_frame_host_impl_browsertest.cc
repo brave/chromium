@@ -81,8 +81,6 @@
 #include "content/public/test/test_utils.h"
 #include "content/public/test/url_loader_interceptor.h"
 #include "content/shell/browser/shell.h"
-#include "content/shell/browser/shell_browser_context.h"
-#include "content/shell/browser/shell_content_browser_client.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "content/test/data/mojo_web_test_helper.test-mojom.h"
 #include "content/test/did_commit_navigation_interceptor.h"
@@ -371,7 +369,7 @@ BackForwardCacheBlockingDetails CreateBlockingDetails(
   BackForwardCacheBlockingDetails feature_vector;
   for (auto feature : features) {
     auto feature_info = BlockingDetails::New();
-    feature_info->feature = static_cast<uint32_t>(feature);
+    feature_info->feature = feature;
     feature_vector.push_back(std::move(feature_info));
   }
   return feature_vector;
@@ -5561,27 +5559,6 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostImplBrowserTest,
 
 namespace {
 
-// Calls |callback| whenever a DOMContentLoaded is reached in
-// |render_frame_host|.
-class DOMContentLoadedObserver : public WebContentsObserver {
- public:
-  DOMContentLoadedObserver(WebContents* web_contents,
-                           base::RepeatingClosure callback)
-      : WebContentsObserver(web_contents), callback_(callback) {}
-
-  DOMContentLoadedObserver(const DOMContentLoadedObserver&) = delete;
-  DOMContentLoadedObserver& operator=(const DOMContentLoadedObserver&) = delete;
-
- protected:
-  // WebContentsObserver:
-  void DOMContentLoaded(RenderFrameHost* render_Frame_host) override {
-    callback_.Run();
-  }
-
- private:
-  base::RepeatingClosure callback_;
-};
-
 // Calls |callback| whenever a DocumentOnLoad is reached in
 // |render_frame_host|.
 class DocumentOnLoadObserver : public WebContentsObserver {
@@ -5616,9 +5593,6 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, LoadCallbacks) {
   RenderFrameHostImpl* rfhi =
       static_cast<RenderFrameHostImpl*>(web_contents->GetPrimaryMainFrame());
   TestNavigationObserver load_observer(web_contents);
-  base::RunLoop loop_until_dcl;
-  DOMContentLoadedObserver dcl_observer(web_contents,
-                                        loop_until_dcl.QuitClosure());
   shell()->LoadURL(main_document_url);
 
   EXPECT_FALSE(rfhi->IsDOMContentLoaded());
@@ -5640,7 +5614,8 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, LoadCallbacks) {
 
   // We should reach DOMContentLoaded, but not onload, since the image resource
   // is still loading.
-  loop_until_dcl.Run();
+  ASSERT_TRUE(WaitForDOMContentLoaded(rfhi));
+
   EXPECT_TRUE(rfhi->is_loading());
   EXPECT_TRUE(rfhi->IsDOMContentLoaded());
   EXPECT_FALSE(web_contents->IsDocumentOnLoadCompletedInPrimaryMainFrame());
@@ -8508,162 +8483,6 @@ class RenderFrameHostImplNewProcessUsedBrowserTest
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
-
-IN_PROC_BROWSER_TEST_F(
-    RenderFrameHostImplNewProcessUsedBrowserTest,
-    RecordNewProcessUsedForNavigationWhenSameSiteProcessExists_SameSite) {
-  base::HistogramTester histogram;
-  GURL url = embedded_test_server()->GetURL("a.com", "/title1.html");
-  GURL second_shell_start_url =
-      embedded_test_server()->GetURL("start.test", "/title1.html");
-
-  ASSERT_TRUE(NavigateToURL(shell(), url));
-
-  // Navigation from the initial empty RFH does not count.
-  histogram.ExpectTotalCount(
-      "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists", 0);
-
-  Shell* second_shell =
-      Shell::CreateNewWindow(shell()->web_contents()->GetBrowserContext(),
-                             second_shell_start_url, nullptr, gfx::Size());
-  ASSERT_TRUE(NavigateToURL(second_shell, url));
-  ASSERT_NE(shell()->web_contents()->GetPrimaryMainFrame()->GetProcess(),
-            second_shell->web_contents()->GetPrimaryMainFrame()->GetProcess());
-
-  // `shell()` and `second_shell` opened the same site.
-  EXPECT_THAT(
-      histogram.GetAllSamples(
-          "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-      testing::ElementsAre(base::Bucket(true, 1)));
-}
-
-IN_PROC_BROWSER_TEST_F(
-    RenderFrameHostImplNewProcessUsedBrowserTest,
-    RecordNewProcessUsedForNavigationWhenSameSiteProcessExists_OtherSiteToSameSite) {
-  base::HistogramTester histogram;
-  GURL url = embedded_test_server()->GetURL("a.com", "/title1.html");
-  GURL second_shell_start_url =
-      embedded_test_server()->GetURL("start.test", "/title1.html");
-  GURL other_url = embedded_test_server()->GetURL("b.com", "/title1.html");
-
-  ASSERT_TRUE(NavigateToURL(shell(), url));
-
-  // Navigation from the initial empty RFH does not count.
-  histogram.ExpectTotalCount(
-      "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists", 0);
-
-  Shell* second_shell =
-      Shell::CreateNewWindow(shell()->web_contents()->GetBrowserContext(),
-                             second_shell_start_url, nullptr, gfx::Size());
-  ASSERT_TRUE(NavigateToURL(second_shell, other_url));
-  ASSERT_NE(shell()->web_contents()->GetPrimaryMainFrame()->GetProcess(),
-            second_shell->web_contents()->GetPrimaryMainFrame()->GetProcess());
-
-  bool requires_dedicated_process = second_shell->web_contents()
-                                        ->GetPrimaryMainFrame()
-                                        ->GetSiteInstance()
-                                        ->RequiresDedicatedProcess();
-
-  // `shell()` and `second_shell` opened different sites.
-  // TODO(crbug.com/419469455): Make sure metrics are updated correctly with the
-  // introduction of default SiteInstanceGroup.
-  if (requires_dedicated_process || ShouldUseDefaultSiteInstanceGroup()) {
-    EXPECT_THAT(histogram.GetAllSamples(
-                    "SiteIsolation."
-                    "NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-                testing::ElementsAre(base::Bucket(false, 1)));
-  } else {
-    EXPECT_THAT(histogram.GetAllSamples(
-                    "SiteIsolation."
-                    "NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-                testing::ElementsAre(base::Bucket(true, 1)));
-  }
-
-  ASSERT_TRUE(NavigateToURL(second_shell, url));
-  // Now `shell()` and `second_shell` opened the same site.
-  if (requires_dedicated_process || ShouldUseDefaultSiteInstanceGroup()) {
-    EXPECT_THAT(
-        histogram.GetAllSamples(
-            "SiteIsolation."
-            "NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-        testing::ElementsAre(base::Bucket(false, 1), base::Bucket(true, 1)));
-  } else {
-    EXPECT_THAT(histogram.GetAllSamples(
-                    "SiteIsolation."
-                    "NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-                testing::ElementsAre(base::Bucket(true, 2)));
-  }
-}
-
-// TODO(crbug.com/40264958): Consider enabling this test on Android.
-// There is no plan to analyze the histogram on Android for now.
-#if !BUILDFLAG(IS_ANDROID)
-IN_PROC_BROWSER_TEST_F(
-    RenderFrameHostImplNewProcessUsedBrowserTest,
-    RecordNewProcessUsedForNavigationWhenSameSiteProcessExists_DifferentProfile) {
-  base::HistogramTester histogram;
-  GURL url = embedded_test_server()->GetURL("a.com", "/title1.html");
-  GURL second_shell_start_url =
-      embedded_test_server()->GetURL("start.test", "/title1.html");
-
-  ASSERT_TRUE(NavigateToURL(shell(), url));
-
-  // Navigation from the initial empty RFH does not count.
-  histogram.ExpectTotalCount(
-      "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists", 0);
-
-  Shell* second_shell = Shell::CreateNewWindow(
-      ShellContentBrowserClient::Get()->off_the_record_browser_context(),
-      second_shell_start_url, nullptr, gfx::Size());
-  ASSERT_TRUE(NavigateToURL(second_shell, url));
-  ASSERT_NE(shell()->web_contents()->GetPrimaryMainFrame()->GetProcess(),
-            second_shell->web_contents()->GetPrimaryMainFrame()->GetProcess());
-
-  // `shell()` and `second_shell` opened the same site but use different
-  // profiles.
-  EXPECT_THAT(
-      histogram.GetAllSamples(
-          "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-      testing::ElementsAre(base::Bucket(false, 1)));
-}
-#endif
-
-IN_PROC_BROWSER_TEST_F(
-    RenderFrameHostImplNewProcessUsedBrowserTest,
-    RecordNewProcessUsedForNavigationWhenSameSiteProcessExists_SameSiteNavigateTwice) {
-  base::HistogramTester histogram;
-  GURL url = embedded_test_server()->GetURL("a.com", "/title1.html");
-  GURL url2 = embedded_test_server()->GetURL("a.com", "/title2.html");
-  GURL second_shell_start_url =
-      embedded_test_server()->GetURL("start.test", "/title1.html");
-
-  ASSERT_TRUE(NavigateToURL(shell(), url));
-
-  // Navigation from the initial empty RFH does not count.
-  histogram.ExpectTotalCount(
-      "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists", 0);
-
-  Shell* second_shell =
-      Shell::CreateNewWindow(shell()->web_contents()->GetBrowserContext(),
-                             second_shell_start_url, nullptr, gfx::Size());
-  ASSERT_TRUE(NavigateToURL(second_shell, url));
-  ASSERT_NE(shell()->web_contents()->GetPrimaryMainFrame()->GetProcess(),
-            second_shell->web_contents()->GetPrimaryMainFrame()->GetProcess());
-
-  // `shell()` and `second_shell` opened the same site.
-  EXPECT_THAT(
-      histogram.GetAllSamples(
-          "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-      testing::ElementsAre(base::Bucket(true, 1)));
-
-  ASSERT_TRUE(NavigateToURL(second_shell, url2));
-  // Navigating the different page in the same site shouldn't count up
-  // histograms.
-  EXPECT_THAT(
-      histogram.GetAllSamples(
-          "SiteIsolation.NewProcessUsedForNavigationWhenSameSiteProcessExists"),
-      testing::ElementsAre(base::Bucket(true, 1)));
-}
 
 // Tests that if a shutdown BeforeUnload ACK is received when a navigation has
 // picked its final RenderFrameHost, both the RenderFrameHost and navigation

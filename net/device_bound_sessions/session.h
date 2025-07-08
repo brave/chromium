@@ -73,9 +73,9 @@ class NET_EXPORT Session {
     return cached_challenge_;
   }
 
-  const base::Time& creation_date() const { return creation_date_; }
+  base::Time creation_date() const { return creation_date_; }
 
-  const base::Time& expiry_date() const { return expiry_date_; }
+  base::Time expiry_date() const { return expiry_date_; }
 
   bool should_defer_when_expired() const { return should_defer_when_expired_; }
 
@@ -98,6 +98,8 @@ class NET_EXPORT Session {
 
   // Whether the URL is in-scope for the session.
   bool IncludesUrl(const GURL& url) const;
+
+  bool ShouldBackoff() const;
 
   // Inform the session about a refresh so it can decide whether to
   // enter backoff mode.

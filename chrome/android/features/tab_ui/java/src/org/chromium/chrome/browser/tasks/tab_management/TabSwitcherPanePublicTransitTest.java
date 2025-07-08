@@ -42,7 +42,7 @@ import org.chromium.ui.base.DeviceFormFactor;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
-@ImportantFormFactors(DeviceFormFactor.TABLET)
+@ImportantFormFactors(DeviceFormFactor.ONLY_TABLET)
 public class TabSwitcherPanePublicTransitTest {
     @Rule
     public AutoResetCtaTransitTestRule mCtaTestRule =
@@ -84,7 +84,7 @@ public class TabSwitcherPanePublicTransitTest {
         TabSwitcherListEditorFacility listEditor =
                 regularTabSwitcher.openAppMenu().clickSelectTabs();
 
-        listEditor.pressBackToExit();
+        listEditor.pressBackTo().exitFacility();
 
         // Go back to a tab to cleanup tab state
         regularTabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());

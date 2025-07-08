@@ -93,6 +93,12 @@
 #include "content/shell/app/ios/shell_application_ios.h"
 #endif
 
+#if BUILDFLAG(IS_IOS_TVOS)
+#include "base/files/file_path.h"
+#include "base/path_service.h"
+#include "content/shell/common/shell_switches.h"
+#endif
+
 namespace {
 
 enum class LoggingDest {
@@ -240,6 +246,24 @@ std::optional<int> ShellMainDelegate::BasicStartupComplete() {
       web_test_runner_ = std::make_unique<WebTestBrowserMainRunner>();
       web_test_runner_->Initialize();
     }
+  }
+#endif
+
+#if BUILDFLAG(IS_IOS_TVOS)
+  // On tvOS, local storage is limited and data cannot be written anywhere
+  // other than the cache directory, so `base::DIR_CACHE` is used for
+  // the user data directory.
+  //
+  // The exception is when a different user data directory has been specified
+  // (for example by content's WrapperTestLauncherDelegate::GetCommandLine()
+  // when running browser tests). In this case, we prefer the value has been
+  // passed, otherwise multiple tests running at the same time will try to use
+  // the same temporary files and fail.
+  base::FilePath path;
+  if (!command_line.HasSwitch(switches::kContentShellUserDataDir) &&
+      base::PathService::Get(base::DIR_CACHE, &path) && !path.empty()) {
+    command_line.AppendSwitchASCII(switches::kContentShellUserDataDir,
+                                   path.MaybeAsASCII());
   }
 #endif
 

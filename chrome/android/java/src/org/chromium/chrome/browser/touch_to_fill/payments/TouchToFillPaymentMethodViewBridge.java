@@ -13,13 +13,13 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 
 import org.chromium.build.annotations.NullMarked;
-import org.chromium.chrome.browser.autofill.AutofillFallbackSurfaceLauncher;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcher;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcherFactory;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.touch_to_fill.common.BottomSheetFocusHelper;
 import org.chromium.components.autofill.AutofillSuggestion;
+import org.chromium.components.autofill.AutofillSuggestion.Payload;
 import org.chromium.components.autofill.LoyaltyCard;
 import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -48,15 +48,14 @@ class TouchToFillPaymentMethodViewBridge {
                 imageFetcher,
                 bottomSheetController,
                 delegate,
-                new BottomSheetFocusHelper(bottomSheetController, windowAndroid),
-                () -> AutofillFallbackSurfaceLauncher.openGoogleWalletPassesPage(context));
+                new BottomSheetFocusHelper(bottomSheetController, windowAndroid));
     }
 
     @CalledByNative
     private static @Nullable TouchToFillPaymentMethodViewBridge create(
             TouchToFillPaymentMethodComponent.Delegate delegate,
             Profile profile,
-            WindowAndroid windowAndroid) {
+            @Nullable WindowAndroid windowAndroid) {
         if (windowAndroid == null) return null;
         Context context = windowAndroid.getContext().get();
         if (context == null) return null;
@@ -85,8 +84,11 @@ class TouchToFillPaymentMethodViewBridge {
     }
 
     @CalledByNative
-    private void showLoyaltyCards(@JniType("std::vector") List<LoyaltyCard> loyaltyCards) {
-        mComponent.showLoyaltyCards(loyaltyCards);
+    private void showLoyaltyCards(
+            @JniType("base::span<const LoyaltyCard>") List<LoyaltyCard> affiliatedLoyaltyCards,
+            @JniType("base::span<const LoyaltyCard>") List<LoyaltyCard> allLoyaltyCards,
+            boolean firstTimeUsage) {
+        mComponent.showLoyaltyCards(affiliatedLoyaltyCards, allLoyaltyCards, firstTimeUsage);
     }
 
     @CalledByNative
@@ -100,27 +102,21 @@ class TouchToFillPaymentMethodViewBridge {
             @JniType("std::u16string") String secondaryLabel,
             @JniType("std::u16string") String subLabel,
             @JniType("std::u16string") String secondarySubLabel,
-            @JniType("std::u16string") String labelContentDescription,
             @SuggestionType int suggestionType,
             GURL customIconUrl,
             int iconId,
             boolean applyDeactivatedStyle,
-            boolean shouldDisplayTermsAvailable,
-            @JniType("std::string") String guid,
-            boolean isLocalPaymentsMethod) {
+            Payload payload) {
         return new AutofillSuggestion.Builder()
                 .setLabel(label)
                 .setSecondaryLabel(secondaryLabel)
                 .setSubLabel(subLabel)
                 .setSecondarySubLabel(secondarySubLabel)
-                .setLabelContentDescription(labelContentDescription)
                 .setSuggestionType(suggestionType)
                 .setCustomIconUrl(customIconUrl)
                 .setIconId(iconId)
                 .setApplyDeactivatedStyle(applyDeactivatedStyle)
-                .setShouldDisplayTermsAvailable(shouldDisplayTermsAvailable)
-                .setGuid(guid)
-                .setIsLocalPaymentsMethod(isLocalPaymentsMethod)
+                .setPayload(payload)
                 .build();
     }
 }

@@ -10,13 +10,15 @@
 
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/component_export.h"
 #include "base/memory/unsafe_shared_memory_region.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "ui/gfx/generic_shared_memory_id.h"
 #include "ui/gfx/geometry/rect.h"
 
-#if BUILDFLAG(IS_OZONE) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/gfx/native_pixmap_handle.h"
 #elif BUILDFLAG(IS_APPLE)
 #include "ui/gfx/mac/io_surface.h"
@@ -47,14 +49,11 @@ enum GpuMemoryBufferType {
   SHARED_MEMORY_BUFFER,
 #if BUILDFLAG(IS_APPLE)
   IO_SURFACE_BUFFER,
-#endif
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#elif BUILDFLAG(IS_OZONE)
   NATIVE_PIXMAP,
-#endif
-#if BUILDFLAG(IS_WIN)
+#elif BUILDFLAG(IS_WIN)
   DXGI_SHARED_HANDLE,
-#endif
-#if BUILDFLAG(IS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
   ANDROID_HARDWARE_BUFFER,
 #endif
 };
@@ -131,7 +130,7 @@ class COMPONENT_EXPORT(GFX) DXGIHandle {
   DXGIHandleToken token_;
   base::UnsafeSharedMemoryRegion region_;
 };
-#endif
+#endif  // BUILDFLAG(IS_WIN)
 
 // TODO(crbug.com/40584691): Convert this to a proper class to ensure the state
 // is always consistent, particularly that the only one handle is set at the
@@ -143,11 +142,9 @@ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
   explicit GpuMemoryBufferHandle(base::UnsafeSharedMemoryRegion region);
 #if BUILDFLAG(IS_WIN)
   explicit GpuMemoryBufferHandle(DXGIHandle handle);
-#endif
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#elif BUILDFLAG(IS_OZONE)
   explicit GpuMemoryBufferHandle(gfx::NativePixmapHandle native_pixmap_handle);
-#endif
-#if BUILDFLAG(IS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
   explicit GpuMemoryBufferHandle(
       base::android::ScopedHardwareBufferHandle handle);
 #endif
@@ -186,7 +183,7 @@ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
     return std::move(region_);
   }
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_OZONE)
   const NativePixmapHandle& native_pixmap_handle() const& {
     CHECK_EQ(type, NATIVE_PIXMAP);
     return native_pixmap_handle_;
@@ -196,7 +193,7 @@ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
     type = EMPTY_BUFFER;
     return std::move(native_pixmap_handle_);
   }
-#endif
+#endif  // BUILDFLAG(IS_OZONE)
 
 #if BUILDFLAG(IS_WIN)
   const DXGIHandle& dxgi_handle() const& {
@@ -211,16 +208,29 @@ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
 #endif  // BUILDFLAG(IS_WIN)
 
   GpuMemoryBufferType type = GpuMemoryBufferType::EMPTY_BUFFER;
-  GpuMemoryBufferId id{0};
 
   uint32_t offset = 0;
   uint32_t stride = 0;
 
 #if BUILDFLAG(IS_APPLE)
   ScopedIOSurface io_surface;
-#elif BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_IOS)
+  // On iOS, we can't use IOKit to access IOSurfaces in the renderer process, so
+  // we share the memory segment backing the IOSurface as shared memory which is
+  // then mapped in the renderer process.
+  ScopedRefCountedIOSurfaceMachPort io_surface_mach_port;
+  base::UnsafeSharedMemoryRegion io_surface_shared_memory_region;
+  // We have to pass the plane strides and offsets since we can't use IOSurface
+  // helper methods to get them.
+  static constexpr size_t kMaxIOSurfacePlanes = 3;
+  std::array<uint32_t, kMaxIOSurfacePlanes> io_surface_plane_strides;
+  std::array<uint32_t, kMaxIOSurfacePlanes> io_surface_plane_offsets;
+#endif  // BUILDFLAG(IS_IOS)
+#endif  // BUILDFLAG(IS_APPLE)
+
+#if BUILDFLAG(IS_ANDROID)
   base::android::ScopedHardwareBufferHandle android_hardware_buffer;
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
 
  private:
   friend mojo::UnionTraits<mojom::GpuMemoryBufferPlatformHandleDataView,
@@ -230,9 +240,9 @@ struct COMPONENT_EXPORT(GFX) GpuMemoryBufferHandle {
   // goal is to make `this` an encapsulated class.
   base::UnsafeSharedMemoryRegion region_;
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_OZONE)
   NativePixmapHandle native_pixmap_handle_;
-#endif
+#endif  // BUILDFLAG(IS_OZONE)
 
 #if BUILDFLAG(IS_WIN)
   DXGIHandle dxgi_handle_;

@@ -595,7 +595,7 @@ Request* Request::CreateRequestWithRequestOrString(
     // network::mojom::IPAddressSpace enum yet. Finish rename by changing the
     // enum.
     if (init->targetAddressSpace() == "loopback") {
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kLocal);
+      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kLoopback);
     } else if (init->targetAddressSpace() == "local") {
       request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kPrivate);
     } else if (init->targetAddressSpace() == "private") {
@@ -674,6 +674,8 @@ Request* Request::CreateRequestWithRequestOrString(
     }
     options.retry_after_unload = retry_options->retryAfterUnload();
     options.retry_non_idempotent = retry_options->retryNonIdempotent();
+    options.retry_only_if_server_unreached =
+        retry_options->retryOnlyIfServerUnreached();
     request->SetRetryOptions(options);
   }
 
@@ -1057,6 +1059,18 @@ Request::Request(ScriptState* script_state,
               Headers::Create(request->HeaderList()),
               signal) {
   headers_->SetGuard(Headers::kRequestGuard);
+
+  // This is currently only meant to allow certain contexts to bypass request
+  // forbidden header setting in the renderer. For example in Chromium:
+  // extension
+  // (https://www.chromium.org/developers/design-documents/extensions/) script
+  // contexts are an example of a context depending on their configuration.
+  bool bypass_forbidden_fetch_request_headers =
+      SecurityPolicy::IsOriginAccessToURLAllowed(
+          ExecutionContext::From(script_state)->GetSecurityOrigin(),
+          request_->Url());
+  headers_->SetBypassRequestForbiddenHeaderCheck(
+      bypass_forbidden_fetch_request_headers);
 }
 
 String Request::method() const {
@@ -1190,7 +1204,7 @@ bool Request::keepalive() const {
 
 V8IPAddressSpace Request::targetAddressSpace() const {
   switch (request_->TargetAddressSpace()) {
-    case network::mojom::IPAddressSpace::kLocal:
+    case network::mojom::IPAddressSpace::kLoopback:
       return V8IPAddressSpace(V8IPAddressSpace::Enum::kLoopback);
     case network::mojom::IPAddressSpace::kPrivate:
       return V8IPAddressSpace(V8IPAddressSpace::Enum::kLocal);
@@ -1263,7 +1277,7 @@ mojom::blink::FetchAPIRequestPtr Request::CreateFetchAPIRequest() const {
     HTTPHeaderMap::AddResult result = headers.Add(key, value);
     if (!result.is_new_entry) {
       result.stored_value->value =
-          AtomicString(WTF::StrCat({result.stored_value->value, ", ", value}));
+          AtomicString(StrCat({result.stored_value->value, ", ", value}));
     }
   }
   for (const auto& pair : headers)

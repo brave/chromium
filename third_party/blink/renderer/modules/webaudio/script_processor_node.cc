@@ -30,6 +30,7 @@
 #include "base/compiler_specific.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/trace_event.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable_creation_key.h"
@@ -128,6 +129,15 @@ ScriptProcessorNode::ScriptProcessorNode(BaseAudioContext& context,
   SetHandler(ScriptProcessorHandler::Create(
       *this, sample_rate, buffer_size, number_of_input_channels,
       number_of_output_channels, input_buffers_, output_buffers_));
+
+  if (auto* window = To<LocalDOMWindow>(GetExecutionContext())) {
+    auto* frame = window->GetFrame();
+    if (frame && frame->IsMainFrame()) {
+      ukm::builders::Media_WebAudio_ScriptProcessorNode(window->UkmSourceID())
+          .SetCreation(true)
+          .Record(window->UkmRecorder());
+    }
+  }
 }
 
 ScriptProcessorNode* ScriptProcessorNode::Create(
@@ -180,17 +190,17 @@ ScriptProcessorNode* ScriptProcessorNode::Create(
   if (number_of_input_channels > BaseAudioContext::MaxNumberOfChannels()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        WTF::StrCat(
-            {"number of input channels (",
-             String::Number(number_of_input_channels), ") exceeds maximum (",
-             String::Number(BaseAudioContext::MaxNumberOfChannels()), ")."}));
+        StrCat({"number of input channels (",
+                String::Number(number_of_input_channels), ") exceeds maximum (",
+                String::Number(BaseAudioContext::MaxNumberOfChannels()),
+                ")."}));
     return nullptr;
   }
 
   if (number_of_output_channels > BaseAudioContext::MaxNumberOfChannels()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        WTF::StrCat(
+        StrCat(
             {"number of output channels (",
              String::Number(number_of_output_channels), ") exceeds maximum (",
              String::Number(BaseAudioContext::MaxNumberOfChannels()), ")."}));
@@ -229,9 +239,8 @@ ScriptProcessorNode* ScriptProcessorNode::Create(
     default:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kIndexSizeError,
-          WTF::StrCat(
-              {"buffer size (", String::Number(requested_buffer_size),
-               ") must be 0 or a power of two between 256 and 16384."}));
+          StrCat({"buffer size (", String::Number(requested_buffer_size),
+                  ") must be 0 or a power of two between 256 and 16384."}));
       return nullptr;
   }
 

@@ -14,6 +14,7 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/feature_list.h"
+#include "base/notimplemented.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/viz_utils.h"
@@ -182,7 +183,6 @@ void DisplayAndroidManager::DoUpdateDisplay(display::Display* display,
 
 void DisplayAndroidManager::UpdateDisplay(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jObject,
     jint sdkDisplayId,
     const base::android::JavaRef<jstring>& label,
     const base::android::JavaRef<jintArray>&
@@ -233,7 +233,6 @@ void DisplayAndroidManager::UpdateDisplay(
 
 void DisplayAndroidManager::RemoveDisplay(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jObject,
     jint sdkDisplayId) {
   display_list().RemoveDisplay(sdkDisplayId);
   display::RemoveInternalDisplayId(sdkDisplayId);
@@ -241,7 +240,6 @@ void DisplayAndroidManager::RemoveDisplay(
 
 void DisplayAndroidManager::SetPrimaryDisplayId(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jObject,
     jint sdkDisplayId) {
   primary_display_id_ = sdkDisplayId;
 }

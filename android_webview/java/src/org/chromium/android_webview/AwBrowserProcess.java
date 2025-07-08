@@ -24,6 +24,7 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.Lifetime;
@@ -66,6 +67,7 @@ import org.chromium.components.metrics.AndroidMetricsLogUploader;
 import org.chromium.components.minidump_uploader.CrashFileManager;
 import org.chromium.components.policy.CombinedPolicyProvider;
 import org.chromium.content_public.browser.BrowserStartupController;
+import org.chromium.content_public.browser.BrowserStartupController.StartupCallback;
 import org.chromium.content_public.browser.ChildProcessCreationParams;
 import org.chromium.content_public.browser.ChildProcessLauncherHelper;
 import org.chromium.ui.display.DisplayAndroidManager;
@@ -100,12 +102,12 @@ public final class AwBrowserProcess {
     private static @Nullable String sProcessDataDirSuffix;
 
     /**
-     * Loads the native library, and performs basic static construction of objects needed
-     * to run webview in this process. Does not create threads; safe to call from zygote.
-     * Note: it is up to the caller to ensure this is only called once.
+     * Loads the native library, and performs basic static construction of objects needed to run
+     * webview in this process. Does not create threads; safe to call from zygote. Note: it is up to
+     * the caller to ensure this is only called once.
      *
      * @param processDataDirSuffix The suffix to use when setting the data directory for this
-     *                             process; null to use no suffix.
+     *     process; null to use no suffix.
      */
     public static void loadLibrary(String processDataDirSuffix) {
         loadLibrary(null, null, processDataDirSuffix);
@@ -165,9 +167,7 @@ public final class AwBrowserProcess {
         final boolean ignoreVisibilityForImportance = true;
         ChildProcessCreationParams.set(
                 getWebViewPackageName(),
-                /* privilegedServicesName= */ null,
                 getWebViewPackageName(),
-                /* sandboxedServicesName= */ null,
                 isExternalService,
                 LibraryProcessType.PROCESS_WEBVIEW_CHILD,
                 bindToCaller,
@@ -186,9 +186,7 @@ public final class AwBrowserProcess {
         final boolean ignoreVisibilityForImportance = false;
         ChildProcessCreationParams.set(
                 ContextUtils.getApplicationContext().getPackageName(),
-                /* privilegedServicesName= */ null,
                 ContextUtils.getApplicationContext().getPackageName(),
-                /* sandboxedServicesName= */ null,
                 isExternalService,
                 LibraryProcessType.PROCESS_WEBVIEW_CHILD,
                 bindToCaller,
@@ -196,21 +194,79 @@ public final class AwBrowserProcess {
     }
 
     /**
-     * Starts the chromium browser process running within this process. Creates threads and performs
-     * other per-app resource allocations; must not be called from zygote. Note: it is up to the
-     * caller to ensure this is only called once.
+     * Asynchronously triggers the chromium browser process initialization. Creates threads and
+     * performs other per-app resource allocations; must not be called from zygote.
      *
-     * <p>Note: To start the browser in tests, use startForTesting.
+     * <p>Note: it is up to the caller to ensure this is only called once.
+     *
+     * @param callback This is triggered when the async startup completes.
      */
-    public static void start() {
+    public static void triggerAsyncBrowserProcess(StartupCallback callback) {
         ThreadUtils.assertOnUiThread();
-        try (ScopedSysTraceEvent e1 = ScopedSysTraceEvent.scoped("AwBrowserProcess.start")) {
+        try (ScopedSysTraceEvent e2 =
+                ScopedSysTraceEvent.scoped("AwBrowserProcess.startBrowserProcessAsync")) {
+            BrowserStartupController.getInstance()
+                    .startBrowserProcessesAsync(
+                            LibraryProcessType.PROCESS_WEBVIEW,
+                            /* startGpuProcess= */ false,
+                            /* startMinimalBrowser= */ false,
+                            /* singleProcess= */ !isMultiProcess(),
+                            /* scheduleFlushStartupTasks= */ true,
+                            callback);
+        }
+    }
+
+    /**
+     * Finishes the chromium browser process initialization. Starts the browser process
+     * synchronously if not already started.
+     *
+     * <p>Note: it is up to the caller to ensure this is only called once.
+     */
+    public static void finishBrowserProcessStart() {
+        ThreadUtils.assertOnUiThread();
+        try (ScopedSysTraceEvent e1 =
+                ScopedSysTraceEvent.scoped("AwBrowserProcess.finishBrowserProcessStart")) {
+            if (!BrowserStartupController.getInstance().isFullBrowserStarted()) {
+                BrowserStartupController.getInstance()
+                        .startBrowserProcessesSync(
+                                LibraryProcessType.PROCESS_WEBVIEW,
+                                !isMultiProcess(),
+                                /* startGpuProcess= */ false);
+            }
+            PowerMonitor.create();
+            PlatformServiceBridge.getInstance().setSafeBrowsingHandler();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                AwContentsLifecycleNotifier.initialize();
+            }
+
+            AwSupervisedUserUrlClassifier classifier = AwSupervisedUserUrlClassifier.getInstance();
+            if (classifier != null && AwSupervisedUserSafeModeAction.isSupervisionEnabled()) {
+                classifier.checkIfNeedRestrictedContentBlocking();
+            }
+
+            PostTask.postTask(
+                    TaskTraits.BEST_EFFORT,
+                    () -> {
+                        RecordHistogram.recordSparseHistogram(
+                                "Android.PlayServices.Version",
+                                PlatformServiceBridge.getInstance().getGmsVersionCode());
+                    });
+        }
+    }
+
+    /**
+     * Runs parts of browser process start that precede starting the browser process via the
+     * BrowserStartupController.
+     */
+    public static void runPreBrowserProcessStart() {
+        ThreadUtils.assertOnUiThread();
+        try (ScopedSysTraceEvent e1 =
+                ScopedSysTraceEvent.scoped("AwBrowserProcess.runPreBrowserProcessStart")) {
             final Context appContext = ContextUtils.getApplicationContext();
             AwBrowserProcessJni.get().setProcessNameCrashKey(ContextUtils.getProcessName());
             AwDataDirLock.lock(appContext);
-            boolean multiProcess =
-                    CommandLine.getInstance().hasSwitch(AwSwitches.WEBVIEW_SANDBOXED_RENDERER);
-            if (multiProcess) {
+
+            if (isMultiProcess()) {
                 PostTask.postTask(
                         TaskTraits.BEST_EFFORT,
                         () -> {
@@ -228,35 +284,11 @@ public final class AwBrowserProcess {
                     ScopedSysTraceEvent.scoped("AwBrowserProcess.maybeEnable")) {
                 AwSafeBrowsingConfigHelper.maybeEnableSafeBrowsingFromManifest();
             }
-
-            try (ScopedSysTraceEvent e2 =
-                    ScopedSysTraceEvent.scoped("AwBrowserProcess.startBrowserProcessesSync")) {
-                BrowserStartupController.getInstance()
-                        .startBrowserProcessesSync(
-                                LibraryProcessType.PROCESS_WEBVIEW,
-                                !multiProcess,
-                                /* startGpuProcess= */ false);
-            }
-
-            PowerMonitor.create();
-            PlatformServiceBridge.getInstance().setSafeBrowsingHandler();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                AwContentsLifecycleNotifier.initialize();
-            }
-
-            AwSupervisedUserUrlClassifier classifier = AwSupervisedUserUrlClassifier.getInstance();
-            if (classifier != null && AwSupervisedUserSafeModeAction.isSupervisionEnabled()) {
-                classifier.checkIfNeedRestrictedContentBlocking();
-            }
         }
+    }
 
-        PostTask.postTask(
-                TaskTraits.BEST_EFFORT,
-                () -> {
-                    RecordHistogram.recordSparseHistogram(
-                            "Android.PlayServices.Version",
-                            PlatformServiceBridge.getInstance().getGmsVersionCode());
-                });
+    private static boolean isMultiProcess() {
+        return CommandLine.getInstance().hasSwitch(AwSwitches.WEBVIEW_SANDBOXED_RENDERER);
     }
 
     /**
@@ -265,7 +297,8 @@ public final class AwBrowserProcess {
      * browser process directly should use this.
      */
     public static void startForTesting() {
-        start();
+        runPreBrowserProcessStart();
+        finishBrowserProcessStart();
         onStartupComplete();
     }
 
@@ -613,7 +646,10 @@ public final class AwBrowserProcess {
             intent.setClassName(
                     getWebViewPackageName(),
                     EmbeddedComponentLoader.AW_COMPONENTS_PROVIDER_SERVICE);
-            loader.connect(intent);
+            loader.connect(
+                    intent,
+                    AwFeatureMap.isEnabled(
+                            AwFeatures.WEBVIEW_CONNECT_TO_COMPONENT_PROVIDER_IN_BACKGROUND));
         }
     }
 

@@ -16,6 +16,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -40,6 +41,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/hats/trust_safety_sentiment_service.h"
 #include "chrome/browser/ui/hats/trust_safety_sentiment_service_factory.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
@@ -54,6 +56,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/features/password_manager_features_util.h"
@@ -853,6 +856,11 @@ void PasswordsPrivateDelegateImpl::SetAccountStorageEnabled(
       ->SetSelectedType(syncer::UserSelectableType::kPasswords, enabled);
 }
 
+bool PasswordsPrivateDelegateImpl::ShouldShowAccountStorageSettingToggle() {
+  return password_manager::features_util::ShouldShowAccountStorageSettingToggle(
+      profile_->GetPrefs(), SyncServiceFactory::GetForProfile(profile_));
+}
+
 std::vector<api::passwords_private::PasswordUiEntry>
 PasswordsPrivateDelegateImpl::GetInsecureCredentials() {
   return password_check_delegate_.GetInsecureCredentials();
@@ -1047,7 +1055,7 @@ void PasswordsPrivateDelegateImpl::MaybeShowPasswordShareButtonIPH(
   if (!browser || !browser->window()) {
     return;
   }
-  browser->window()->MaybeShowFeaturePromo(
+  BrowserUserEducationInterface::From(browser)->MaybeShowFeaturePromo(
       feature_engagement::kIPHPasswordSharingFeature);
 }
 
@@ -1176,6 +1184,8 @@ void PasswordsPrivateDelegateImpl::OnStateChanged(
       PasswordsPrivateEventRouterFactory::GetForProfile(profile_);
   if (router) {
     router->OnAccountStorageEnabledStateChanged(IsAccountStorageEnabled());
+    router->OnShouldShowAccountStorageSettingToggleChanged(
+        ShouldShowAccountStorageSettingToggle());
   }
 }
 
@@ -1310,6 +1320,10 @@ PasswordsPrivateDelegateImpl::CreatePasswordUiEntryFromCredentialUiEntry(
   if (change_password_url.has_value()) {
     entry.change_password_url = change_password_url->spec();
   }
+  entry.backup_password =
+      credential.backup_password.has_value()
+          ? std::optional(base::UTF16ToUTF8(credential.backup_password.value()))
+          : std::nullopt;
   entry.id = credential_id_generator_.GenerateId(std::move(credential));
   return entry;
 }

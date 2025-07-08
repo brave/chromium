@@ -133,13 +133,14 @@ blink::WebPluginContainer::TouchEventRequestType ParseTouchEventRequestType(
   return blink::WebPluginContainer::kTouchEventRequestTypeNone;
 }
 
-class ScriptableObject : public gin::Wrappable<ScriptableObject>,
-                         public gin::NamedPropertyInterceptor {
+class ScriptableObject
+    : public gin::DeprecatedWrappableWithNamedPropertyInterceptor<
+          ScriptableObject> {
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   static v8::Local<v8::Object> Create(v8::Isolate* isolate) {
-    ScriptableObject* scriptable_object = new ScriptableObject(isolate);
+    ScriptableObject* scriptable_object = new ScriptableObject();
     return gin::CreateHandle(isolate, scriptable_object)
         .ToV8()
         .As<v8::Object>();
@@ -156,19 +157,20 @@ class ScriptableObject : public gin::Wrappable<ScriptableObject>,
   }
 
  private:
-  explicit ScriptableObject(v8::Isolate* isolate)
-      : gin::NamedPropertyInterceptor(isolate, this) {}
+  explicit ScriptableObject() = default;
 
-  // gin::Wrappable
+  // gin::DeprecatedWrappable
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override {
-    return gin::Wrappable<ScriptableObject>::GetObjectTemplateBuilder(isolate)
+    return gin::DeprecatedWrappable<ScriptableObject>::GetObjectTemplateBuilder(
+               isolate)
         .AddNamedPropertyInterceptor();
   }
 };
 
 // static
-gin::WrapperInfo ScriptableObject::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo ScriptableObject::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 }  // namespace
 
@@ -307,6 +309,7 @@ void TestPlugin::UpdateGeometry(const gfx::Rect& window_rect,
     // display compositor later.
     shared_image_ = sii->CreateSharedImage(
         {viz::SinglePlaneFormat::kRGBA_8888, rect_.size(), gfx::ColorSpace(),
+         kBottomLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
          gpu::SHARED_IMAGE_USAGE_GLES2_WRITE |
              gpu::SHARED_IMAGE_USAGE_DISPLAY_READ,
          "TestLabel"},
@@ -336,6 +339,7 @@ void TestPlugin::UpdateGeometry(const gfx::Rect& window_rect,
     shared_image_ =
         shared_image_interface_->CreateSharedImageForSoftwareCompositor(
             {format, rect_.size(), gfx::ColorSpace(),
+             kBottomLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
              gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY, "TestPluginSharedBitmap"});
     sync_token_ = shared_image_interface_->GenVerifiedSyncToken();
 
@@ -368,27 +372,17 @@ bool TestPlugin::PrepareTransferableResource(
     viz::ReleaseCallback* release_callback) {
   if (!content_changed_)
     return false;
-  gfx::Size size(rect_.size());
 
-  if (shared_image_ && !gl_) {
-    *resource = viz::TransferableResource::MakeSoftwareSharedImage(
-        shared_image_, sync_token_, shared_image_->size(),
-        viz::SinglePlaneFormat::kBGRA_8888,
-        viz::TransferableResource::ResourceSource::kCanvas);
-    *release_callback =
-        base::BindOnce(&ReleaseSharedImage, std::move(shared_image_));
-    sync_token_ = gpu::SyncToken();
-  } else if (shared_image_) {
-    *resource = viz::TransferableResource::MakeGpu(
-        shared_image_, GL_TEXTURE_2D, sync_token_, size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+  if (shared_image_) {
+    *resource = viz::TransferableResource::Make(
+        shared_image_, viz::TransferableResource::ResourceSource::kCanvas,
+        sync_token_);
     // We pass ownership of the shared image to the callback.
     *release_callback = base::BindOnce(&ReleaseSharedImage,
                                        std::exchange(shared_image_, nullptr));
     sync_token_ = gpu::SyncToken();
   }
-  resource->origin = kBottomLeft_GrSurfaceOrigin;
-  resource->size = size;
+
   content_changed_ = false;
   return true;
 }

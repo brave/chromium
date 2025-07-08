@@ -80,6 +80,16 @@ class ProcessDiceHeaderDelegate {
   virtual signin_metrics::AccessPoint GetAccessPoint() = 0;
 };
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(PrimaryAccountSettingGaiaIntegrationState)
+enum class PrimaryAccountSettingGaiaIntegrationState {
+  kOnTokenExchangeSuccess = 0,
+  kOnSyncHeaderReceived = 1,
+  kMaxValue = kOnSyncHeaderReceived
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/signin/enums.xml:GaiaIntegrationState)
+
 // Processes the Dice responses from Gaia.
 class DiceResponseHandler : public KeyedService {
  public:
@@ -92,14 +102,15 @@ class DiceResponseHandler : public KeyedService {
   // numeric values should never be reused.
   // Public for testing.
   // LINT.IfChange(TokenBindingOutcome)
-  enum class TokenBindingOutcome{
-      kBound = 0,
-      kNotBoundUnknown = 1,
-      kNotBoundNotSupported = 2,
-      kNotBoundNotEligible = 3,
-      kNotBoundRegistrationTokenGenerationFailed = 4,
-      kNotBoundServerRejectedKey = 5,
-      kMaxValue = kNotBoundServerRejectedKey,
+  enum class TokenBindingOutcome {
+    kBound = 0,
+    kNotBoundUnknown = 1,
+    kNotBoundNotSupported = 2,
+    kNotBoundNotEligible = 3,
+    kNotBoundRegistrationTokenGenerationFailed = 4,
+    kNotBoundServerRejectedKey = 5,
+    kNotBoundRefreshTokensNotLoaded = 6,
+    kMaxValue = kNotBoundRefreshTokensNotLoaded,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/signin/enums.xml:DiceTokenBindingOutcome)
 #else

@@ -186,7 +186,7 @@ GridRangeVector GridRangeBuilder::FinalizeRanges() {
 
       is_in_auto_fit_range =
           explicit_tracks_.RepeatType(current_explicit_repeater_index) ==
-          NGGridTrackRepeater::RepeatType::kAutoFit;
+          GridTrackRepeater::RepeatType::kAutoFit;
       next_explicit_repeater_start +=
           explicit_tracks_.RepeatSize(current_explicit_repeater_index) *
           explicit_tracks_.RepeatCount(current_explicit_repeater_index,
@@ -322,8 +322,8 @@ GridRangeVector GridRangeBuilder::FinalizeRanges() {
   return ranges;
 }
 
-GridRangeBuilder::GridRangeBuilder(const NGGridTrackList& explicit_tracks,
-                                   const NGGridTrackList& implicit_tracks,
+GridRangeBuilder::GridRangeBuilder(const GridTrackList& explicit_tracks,
+                                   const GridTrackList& implicit_tracks,
                                    wtf_size_t auto_repetitions,
                                    wtf_size_t start_offset)
     : auto_repetitions_(auto_repetitions),
@@ -346,9 +346,15 @@ GridRangeBuilder::GridRangeBuilder(const NGGridTrackList& explicit_tracks,
         explicit_tracks_.RepeatCount(i, auto_repetitions_) *
         explicit_tracks_.RepeatSize(i);
 
-    // Subgrids can have zero auto repetitions.
+    // Subgrids can have zero auto repetitions. Grids with repeat(auto-fill,
+    // auto) also currently can have a track count of 0.
+    //
+    // TODO (almaher): Update this check depending on if we allow Grid to have
+    // repeat(auto-fill, auto) track definitions.
     if (repeater_track_count == 0) {
-      DCHECK(explicit_tracks_.IsSubgriddedAxis());
+      DCHECK(explicit_tracks_.IsSubgriddedAxis() ||
+             explicit_tracks_.HasAutoSizedRepeater() ||
+             implicit_tracks_.HasAutoSizedRepeater());
       continue;
     }
 
@@ -1001,8 +1007,8 @@ void GridSizingTrackCollection::BuildSets(
 }
 
 void GridSizingTrackCollection::BuildSets(
-    const NGGridTrackList& explicit_track_list,
-    const NGGridTrackList& implicit_track_list,
+    const GridTrackList& explicit_track_list,
+    const GridTrackList& implicit_track_list,
     bool is_available_size_indefinite) {
   properties_.Reset();
   sets_.Shrink(0);
@@ -1098,6 +1104,11 @@ void GridSizingTrackCollection::BuildSets(
         if (set_track_size.HasPercentage()) {
           range.properties.SetProperty(
               TrackSpanProperties::kIsDependentOnAvailableSize);
+        }
+
+        if (auto_sized_repeater_track_index_ == kNotFound &&
+            set_track_size.IsTrackDefinitionAuto()) {
+          auto_sized_repeater_track_index_ = i;
         }
 
         CacheSetProperties(sets_.emplace_back(set_track_count, set_track_size,

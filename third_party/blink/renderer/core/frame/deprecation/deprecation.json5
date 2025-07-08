@@ -80,15 +80,6 @@
       chrome_status_feature: 5735596811091968,
     },
     {
-      name: "CharsetAutoDetectionISO2022JP",
-      message: "Auto-detection of ISO-2022-JP character set is deprecated and it will be disabled in the near future. Please specify character set in the Content Type header or by using a meta tag (https://developer.mozilla.org/en-US/docs/Glossary/Character_encoding).",
-      translation_note: "Warning displayed to developers that they did not specify character encoding for HTML document, and that auto-detection of specific character set (i.e. ISO-2022-JP) used by the webiste won't be supported in the near futre.",
-      web_features: [
-        "kCharsetAutoDetectionISO2022JP",
-      ],
-      chrome_status_feature: 6576566521561088,
-    },
-    {
       name: "ChromeLoadTimesConnectionInfo",
       message: "`chrome.loadTimes()` is deprecated, instead use standardized API: Navigation Timing 2.",
       translation_note: "This warning occurs when the website attempts to invoke the deprecated `chrome.loadTimes().connectionInfo` API.",
@@ -277,9 +268,9 @@
       message: "The website requested a subresource from a network that it could only access because of its users' privileged network position. These requests expose non-public devices and servers to the internet, increasing the risk of a cross-site request forgery (CSRF) attack, and/or information leakage. To mitigate these risks, Chrome deprecates requests to non-public subresources when initiated from non-secure contexts, and will start blocking them.",
       translation_note: "This warning occurs when an insecure context (e.g., HTTP) requests a private resource (not on open internet). This is done to mitigate the potential for CSRF and other attacks.",
       web_features: [
-        "kAddressSpacePrivateNonSecureContextEmbeddedLocal",
-        "kAddressSpacePublicNonSecureContextEmbeddedLocal",
-        "kAddressSpacePublicNonSecureContextEmbeddedPrivate",
+        "kAddressSpaceLocalNonSecureContextEmbeddedLoopbackV2",
+        "kAddressSpacePublicNonSecureContextEmbeddedLocalV2",
+        "kAddressSpacePublicNonSecureContextEmbeddedLoopbackV2",
       ],
       chrome_status_feature: 5436853517811712,
       milestone: 92,
@@ -394,6 +385,15 @@
       ],
       chrome_status_feature: 5137515594383360,
       milestone: 108,
+    },
+    {
+      name: "OverrideFlashEmbedwithHTML",
+      message: "Legacy flash video embed has been rewritten to HTML iframe. Flash is long gone, this rewriting hack is deprecated and may be removed in the future.",
+      translation_note: "Warning displayed to developers when they use a Flash Embed URLS to let them know that the browser will not automatically link to their equivalent HTML5 link.",
+      web_features: [
+        "kOverrideFlashEmbedwithHTML",
+      ],
+      milestone: 140,
     },
     {
       name: "PaymentInstruments",
@@ -594,15 +594,6 @@
         "kV8SharedArrayBufferConstructedInExtensionWithoutIsolation",
       ],
       milestone: 96,
-    },
-    {
-      name: "WebGPUAdapterIsFallbackAdapter",
-      message: "The GPUAdapter `isFallbackAdapter` attribute is deprecated, instead use the GPUAdapterInfo `isFallbackAdapter` attribute.",
-      translation_note: "This warning occurs when the website attempts to use the deprecated GPUAdapter `isFallbackAdapter` attribute.",
-      web_features: [
-        "kV8GPUAdapter_IsFallbackAdapter_AttributeGetter",
-      ],
-      chrome_status_feature: 4870179714236416,
     },
     {
       name: "XHRJSONEncodingDetection",

@@ -4,14 +4,18 @@
 
 package org.chromium.components.payments.secure_payment_confirmation;
 
-import android.graphics.drawable.Drawable;
-import android.util.Pair;
 import android.view.View;
-import android.view.ViewGroup.LayoutParams;
+import android.widget.ImageView;
+import android.widget.ImageView.ScaleType;
+import android.widget.TextView;
 
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.components.payments.PaymentApp.PaymentEntityLogo;
+import org.chromium.components.payments.R;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
+
+import java.util.List;
 
 /**
  * The view binder of the SecurePaymentConfirmation UI, which is stateless. It is called to bind a
@@ -21,42 +25,39 @@ import org.chromium.ui.modelutil.PropertyModel;
 /* package */ class SecurePaymentConfirmationViewBinder {
     /* package */ static void bind(
             PropertyModel model, SecurePaymentConfirmationView view, PropertyKey propertyKey) {
-        if (SecurePaymentConfirmationProperties.SHOWS_ISSUER_NETWORK_ICONS == propertyKey) {
-            if (model.get(SecurePaymentConfirmationProperties.SHOWS_ISSUER_NETWORK_ICONS)) {
-                view.mIssuerNetworkIconsRow.setVisibility(View.VISIBLE);
-                view.mHeaderImage.setVisibility(View.GONE);
+        if (SecurePaymentConfirmationProperties.HEADER_LOGOS == propertyKey) {
+            List<PaymentEntityLogo> logos =
+                    model.get(SecurePaymentConfirmationProperties.HEADER_LOGOS);
+            if (logos.isEmpty()) {
+                view.mHeaderIllustration.setVisibility(View.VISIBLE);
+                view.mHeaderLogosRow.setVisibility(View.GONE);
             } else {
-                view.mHeaderImage.setVisibility(View.VISIBLE);
-                view.mIssuerNetworkIconsRow.setVisibility(View.GONE);
+                view.mHeaderLogoPrimary.setImageBitmap(logos.get(0).getIcon());
+                view.mHeaderLogoPrimary.setContentDescription(logos.get(0).getLabel());
+                view.mHeaderLogoPrimary.setScaleType(ScaleType.FIT_CENTER);
+                if (logos.size() > 1) {
+                    // Note that even if the merchant provides more than 2 logos, SPCAppFactory
+                    // should be filtering the logos down to a max size of 2.
+                    assert (logos.size() == 2);
+                    view.mHeaderLogoSecondary.setImageBitmap(logos.get(1).getIcon());
+                    view.mHeaderLogoSecondary.setContentDescription(logos.get(1).getLabel());
+                    view.mHeaderLogosDivider.setVisibility(View.VISIBLE);
+                    view.mHeaderLogoPrimary.setScaleType(ScaleType.FIT_END);
+                } else {
+                    view.mHeaderLogosDivider.setVisibility(View.GONE);
+                    view.mHeaderLogoSecondary.setVisibility(View.GONE);
+                    view.mHeaderLogoPrimary.setScaleType(ScaleType.FIT_CENTER);
+                }
+
+                view.mHeaderLogosRow.setVisibility(View.VISIBLE);
+                view.mHeaderIllustration.setVisibility(View.GONE);
             }
-        } else if (SecurePaymentConfirmationProperties.ISSUER_ICON == propertyKey) {
-            view.mIssuerIcon.setImageDrawable(
-                    model.get(SecurePaymentConfirmationProperties.ISSUER_ICON));
-        } else if (SecurePaymentConfirmationProperties.NETWORK_ICON == propertyKey) {
-            view.mNetworkIcon.setImageDrawable(
-                    model.get(SecurePaymentConfirmationProperties.NETWORK_ICON));
         } else if (SecurePaymentConfirmationProperties.TITLE == propertyKey) {
             view.mTitle.setText(model.get(SecurePaymentConfirmationProperties.TITLE));
-        } else if (SecurePaymentConfirmationProperties.STORE_LABEL == propertyKey) {
-            view.mStoreLabel.setText(model.get(SecurePaymentConfirmationProperties.STORE_LABEL));
-        } else if (SecurePaymentConfirmationProperties.PAYMENT_ICON == propertyKey) {
-            Pair<Drawable, Boolean> iconInfo =
-                    model.get(SecurePaymentConfirmationProperties.PAYMENT_ICON);
-            view.mPaymentIcon.setImageDrawable(iconInfo.first);
-            // We normally override the input icon's dimensions, to stop developers from passing
-            // arbitrary sized icons. However if we're using the default payment icon we should just
-            // let it use its intrinsic sizing.
-            if (iconInfo.second) {
-                view.mPaymentIcon.getLayoutParams().height = LayoutParams.WRAP_CONTENT;
-                view.mPaymentIcon.getLayoutParams().width = LayoutParams.WRAP_CONTENT;
-            }
-        } else if (SecurePaymentConfirmationProperties.PAYMENT_INSTRUMENT_LABEL == propertyKey) {
-            view.mPaymentInstrumentLabel.setText(
-                    model.get(SecurePaymentConfirmationProperties.PAYMENT_INSTRUMENT_LABEL));
-        } else if (SecurePaymentConfirmationProperties.CURRENCY == propertyKey) {
-            view.mCurrency.setText(model.get(SecurePaymentConfirmationProperties.CURRENCY));
-        } else if (SecurePaymentConfirmationProperties.TOTAL == propertyKey) {
-            view.mTotal.setText(model.get(SecurePaymentConfirmationProperties.TOTAL));
+        } else if (SecurePaymentConfirmationProperties.ITEM_LIST_ADAPTER == propertyKey) {
+            view.mItemList.swapAdapter(
+                    model.get(SecurePaymentConfirmationProperties.ITEM_LIST_ADAPTER),
+                    /* removeAndRecycleExistingViews= */ true);
         } else if (SecurePaymentConfirmationProperties.OPT_OUT_TEXT == propertyKey) {
             if (model.get(SecurePaymentConfirmationProperties.OPT_OUT_TEXT) == null) {
                 view.mOptOutText.setVisibility(View.GONE);
@@ -75,6 +76,35 @@ import org.chromium.ui.modelutil.PropertyModel;
         } else if (SecurePaymentConfirmationProperties.CONTINUE_BUTTON_LABEL == propertyKey) {
             view.mContinueButton.setText(
                     model.get(SecurePaymentConfirmationProperties.CONTINUE_BUTTON_LABEL));
+        }
+    }
+
+    static void bindItem(PropertyModel model, View view, PropertyKey propertyKey) {
+        if (SecurePaymentConfirmationProperties.ItemProperties.ICON == propertyKey) {
+            ImageView iconView = view.findViewById(R.id.icon);
+            iconView.setImageDrawable(
+                    model.get(SecurePaymentConfirmationProperties.ItemProperties.ICON));
+        } else if (SecurePaymentConfirmationProperties.ItemProperties.ICON_LABEL == propertyKey) {
+            ImageView iconView = view.findViewById(R.id.icon);
+            iconView.setContentDescription(
+                    model.get(SecurePaymentConfirmationProperties.ItemProperties.ICON_LABEL));
+        } else if (SecurePaymentConfirmationProperties.ItemProperties.PRIMARY_TEXT == propertyKey) {
+            TextView primaryTextView = view.findViewById(R.id.primary_text);
+            primaryTextView.setText(
+                    model.get(SecurePaymentConfirmationProperties.ItemProperties.PRIMARY_TEXT));
+        } else if (SecurePaymentConfirmationProperties.ItemProperties.SECONDARY_TEXT
+                == propertyKey) {
+            TextView secondaryTextView = view.findViewById(R.id.secondary_text);
+            if (model.get(SecurePaymentConfirmationProperties.ItemProperties.SECONDARY_TEXT) == null
+                    || model.get(SecurePaymentConfirmationProperties.ItemProperties.SECONDARY_TEXT)
+                            .isEmpty()) {
+                secondaryTextView.setVisibility(View.GONE);
+            } else {
+                secondaryTextView.setText(
+                        model.get(
+                                SecurePaymentConfirmationProperties.ItemProperties.SECONDARY_TEXT));
+                secondaryTextView.setVisibility(View.VISIBLE);
+            }
         }
     }
 }

@@ -80,6 +80,7 @@ include_rules = [
   "+components/browser_ui/photo_picker",
   "+components/browser_ui/settings",
   "+components/browser_ui/util",
+  "+components/browser_ui/share/android",
   "+components/browser_ui/widget",
   "+components/browser_ui/site_settings",
   "+components/browser_ui/strings",
@@ -107,7 +108,6 @@ include_rules = [
   "+components/component_updater",
   "+components/component_updater/installer_policies",
   "+components/compose",
-  "+components/autofill_ai",
   "+components/consent_auditor",
   "+components/constrained_window",
   "+components/content_capture/browser",
@@ -233,10 +233,6 @@ include_rules = [
   "+components/mirroring/mojom",
   "+components/mirroring/service",
   "+components/module_installer/android",
-  "+components/nacl/broker",
-  "+components/nacl/browser",
-  "+components/nacl/common",
-  "+components/nacl/loader",
   "+components/navigation_interception",
   "+components/navigation_metrics",
   "+components/net_log",
@@ -465,10 +461,6 @@ include_rules = [
   "+media/webrtc",  # For webrtc media switches.
   "+mojo/core/embedder",
   "+pdf/pdf_features.h",
-  "+ppapi/c",  # For various types.
-  "+ppapi/host",
-  "+ppapi/proxy",
-  "+ppapi/shared_impl",
   "+remoting/host/chromeos/features.h",
   "+rlz",
   "+sandbox/mac",
@@ -667,5 +659,8 @@ specific_include_rules = {
   ],
   "shared_storage_browsertest.cc": [
     "+components/services/storage/shared_storage/shared_storage_manager.h",
+  ],
+  "fake_server_helper_android\.cc": [
+    "+components/saved_tab_groups",
   ],
 }

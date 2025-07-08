@@ -69,8 +69,10 @@ class BackingStore {
     // Memory-cached metadata for this database.
     virtual const blink::IndexedDBDatabaseMetadata& GetMetadata() = 0;
 
-    // Generates a lock ID for the given object store.
-    virtual PartitionedLockId GetLockId(int64_t object_store_id) const = 0;
+    // Generates the lock ID key for the given object store. Not called on
+    // SQLite backing stores.
+    virtual std::string GetObjectStoreLockIdKey(
+        int64_t object_store_id) const = 0;
 
     // Creates a transaction on this database.
     virtual std::unique_ptr<Transaction> CreateTransaction(
@@ -78,7 +80,9 @@ class BackingStore {
         blink::mojom::IDBTransactionMode mode) = 0;
 
     // Deletes the database from the backing store and resets metadata to a
-    // mostly uninitialized state.
+    // mostly uninitialized state. If the database does not exist, this should
+    // return Status::OK() and `on_complete` need not be called. (The LevelDB
+    // backing store does call it, which is harmless but unnecessary.)
     [[nodiscard]] virtual Status DeleteDatabase(
         std::vector<PartitionedLock> locks,
         base::OnceClosure on_complete) = 0;
@@ -98,11 +102,6 @@ class BackingStore {
     virtual Status CommitPhaseOne(BlobWriteCallback callback) = 0;
     virtual Status CommitPhaseTwo() = 0;
     virtual void Rollback() = 0;
-
-    // Called after the transaction is aborted or completed.
-    // TODO(crbug.com/40253999): can this be removed in favor of deleting the
-    // object?
-    virtual void Reset() = 0;
 
     // Changes the database version to |version|.
     [[nodiscard]] virtual Status SetDatabaseVersion(int64_t version) = 0;
@@ -133,9 +132,10 @@ class BackingStore {
         int64_t object_store_id,
         int64_t index_id,
         const std::u16string& new_name) = 0;
-    [[nodiscard]] virtual Status GetRecord(int64_t object_store_id,
-                                           const blink::IndexedDBKey& key,
-                                           IndexedDBValue* record) = 0;
+    // When not found, the returned value is empty.
+    [[nodiscard]] virtual StatusOr<IndexedDBValue> GetRecord(
+        int64_t object_store_id,
+        const blink::IndexedDBKey& key) = 0;
     // When successful, returns the identifier for the newly stored record.
     [[nodiscard]] virtual StatusOr<RecordIdentifier> PutRecord(
         int64_t object_store_id,
@@ -164,17 +164,13 @@ class BackingStore {
         int64_t index_id,
         const blink::IndexedDBKey& key,
         const RecordIdentifier& record) = 0;
-    // The returned key will be invalid if it was not found.
-    [[nodiscard]] virtual StatusOr<blink::IndexedDBKey> GetPrimaryKeyViaIndex(
-        int64_t object_store_id,
-        int64_t index_id,
-        const blink::IndexedDBKey& key) = 0;
-    [[nodiscard]] virtual Status KeyExistsInIndex(
-        int64_t object_store_id,
-        int64_t index_id,
-        const blink::IndexedDBKey& key,
-        std::unique_ptr<blink::IndexedDBKey>* found_primary_key,
-        bool* exists) = 0;
+    // Returns the primary key of the first record (sorted by primary key) in
+    // the index with key value `key`, if found. Returns a "none" key
+    // (!IsValid()) if not found. Returns a `Status` on database error.
+    [[nodiscard]] virtual StatusOr<blink::IndexedDBKey>
+    GetFirstPrimaryKeyForIndexKey(int64_t object_store_id,
+                                  int64_t index_id,
+                                  const blink::IndexedDBKey& key) = 0;
     [[nodiscard]] virtual StatusOr<uint32_t> GetObjectStoreKeyCount(
         int64_t object_store_id,
         blink::IndexedDBKeyRange key_range) = 0;
@@ -200,13 +196,12 @@ class BackingStore {
         int64_t index_id,
         const blink::IndexedDBKeyRange& key_range,
         blink::mojom::IDBCursorDirection) = 0;
+    virtual blink::mojom::IDBValuePtr BuildMojoValue(IndexedDBValue value) = 0;
   };
 
   // Another interface to be implemented by a backend implementation.
   class Cursor {
    public:
-    enum IteratorState { READY = 0, SEEK };
-
     virtual ~Cursor() = default;
 
     virtual const blink::IndexedDBKey& GetKey() const = 0;
@@ -214,15 +209,20 @@ class BackingStore {
     virtual blink::IndexedDBKey TakeKey() && = 0;
     virtual IndexedDBValue& GetValue() = 0;
 
-    virtual bool Continue(const blink::IndexedDBKey& key,
-                          const blink::IndexedDBKey& primary_key,
-                          IteratorState state,
-                          Status*) = 0;
-    virtual bool Advance(uint32_t count, Status*) = 0;
-    // Clone may return a nullptr if cloning fails for any reason.
-    virtual std::unique_ptr<Cursor> Clone() const = 0;
+    // Advances the cursor to a new row and loads the row data. If the input
+    // keys are valid, advances the cursor to the row for `key` or `key` and
+    // `primary_key`. Returns true on success, or false if no eligible row was
+    // found. Returns an error if there was a DB error.
+    virtual StatusOr<bool> Continue() = 0;
+    virtual StatusOr<bool> Continue(const blink::IndexedDBKey& key,
+                                    const blink::IndexedDBKey& primary_key) = 0;
+    virtual StatusOr<bool> Advance(uint32_t count) = 0;
 
-    bool Continue(Status* s) { return Continue({}, {}, SEEK, s); }
+    // Saves the current position of the cursor.
+    virtual void SavePosition() = 0;
+    // Attempts to reset the cursor to the last saved position. The cursor
+    // may not be in a valid state if this returns false.
+    virtual bool TryResetToLastSavedPosition() = 0;
   };
 
   virtual ~BackingStore() = default;

@@ -90,10 +90,11 @@ function convertFromWebNaming(webRules) {
     webViewRule = convertContentScriptDetailsKeys(webViewRule, [
       { from: "allFrames", to: "all_frames" },
       { from: "excludeGlobs", to: "exclude_globs" },
-      { from: "excludeMatches", to: "exclude_matches" },
+      { from: "excludeURLPatterns", to: "exclude_matches" },
       { from: "includeGlobs", to: "include_globs" },
       { from: "matchAboutBlank", to: "match_about_blank" },
       { from: "runAt", to: "run_at" },
+      { from: "urlPatterns", to: "matches" },
     ]);
 
     webViewRules.push(webViewRule);
@@ -133,6 +134,14 @@ class ControlledFrameElement extends WebViewElement {
     var internal = privates(this).internal;
     return WebViewInternal.removeContentScripts(
         internal.viewInstanceId, names, callback);
+  }
+
+  canGoBack() {
+    return $Promise.resolve(super.canGoBack());
+  }
+
+  canGoForward() {
+    return $Promise.resolve(super.canGoForward());
   }
 }
 

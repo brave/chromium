@@ -1852,7 +1852,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Bluetooth.ConnectedDeviceCount" units="devices"
-    expires_after="2025-10-26">
+    expires_after="2025-12-28">
   <owner>adlr@chromium.org</owner>
   <summary>
     Counts the number of simulataneously connected Bluetooth devices. Used to
@@ -1875,7 +1875,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Bluetooth.Linux.ConnectToService.FailureReason"
     enum="BluetoothDeviceConnectToServiceFailureReason"
-    expires_after="2025-10-26">
+    expires_after="2025-12-28">
   <owner>hansenmichael@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
@@ -1886,12 +1886,24 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Bluetooth.Linux.ConnectToServiceInsecurelyResult"
     enum="BluetoothAdapterConnectToServiceInsecurelyResult"
-    expires_after="2025-10-26">
+    expires_after="2025-12-28">
   <owner>hansenmichael@google.com</owner>
   <owner>chromeos-cross-device-eng@google.com</owner>
   <summary>
     Result of attempting a call to mojom::Adapter::ConnectToServiceInsecurely().
     Emitted when function completes.
+  </summary>
+</histogram>
+
+<histogram name="Bluetooth.LocalNameIsUtf8" enum="Boolean"
+    expires_after="2025-12-31">
+  <owner>dcheng@chromium.org</owner>
+  <owner>reillyg@chromium.org</owner>
+  <owner>cros-device-enablement@google.com</owner>
+  <summary>
+    Counts how many non-UTF8 local names are seen in BLE advertisements. It is
+    unclear if the permisiveness in the current C++ parser is intentional or an
+    oversight.
   </summary>
 </histogram>
 
@@ -1949,7 +1961,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Bluetooth.Web.Characteristic.ReadValue.Outcome"
-    enum="WebBluetoothGATTOperationOutcome" expires_after="2025-09-28">
+    enum="WebBluetoothGATTOperationOutcome" expires_after="2025-11-30">
   <owner>alvinji@chromium.org</owner>
   <owner>deviceapi-team@google.com</owner>
   <summary>
@@ -1985,7 +1997,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Bluetooth.Web.ConnectGATT.Outcome"
-    enum="WebBluetoothConnectGATTOutcome" expires_after="2025-10-26">
+    enum="WebBluetoothConnectGATTOutcome" expires_after="2025-12-28">
   <owner>chengweih@chromium.org</owner>
   <owner>deviceapi-team@google.com</owner>
   <summary>

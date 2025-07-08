@@ -199,6 +199,11 @@ inline constexpr char kManagedControlledFrameAllowedForUrls[] =
 inline constexpr char kManagedControlledFrameBlockedForUrls[] =
     "profile.managed_controlled_frame_blocked_for_urls";
 
+inline constexpr char kManagedLocalNetworkAccessAllowedForUrls[] =
+    "profile.managed_local_network_access_allowed_for_urls";
+inline constexpr char kManagedLocalNetworkAccessBlockedForUrls[] =
+    "profile.managed_local_network_access_blocked_for_urls";
+
 // Boolean indicating whether the quiet UI is enabled for notification
 // permission requests. This and kEnableNotificationCPSS can't both be true
 // at the same time.

@@ -156,7 +156,7 @@ BASE_FEATURE(kOverrideDefaultOzonePlatformHintToAuto,
 // See https://crbug.com/412608405 for context.
 BASE_FEATURE(kXInput2KeyEvents,
              "XInput2KeyEvents",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Update of the virtual keyboard settings UI as described in
 // https://crbug.com/876901.
@@ -238,7 +238,7 @@ BASE_FEATURE(kExperimentalFlingAnimation,
 #endif
 );
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
+#if !BUILDFLAG(IS_APPLE)
 // Cached in Java as well, make sure defaults are updated together.
 BASE_FEATURE(kElasticOverscroll,
              "ElasticOverscroll",
@@ -248,7 +248,7 @@ BASE_FEATURE(kElasticOverscroll,
              base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 );
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
+#endif
 
 // Enables focus follow follow cursor (sloppyfocus).
 BASE_FEATURE(kFocusFollowsCursor,
@@ -370,9 +370,7 @@ const char kPredictorNameEmpty[] = "empty";
 const char kFilterNameEmpty[] = "empty_filter";
 const char kFilterNameOneEuro[] = "one_euro_filter";
 
-const char kPredictionTypeTimeBased[] = "time";
 const char kPredictionTypeFramesBased[] = "frames";
-const char kPredictionTypeDefaultTime[] = "3.3";
 const char kPredictionTypeDefaultFramesVariation1[] = "0.25";
 const char kPredictionTypeDefaultFramesVariation2[] = "0.375";
 const char kPredictionTypeDefaultFramesVariation3[] = "0.5";

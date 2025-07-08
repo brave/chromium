@@ -24,7 +24,10 @@ namespace tabs_api::events {
 // The notification mechanism is a simple |RepeatingCallback|.
 class TabStripEventRecorder : public TabStripModelObserver {
  public:
-  TabStripEventRecorder();
+  using EventNotificationCallback = base::RepeatingCallback<void(const Event&)>;
+
+  TabStripEventRecorder(const TabStripModelAdapter* tab_strip_model_adapter,
+                        EventNotificationCallback event_notification_callback);
   TabStripEventRecorder(const TabStripEventRecorder&) = delete;
   TabStripEventRecorder& operator=(const TabStripEventRecorder&) = delete;
   ~TabStripEventRecorder() override;
@@ -35,17 +38,8 @@ class TabStripEventRecorder : public TabStripModelObserver {
   // Immediately run notification on all recorded events and stop recording.
   // Clients will be notified of future events past this call.
   void PlayRecordingsAndStartNotification();
-  // Sets the notification handler.
-  void SetOnEventNotification(
-      base::RepeatingCallback<void(Event&)> notification);
   // Whether or not the recorder has recorded events.
   bool HasRecordedEvents() const;
-
-  // Set the tabstrip model adapter.
-  void SetTabStripModelAdapter(
-      tabs_api::TabStripModelAdapter* tab_strip_model_adapter) {
-    tab_strip_model_adapter_ = tab_strip_model_adapter;
-  }
 
   ///////////////////////////////////////////////////////////////////////////
   // Integration points with external services.
@@ -58,6 +52,12 @@ class TabStripEventRecorder : public TabStripModelObserver {
   void TabChangedAt(content::WebContents* contents,
                     int index,
                     TabChangeType change_type) override;
+  void OnTabGroupChanged(const TabGroupChange& change) override;
+  void TabGroupedStateChanged(TabStripModel* tab_strip_model,
+                              std::optional<tab_groups::TabGroupId> old_group,
+                              std::optional<tab_groups::TabGroupId> new_group,
+                              tabs::TabInterface* tab,
+                              int index) override;
 
  protected:
   void Handle(Event event);
@@ -71,9 +71,8 @@ class TabStripEventRecorder : public TabStripModelObserver {
   Mode mode_ = Mode::kPassthrough;
   // Recorded events.
   std::queue<Event> recorded_;
-  raw_ptr<tabs_api::TabStripModelAdapter> tab_strip_model_adapter_;
-
-  base::RepeatingCallback<void(Event&)> notification_;
+  raw_ptr<const TabStripModelAdapter> tab_strip_model_adapter_;
+  EventNotificationCallback event_notification_callback_;
 };
 
 }  // namespace tabs_api::events

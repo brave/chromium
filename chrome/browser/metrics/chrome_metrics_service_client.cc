@@ -124,7 +124,6 @@
 #include "content/public/browser/histogram_fetcher.h"
 #include "content/public/browser/network_service_instance.h"
 #include "google_apis/google_api_keys.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -157,7 +156,6 @@
 #include "ash/constants/ash_features.h"
 #include "base/feature_list.h"
 #include "chrome/browser/ash/arc/vmm/vmm_metrics_provider.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/printing/printer_metrics_provider.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/settings/device_settings_service.h"
@@ -178,6 +176,7 @@
 #include "chrome/browser/metrics/update_engine_metrics_provider.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_metrics_provider.h"
 #include "chrome/browser/ui/webui/ash/settings/services/metrics/os_settings_metrics_provider.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -275,8 +274,12 @@ std::unique_ptr<metrics::FileMetricsProvider> CreateFileMetricsProvider(
   using metrics::FileMetricsProvider;
 
   // Create an object to monitor files of metrics and include them in reports.
+  // `is_fre` can be true only on platforms that have FRE.
+  // TODO(crbug.com/407991309): For now, `is_fre` is only set to true in iOS.
+  // Add it also in Android.
   std::unique_ptr<FileMetricsProvider> file_metrics_provider(
-      new FileMetricsProvider(g_browser_process->local_state()));
+      new FileMetricsProvider(g_browser_process->local_state(),
+                              /*is_fre=*/false));
 
   base::FilePath user_data_dir;
   if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
@@ -740,7 +743,7 @@ void ChromeMetricsServiceClient::Initialize() {
 
   // Set is_demo_mode_ to true in ukm_consent_state_observer if the device is
   // currently in Demo Mode.
-  SetIsDemoMode(ash::DemoSession::IsDeviceInDemoMode());
+  SetIsDemoMode(ash::demo_mode::IsDeviceInDemoMode());
 
   // Conditionally create the CrOSPreConsentMetricsManager.
   //
@@ -937,11 +940,8 @@ void ChromeMetricsServiceClient::RegisterMetricsServiceProviders() {
       std::make_unique<WallpaperMetricsProvider>());
   metrics_service_->RegisterMetricsProvider(
       std::make_unique<arc::VmmMetricsProvider>());
-  if (base::FeatureList::IsEnabled(
-          ::features::kK12AgeClassificationMetricsProvider)) {
-    metrics_service_->RegisterMetricsProvider(
-        std::make_unique<K12AgeClassificationMetricsProvider>());
-  }
+  metrics_service_->RegisterMetricsProvider(
+      std::make_unique<K12AgeClassificationMetricsProvider>());
   if (base::FeatureList::IsEnabled(
           ::features::kClassManagementEnabledMetricsProvider)) {
     metrics_service_->RegisterMetricsProvider(

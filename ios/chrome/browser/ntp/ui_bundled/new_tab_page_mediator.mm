@@ -8,10 +8,16 @@
 
 #import "base/apple/foundation_util.h"
 #import "base/memory/raw_ptr.h"
+#import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
 #import "base/metrics/user_metrics_action.h"
+#import "base/time/time.h"
+#import "components/feature_engagement/public/event_constants.h"
+#import "components/feature_engagement/public/tracker.h"
 #import "components/image_fetcher/core/image_fetcher.h"
 #import "components/image_fetcher/core/image_fetcher_service.h"
+#import "components/omnibox/browser/omnibox_prefs.h"
+#import "components/omnibox/common/omnibox_features.h"
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_change_registrar.h"
 #import "components/regional_capabilities/regional_capabilities_service.h"
@@ -33,18 +39,23 @@
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
 #import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
+#import "ios/chrome/browser/ntp/shared/metrics/new_tab_page_metrics_constants.h"
 #import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
 #import "ios/chrome/browser/ntp/ui_bundled/feed_wrapper_view_controller.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_color_palette_util.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_consumer.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_content_delegate.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_constants.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_consumer.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_view_controller.h"
+#import "ios/chrome/browser/omnibox/model/placeholder_service/placeholder_service.h"
+#import "ios/chrome/browser/omnibox/model/placeholder_service/placeholder_service_observer_bridge.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/search_engines/model/search_engine_observer_bridge.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/model/utils/first_run_util.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
@@ -60,12 +71,47 @@
 #import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/navigation/referrer.h"
 #import "ios/web/public/web_state.h"
+#import "skia/ext/skia_utils_ios.h"
 #import "ui/base/l10n/l10n_util.h"
 #import "url/gurl.h"
+
+namespace {
+
+// Histogram name for logging when the 'new' badge on the Lens button is shown
+// on the homepage.
+constexpr char kNTPLensButtonNewBadgeShownHistogram[] =
+    "IOS.NTP.LensButtonNewBadgeShown";
+
+// These values are persisted to `IOS.NTP.LensButtonNewBadgeShown` histograms.
+// Entries should not be renumbered and numeric values should never be reused.
+enum class IOSNTPNewBadgeShownResult {
+  kShown = 0,
+  // kNotShownLimitReached = 1,  // Obsolete in M140
+  // kNotShownButtonPressed = 2,  // Obsolete in M140
+  kMaxValue = kShown,
+};
+
+// The point size of the entry point's symbol.
+const CGFloat kIconPointSize = 18.0;
+
+// The holdback period to wait after FRE completion before showing new badges
+// on the homepage.
+constexpr base::TimeDelta kFREBadgeHoldbackPeriod = base::Hours(1);
+
+// Logs when the 'new' badge on the homepage Lens button is shown.
+//
+// TODO(crbug.com/428691449): Remove once the FET migration for 'new' badges is
+// fully validated.
+void LogLensButtonNewBadgeShownHistogram(IOSNTPNewBadgeShownResult result) {
+  base::UmaHistogramEnumeration(kNTPLensButtonNewBadgeShownHistogram, result);
+}
+
+}  // namespace
 
 @interface NewTabPageMediator () <BrowserViewVisibilityObserving,
                                   HomeBackgroundCustomizationServiceObserving,
                                   IdentityManagerObserverBridgeDelegate,
+                                  PlaceholderServiceObserving,
                                   PrefObserverDelegate,
                                   SearchEngineObserving,
                                   SyncObserverModelBridge>
@@ -121,6 +167,9 @@
   std::unique_ptr<SyncObserverBridge> _syncObserver;
   raw_ptr<signin::IdentityManager> _identityManager;
   id<SystemIdentity> _signedInIdentity;
+  std::unique_ptr<PlaceholderServiceObserverBridge> _placeholderServiceObserver;
+  // Feature engagement tracker for handling "new" badge IPH.
+  raw_ptr<feature_engagement::Tracker> _tracker;
 }
 
 // Synthesized from NewTabPageMutator.
@@ -148,12 +197,14 @@
          browserViewVisibilityNotifier:
              (BrowserViewVisibilityNotifierBrowserAgent*)
                  browserViewVisibilityNotifierBrowserAgent
-    discoverFeedVisibilityBrowserAgent:(DiscoverFeedVisibilityBrowserAgent*)
-                                           discoverFeedVisibilityBrowserAgent {
+    discoverFeedVisibilityBrowserAgent:
+        (DiscoverFeedVisibilityBrowserAgent*)discoverFeedVisibilityBrowserAgent
+              featureEngagementTracker:(feature_engagement::Tracker*)tracker {
   self = [super init];
   if (self) {
     CHECK(identityManager);
     CHECK(accountManagerService);
+    CHECK(tracker);
     _templateURLService = templateURLService;
     _defaultSearchEngine = templateURLService->GetDefaultSearchProvider();
     _URLLoader = URLLoader;
@@ -181,8 +232,35 @@
     _imageFetcherService = imageFetcherService;
     _signedInIdentity =
         _authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
+    _tracker = tracker;
   }
   return self;
+}
+
+#pragma mark - NewTabPageMutator
+
+- (void)checkNewBadgeEligibility {
+  // Notify the badge holdback period has been satisfied if this is not the
+  // First Run, or the First Run happened longer than the holdback period.
+  if (!IsFirstRun() || !IsFirstRunRecent(kFREBadgeHoldbackPeriod)) {
+    _tracker->NotifyEvent(
+        feature_engagement::events::kIOSFREBadgeHoldbackPeriodElapsed);
+  }
+}
+
+- (void)notifyLensBadgeDisplayed {
+  LogLensButtonNewBadgeShownHistogram(IOSNTPNewBadgeShownResult::kShown);
+
+  _tracker->Dismissed(feature_engagement::kIPHiOSHomepageLensNewBadge);
+}
+
+- (void)notifyCustomizationBadgeDisplayed {
+  // TODO(crbug.com/428691449): Remove once the FET migration for 'new' badges
+  // is fully validated.
+  base::RecordAction(
+      base::UserMetricsAction(kNTPCustomizationNewBadgeShownAction));
+
+  _tracker->Dismissed(feature_engagement::kIPHiOSHomepageCustomizationNewBadge);
 }
 
 - (BOOL)isFeedHeaderVisible {
@@ -196,6 +274,17 @@
                                             self.templateURLService)];
   [self.headerConsumer
       setVoiceSearchIsEnabled:ios::provider::IsVoiceSearchEnabled()];
+
+  const TemplateURL* defaultSearchEngine =
+      self.templateURLService->GetDefaultSearchProvider();
+  NSString* dseName =
+      defaultSearchEngine
+          ? [NSString
+                cr_fromString16:defaultSearchEngine
+                                    ->AdjustedShortNameForLocaleDirection()]
+          : @"";
+  [self.headerConsumer setDefaultSearchEngineName:dseName];
+
   [self updateAccountImage];
   [self updateAccountErrorBadge];
   [self startObservingPrefs];
@@ -206,7 +295,13 @@
     _backgroundCustomizationServiceObserverBridge =
         std::make_unique<HomeBackgroundCustomizationServiceObserverBridge>(
             _backgroundCustomizationService, self);
+    // Make sure the intial background is set.
+    [self updateBackground];
   }
+
+  BOOL miaPolicyAllowed = omnibox::IsAimAllowedByPolicy(_prefService);
+  [self.consumer setMIAAllowedByPolicy:miaPolicyAllowed];
+  [self.headerConsumer setMIAAllowedByPolicy:miaPolicyAllowed];
 }
 
 - (void)shutdown {
@@ -230,6 +325,9 @@
   _backgroundCustomizationServiceObserverBridge = nullptr;
   _backgroundCustomizationService = nullptr;
   _imageFetcherService = nullptr;
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate)) {
+    self.placeholderService = nullptr;
+  }
 }
 
 - (void)saveNTPStateForWebState:(web::WebState*)webState {
@@ -257,6 +355,21 @@
   } else {
     [self.consumer restoreScrollPosition:NTPState.scrollPosition];
   }
+}
+
+- (void)setPlaceholderService:(PlaceholderService*)placeholderService {
+  CHECK(base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate));
+
+  _placeholderService = placeholderService;
+
+  if (!placeholderService) {
+    _placeholderServiceObserver.reset();
+    return;
+  }
+
+  _placeholderServiceObserver =
+      std::make_unique<PlaceholderServiceObserverBridge>(self,
+                                                         placeholderService);
 }
 
 #pragma mark - BrowserViewVisibilityObserving
@@ -311,6 +424,27 @@
   [self updateAccountErrorBadge];
 }
 
+#pragma mark - PlaceholderServiceObserving
+
+- (void)placeholderImageUpdated {
+  // Show Default Search Engine favicon.
+  // Remember what is the Default Search Engine provider that the icon is
+  // for, in case the user changes Default Search Engine while this is being
+  // loaded.
+  __weak __typeof(self) weakSelf = self;
+  if (self.placeholderService) {
+    self.placeholderService->FetchDefaultSearchEngineIcon(
+        kIconPointSize, base::BindRepeating(^(UIImage* image) {
+          [weakSelf.headerConsumer setDefaultSearchEngineImage:image];
+        }));
+  }
+}
+
+- (void)placeholderServiceShuttingDown:(PlaceholderService*)service {
+  // Removes observation.
+  self.placeholderService = nil;
+}
+
 #pragma mark - PrefObserverDelegate
 
 - (void)onPreferenceChanged:(const std::string&)preferenceName {
@@ -331,24 +465,7 @@
 #pragma mark - HomeBackgroundCustomizationServiceObserving
 
 - (void)onBackgroundChanged {
-  const sync_pb::NtpCustomBackground& background =
-      _backgroundCustomizationService->GetCurrentBackground();
-
-  GURL imageURL = GURL(background.url());
-
-  image_fetcher::ImageFetcher* imageFetcher =
-      _imageFetcherService->GetImageFetcher(
-          image_fetcher::ImageFetcherConfig::kDiskCacheOnly);
-
-  __weak __typeof(self) weakSelf = self;
-  imageFetcher->FetchImage(
-      imageURL,
-      base::BindOnce(^(const gfx::Image& image,
-                       const image_fetcher::RequestMetadata& metadata) {
-        [weakSelf handleBackgroundImageFetch:image];
-      }),
-      // TODO (crbug.com/417234848): Add annotation.
-      image_fetcher::ImageFetcherParams(NO_TRAFFIC_ANNOTATION_YET, "Test"));
+  [self updateBackground];
 }
 
 #pragma mark - Private
@@ -412,6 +529,45 @@
       updateADPBadgeWithErrorFound:primaryIdentityHasError
                               name:_signedInIdentity.userFullName
                              email:_signedInIdentity.userEmail];
+}
+
+- (void)updateBackground {
+  std::optional<sync_pb::NtpCustomBackground> background =
+      _backgroundCustomizationService->GetCurrentCustomBackground();
+
+  std::optional<sync_pb::UserColorTheme> colorTheme =
+      _backgroundCustomizationService->GetCurrentColorTheme();
+
+  if (colorTheme && colorTheme->color()) {
+    [self.consumer
+        updateBackgroundWithColorPalette:CreateColorPaletteFromSeedColor(
+                                             skia::UIColorFromSkColor(
+                                                 colorTheme->color()))];
+    [self.consumer setBackgroundImage:nil];
+    return;
+  }
+
+  [self.consumer updateBackgroundWithColorPalette:nil];
+  if (!background) {
+    [self.consumer setBackgroundImage:nil];
+    return;
+  }
+
+  GURL imageURL = GURL(background->url());
+
+  image_fetcher::ImageFetcher* imageFetcher =
+      _imageFetcherService->GetImageFetcher(
+          image_fetcher::ImageFetcherConfig::kDiskCacheOnly);
+
+  __weak __typeof(self) weakSelf = self;
+  imageFetcher->FetchImage(
+      imageURL,
+      base::BindOnce(^(const gfx::Image& image,
+                       const image_fetcher::RequestMetadata& metadata) {
+        [weakSelf handleBackgroundImageFetch:image];
+      }),
+      // TODO (crbug.com/417234848): Add annotation.
+      image_fetcher::ImageFetcherParams(NO_TRAFFIC_ANNOTATION_YET, "Test"));
 }
 
 // Helper method to handle the image response after fetching the background

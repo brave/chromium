@@ -23,6 +23,7 @@
 #import "ios/chrome/browser/intelligence/page_action_menu/ui/page_action_menu_entrypoint_view.h"
 #import "ios/chrome/browser/lens/ui_bundled/lens_entrypoint.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
+#import "ios/chrome/browser/lens_overlay/model/lens_overlay_presentation_type.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_overlay_entrypoint_view.h"
 #import "ios/chrome/browser/location_bar/ui_bundled/badges_container_view.h"
 #import "ios/chrome/browser/location_bar/ui_bundled/fakebox_buttons_snapshot_provider.h"
@@ -37,12 +38,14 @@
 #import "ios/chrome/browser/shared/public/commands/activity_service_commands.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
+#import "ios/chrome/browser/shared/public/commands/bwg_commands.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_overlay_commands.h"
 #import "ios/chrome/browser/shared/public/commands/load_query_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_lens_input_selection_command.h"
 #import "ios/chrome/browser/shared/public/commands/page_action_menu_commands.h"
+#import "ios/chrome/browser/shared/public/commands/page_action_menu_entry_point_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
@@ -92,6 +95,9 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 
 // The injected Contextual Panel entrypoint view;
 @property(nonatomic, strong) UIView* contextualPanelEntrypointView;
+
+// The injected reader mode chip view.
+@property(nonatomic, strong) UIView* readerModeChipView;
 
 // The injected placeholder view;
 @property(nonatomic, strong) UIView* placeholderView;
@@ -143,6 +149,9 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 
   // The location bar button to access the page action menu.
   PageActionMenuEntrypointView* _pageActionMenuEntrypointView;
+
+  // The placeholder view that holds the DSE icon.
+  UIImageView* _defaultSearchEngineIconView;
 }
 
 #pragma mark - public
@@ -172,6 +181,11 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   _contextualPanelEntrypointView = contextualPanelEntrypointView;
 }
 
+- (void)setReaderModeChipView:(UIView*)readerModeChipView {
+  DCHECK(!self.readerModeChipView);
+  _readerModeChipView = readerModeChipView;
+}
+
 - (void)setPlaceholderType:(LocationBarPlaceholderType)placeholderType {
   if (placeholderType == _placeholderType) {
     return;
@@ -185,6 +199,10 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 - (void)switchToEditing:(BOOL)editing {
   self.editView.hidden = !editing;
   self.locationBarSteadyView.hidden = editing;
+}
+
+- (id<PageActionMenuEntryPointCommands>)pageActionMenuEntryPointHandler {
+  return _pageActionMenuEntrypointView;
 }
 
 - (void)setIncognito:(BOOL)incognito {
@@ -228,6 +246,10 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   return self.locationBarSteadyView.badgeViewVisibilityDelegate;
 }
 
+- (id<ReaderModeChipVisibilityDelegate>)readerModeChipVisibilityDelegate {
+  return self.locationBarSteadyView.readerModeChipVisibilityDelegate;
+}
+
 - (void)setHelpCommandsHandler:(id<HelpCommands>)helpCommandsHandler {
   _helpCommandsHandler = helpCommandsHandler;
 }
@@ -248,6 +270,9 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 
   DCHECK(self.badgeView) << "The badge view must be set at this point";
   [self.locationBarSteadyView setBadgeView:self.badgeView];
+  if (self.readerModeChipView) {
+    [self.locationBarSteadyView setReaderModeChipView:self.readerModeChipView];
+  }
 
   if (IsPageActionMenuEnabled()) {
     _pageActionMenuEntrypointView = [[PageActionMenuEntrypointView alloc] init];
@@ -255,23 +280,20 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
                addTarget:self
                   action:@selector(handlePageActionMenuEntrypointTapped)
         forControlEvents:UIControlEventTouchUpInside];
-  } else if (IsLensOverlayAvailable(_profilePrefs)) {
+    [self.layoutGuideCenter referenceView:_pageActionMenuEntrypointView
+                                underName:kPageActionMenuEntrypointGuide];
+  }
+
+  if (IsLensOverlayAvailable(_profilePrefs)) {
     _lensOverlayPlaceholderView = [[LensOverlayEntrypointButton alloc]
         initWithProfilePrefs:_profilePrefs];
     [self.layoutGuideCenter referenceView:_lensOverlayPlaceholderView
                                 underName:kLensOverlayEntrypointGuide];
 
-    BOOL showSpeedbumpMenu = GetLensOverlayOnboardingTreatment() ==
-                             LensOverlayOnboardingTreatment::kSpeedbumpMenu;
-    if (showSpeedbumpMenu) {
-      _lensOverlayPlaceholderView.menu = [self createSpeedbumpMenu];
-      _lensOverlayPlaceholderView.showsMenuAsPrimaryAction = YES;
-    } else {
-      [_lensOverlayPlaceholderView
-                 addTarget:self
-                    action:@selector(handleLensEntrypointPressed)
-          forControlEvents:UIControlEventTouchUpInside];
-    }
+    [_lensOverlayPlaceholderView
+               addTarget:self
+                  action:@selector(handleLensEntrypointPressed)
+        forControlEvents:UIControlEventTouchUpInside];
   }
 
   [_locationBarSteadyView.locationButton
@@ -305,6 +327,18 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
         @[ UITraitHorizontalSizeClass.class, UITraitVerticalSizeClass.class ]);
     [self registerForTraitChanges:traits
                        withAction:@selector(updateTrailingButtonState)];
+
+    [self registerForTraitChanges:@[ UITraitHorizontalSizeClass.class ]
+                       withAction:@selector(sizeClassDidChange)];
+  }
+
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate)) {
+    _defaultSearchEngineIconView = [[UIImageView alloc] init];
+    _defaultSearchEngineIconView.translatesAutoresizingMaskIntoConstraints = NO;
+    _defaultSearchEngineIconView.contentMode = UIViewContentModeCenter;
+    AddSizeConstraints(
+        _defaultSearchEngineIconView,
+        CGSizeMake(kOmniboxLeadingImageSize + 12.0f, kOmniboxLeadingImageSize));
   }
 }
 
@@ -366,7 +400,7 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   [self.dispatcher cancelOmniboxEdit];
 }
 
-- (void)setSearchProviderName:(NSString*)searchProviderName {
+- (void)setPlaceholderText:(NSString*)searchProviderName {
   if (_searchProviderName == searchProviderName) {
     return;
   }
@@ -374,6 +408,10 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   if (_isNTP) {
     [self updatePlaceholder];
   }
+}
+
+- (void)setPlaceholderDefaultSearchEngineIcon:(UIImage*)icon {
+  _defaultSearchEngineIconView.image = icon;
 }
 
 #pragma mark - LocationBarSteadyViewConsumer
@@ -427,7 +465,7 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 }
 
 - (void)attemptShowingLensOverlayIPH {
-  if (IsLensOverlayAvailable(_profilePrefs) &&
+  if (IsLensOverlayAvailable(_profilePrefs) && !IsPageActionMenuEnabled() &&
       !self.locationBarSteadyView.badgesContainerView.placeholderView.hidden) {
     [self.helpCommandsHandler
         presentInProductHelpWithType:InProductHelpType::kLensOverlayEntrypoint];
@@ -735,37 +773,6 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
          self.lensImageEnabled;
 }
 
-// Creates a new menu to use as the "speedbump" menu for the lens overlay
-// entrypoint. Only used in LensOverlayOnboardingTreatment::kSpeedbumpMenu.
-- (UIMenu*)createSpeedbumpMenu {
-  DCHECK(GetLensOverlayOnboardingTreatment() ==
-         LensOverlayOnboardingTreatment::kSpeedbumpMenu);
-
-  NSString* lensOverlayTitle =
-      l10n_util::GetNSString(IDS_IOS_LENS_OVERLAY_SPEEDBUMP_MENU_SCREEN);
-  __weak __typeof__(self) weakSelf = self;
-  UIAction* lensOverlayAction =
-      [UIAction actionWithTitle:lensOverlayTitle
-                          image:nil
-                     identifier:nil
-                        handler:^(UIAction* /* action */) {
-                          [weakSelf handleLensSpeedbumpMenuOpenLensOverlay];
-                        }];
-
-  NSString* cameraTitle =
-      l10n_util::GetNSString(IDS_IOS_LENS_OVERLAY_SPEEDBUMP_MENU_CAMERA);
-  UIAction* viewfinderAction =
-      [UIAction actionWithTitle:cameraTitle
-                          image:nil
-                     identifier:nil
-                        handler:^(UIAction* /* action */) {
-                          [weakSelf handleLensSpeedbumpMenuOpenLensViewFinder];
-                        }];
-  NSString* menuTitle = l10n_util::GetNSString(IDS_IOS_LENS_PRODUCT_NAME);
-  return [UIMenu menuWithTitle:menuTitle
-                      children:@[ lensOverlayAction, viewfinderAction ]];
-}
-
 // Updates placeholder in the steady view.
 - (void)updatePlaceholder {
   NSString* placeholderString = self.searchOrTypeURLPlaceholderText;
@@ -877,23 +884,13 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
     if (GetApplicationContext()->GetLocalState()->GetBoolean(
             prefs::kBottomOmnibox)) {
       title = l10n_util::GetNSString(IDS_IOS_TOOLBAR_MENU_TOP_OMNIBOX);
-      if (@available(iOS 15.1, *)) {
-        image = DefaultSymbolWithPointSize(kMovePlatterToTopPhoneSymbol,
-                                           kSymbolActionPointSize);
-      } else {
-        image = CustomSymbolWithPointSize(kCustomMovePlatterToTopPhoneSymbol,
-                                          kSymbolActionPointSize);
-      }
+      image = DefaultSymbolWithPointSize(kMovePlatterToTopPhoneSymbol,
+                                         kSymbolActionPointSize);
       targetToolbarType = ToolbarType::kPrimary;
     } else {
       title = l10n_util::GetNSString(IDS_IOS_TOOLBAR_MENU_BOTTOM_OMNIBOX);
-      if (@available(iOS 15.1, *)) {
-        image = DefaultSymbolWithPointSize(kMovePlatterToBottomPhoneSymbol,
-                                           kSymbolActionPointSize);
-      } else {
-        image = CustomSymbolWithPointSize(kCustomMovePlatterToBottomPhoneSymbol,
-                                          kSymbolActionPointSize);
-      }
+      image = DefaultSymbolWithPointSize(kMovePlatterToBottomPhoneSymbol,
+                                         kSymbolActionPointSize);
       targetToolbarType = ToolbarType::kSecondary;
     }
     UIAction* moveAddressBarAction = [UIAction
@@ -1020,24 +1017,6 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   }
 }
 
-- (void)handleLensSpeedbumpMenuOpenLensViewFinder {
-  RecordAction(UserMetricsAction("MobileToolbarLensOverlayTap"));
-
-  base::UmaHistogramEnumeration(
-      "Lens.Overlay.SpeedbumpMenu",
-      lens::LensOverlaySpeedbumpMenuSelection::kSearchWithCamera);
-  [self openLensViewFinder];
-}
-
-- (void)handleLensSpeedbumpMenuOpenLensOverlay {
-  RecordAction(UserMetricsAction("MobileToolbarLensOverlayTap"));
-
-  base::UmaHistogramEnumeration(
-      "Lens.Overlay.SpeedbumpMenu",
-      lens::LensOverlaySpeedbumpMenuSelection::kSearchYourScreen);
-  [self openLensOverlay];
-}
-
 - (void)handleLensEntrypointPressed {
   RecordAction(UserMetricsAction("MobileToolbarLensOverlayTap"));
   if (self.lensOverlayVisible) {
@@ -1049,7 +1028,11 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 
 - (void)handlePageActionMenuEntrypointTapped {
   // TODO(crbug.com/402827015): Log opens.
-  [self.pageActionMenuHandler showPageActionMenu];
+  if (IsDirectBWGEntryPoint()) {
+    [self.BWGHandler startBWGFlow];
+  } else {
+    [self.pageActionMenuHandler showPageActionMenu];
+  }
 }
 
 // Creates and shows the LVF input selection UI.
@@ -1065,6 +1048,7 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
 
 // Creates and shows the lens overlay UI.
 - (void)openLensOverlay {
+  // TODO(crbug.com/427478234): This event should be fired by the mediator.
   if (self.tracker) {
     self.tracker->NotifyEvent(
         feature_engagement::events::kLensOverlayEntrypointUsed);
@@ -1095,7 +1079,14 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
       self.locationBarSteadyView.placeholderView =
           _pageActionMenuEntrypointView;
       break;
+    case LocationBarPlaceholderType::kDefaultSearchEngineIcon:
+      self.locationBarSteadyView.placeholderView = _defaultSearchEngineIconView;
+      break;
   }
+}
+
+- (void)sizeClassDidChange {
+  [self updateLensVisibilityIndicationIfNeeded];
 }
 
 - (void)setLensOverlayVisible:(BOOL)lensOverlayVisible {
@@ -1104,7 +1095,17 @@ const CGFloat kShareIconBalancingHeightPadding = 1;
   }
 
   _lensOverlayVisible = lensOverlayVisible;
-  [_lensOverlayPlaceholderView setLensOverlayActive:lensOverlayVisible];
+  [self updateLensVisibilityIndicationIfNeeded];
+}
+
+- (void)updateLensVisibilityIndicationIfNeeded {
+  // Only indicate Lens Overlay in use when the presentation does not cover the
+  // location bar.
+  BOOL shouldIndicateLensInUse =
+      lens::ContainerPresentationFor(self) !=
+      lens::ContainerPresentationType::kFullscreenCover;
+  [_lensOverlayPlaceholderView
+      setLensOverlayActive:shouldIndicateLensInUse && _lensOverlayVisible];
 }
 
 @end

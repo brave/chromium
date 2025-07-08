@@ -111,6 +111,13 @@ User* TestHelper::AddGuestUser() {
 
 User* TestHelper::AddUserInternal(const AccountId& account_id,
                                   UserType user_type) {
+  // In production, only when there's no logged in users, a user
+  // can be added to UserManager. Tests should follow the production
+  // manner for setting up testing environment.
+  if (!user_manager_->GetLoggedInUsers().empty()) {
+    LOG(ERROR) << "There already is logged in user(s).";
+    return nullptr;
+  }
   if (user_manager_->FindUser(account_id)) {
     LOG(ERROR) << "User for " << account_id << " already exists";
     return nullptr;
@@ -125,30 +132,30 @@ User* TestHelper::AddUserInternal(const AccountId& account_id,
   return user_manager_->FindUserAndModify(account_id);
 }
 
-User* TestHelper::AddKioskAppUser(std::string_view user_id) {
+User* TestHelper::AddKioskChromeAppUser(std::string_view user_id) {
   // Quick check that the `user_id` satisfies kiosk-app type.
   auto type = policy::GetDeviceLocalAccountType(user_id);
   if (type != policy::DeviceLocalAccountType::kKioskApp) {
-    LOG(ERROR)
-        << "user_id (" << user_id << ") did not satisfy to be used for "
-        << "a kiosk user. See policy::GetDeviceLocalAccountType for details.";
+    LOG(ERROR) << "user_id (" << user_id << ") did not satisfy to be used for "
+               << "a kiosk chrome app user. See "
+                  "policy::GetDeviceLocalAccountType for details.";
     return nullptr;
   }
 
-  return AddDeviceLocalAccountUserInternal(user_id, UserType::kKioskApp);
+  return AddDeviceLocalAccountUserInternal(user_id, UserType::kKioskChromeApp);
 }
 
-User* TestHelper::AddWebKioskAppUser(std::string_view user_id) {
+User* TestHelper::AddKioskWebAppUser(std::string_view user_id) {
   // Quick check that the `user_id` satisfies web-kiosk-app type.
   auto type = policy::GetDeviceLocalAccountType(user_id);
   if (type != policy::DeviceLocalAccountType::kWebKioskApp) {
     LOG(ERROR) << "user_id (" << user_id << ") did not satisfy to be used for "
-               << "a web kiosk user. See policy::GetDeviceLocalAccountType for "
-                  "details.";
+               << "a kiosk web app user. See policy::GetDeviceLocalAccountType "
+                  "for details.";
     return nullptr;
   }
 
-  return AddDeviceLocalAccountUserInternal(user_id, UserType::kWebKioskApp);
+  return AddDeviceLocalAccountUserInternal(user_id, UserType::kKioskWebApp);
 }
 
 User* TestHelper::AddPublicAccountUser(std::string_view user_id) {

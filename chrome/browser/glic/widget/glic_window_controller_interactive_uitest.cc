@@ -310,6 +310,7 @@ IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
 
 IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
                        ClientUnresponsiveThenError) {
+  base::HistogramTester histogram_tester;
   RunTestSequence(
       OpenGlicWindow(GlicWindowMode::kAttached),
       ClickMockGlicElement(kMockGlicClientHangButton, true),
@@ -318,6 +319,16 @@ IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
                    mojom::WebUiState::kUnresponsive),
       // Client should show error after showing the unresponsive UI for 5s.
       WaitForState(test::internal::kGlicAppState, mojom::WebUiState::kError));
+  histogram_tester.ExpectTotalCount(
+      "Glic.Host.WebClientUnresponsiveState.Duration", 1);
+  histogram_tester.ExpectTotalCount("Glic.Host.WebClientUnresponsiveState", 2);
+  // One sample in the WebClientUnresponsiveState.ENTERED_FROM_CUSTOM_HEARTBEAT
+  // (1) bucket.
+  histogram_tester.ExpectBucketCount("Glic.Host.WebClientUnresponsiveState", 1,
+                                     1);
+  // One sample in the WebClientUnresponsiveState.EXITED (4) bucket.
+  histogram_tester.ExpectBucketCount("Glic.Host.WebClientUnresponsiveState", 4,
+                                     1);
 }
 
 IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
@@ -363,6 +374,12 @@ IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
       WaitForState(test::internal::kGlicAppState, mojom::WebUiState::kSignIn),
       ForceReauthAccount(),
       WaitForState(test::internal::kGlicAppState, mojom::WebUiState::kReady));
+}
+
+IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest,
+                       DetachedWidgetIsTrackedByOcclusionTracker) {
+  RunTestSequence(OpenGlicWindow(GlicWindowMode::kDetached),
+                  CheckOcclusionTracked(true));
 }
 
 IN_PROC_BROWSER_TEST_F(GlicWindowControllerUiTest, TestInitialBounds) {
@@ -669,6 +686,6 @@ IN_PROC_BROWSER_TEST_F(
                   InAnyContext(DetachGlicWindow(), MoveWidgetToSecondDisplay(),
                                CheckWidgetMovedToSecondaryDisplay(true)));
 }
-#endif
+#endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace glic

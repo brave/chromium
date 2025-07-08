@@ -10,11 +10,11 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -29,6 +29,7 @@
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/hit_test/hit_test_aggregator.h"
 #include "services/viz/public/mojom/compositing/layer_context.mojom.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/base/ozone_buildflags.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
@@ -555,7 +556,7 @@ void RootCompositorFrameSinkImpl::SubmitCompositorFrame(
 
   const auto result = support_->MaybeSubmitCompositorFrame(
       local_surface_id, std::move(frame), std::move(hit_test_region_list),
-      submit_time, SubmitCompositorFrameSyncCallback());
+      submit_time);
   if (result == SubmitResult::ACCEPTED)
     return;
 
@@ -565,15 +566,6 @@ void RootCompositorFrameSinkImpl::SubmitCompositorFrame(
               << " because " << reason;
   compositor_frame_sink_receiver_.ResetWithReason(static_cast<uint32_t>(result),
                                                   reason);
-}
-
-void RootCompositorFrameSinkImpl::SubmitCompositorFrameSync(
-    const LocalSurfaceId& local_surface_id,
-    CompositorFrame frame,
-    std::optional<HitTestRegionList> hit_test_region_list,
-    uint64_t submit_time,
-    SubmitCompositorFrameSyncCallback callback) {
-  NOTIMPLEMENTED();
 }
 
 void RootCompositorFrameSinkImpl::NotifyNewLocalSurfaceIdExpectedWhilePaused() {
@@ -587,8 +579,8 @@ void RootCompositorFrameSinkImpl::DidNotProduceFrame(
 
 void RootCompositorFrameSinkImpl::BindLayerContext(
     mojom::PendingLayerContextPtr context,
-    bool draw_mode_is_gpu) {
-  support_->BindLayerContext(*context, draw_mode_is_gpu);
+    mojom::LayerContextSettingsPtr settings) {
+  support_->BindLayerContext(*context, std::move(settings));
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -732,7 +724,7 @@ void RootCompositorFrameSinkImpl::FrameIntervalDeciderResultCallback(
   base::TimeDelta interval;
   std::pair<base::TimeDelta, gfx::SurfaceControlFrameRateCompatibility>
       interval_and_compat = std::visit(
-          base::Overloaded(
+          absl::Overload(
               [this](FrameIntervalDecider::FrameIntervalClass
                          frame_interval_class) {
                 switch (frame_interval_class) {
@@ -768,7 +760,7 @@ void RootCompositorFrameSinkImpl::FrameIntervalDeciderResultCallback(
   decided_display_frame_rate_compat_ = compat;
 #else
   base::TimeDelta interval = std::visit(
-      base::Overloaded(
+      absl::Overload(
           [](FrameIntervalDecider::FrameIntervalClass frame_interval_class) {
             switch (frame_interval_class) {
               case FrameIntervalDecider::FrameIntervalClass::kBoost:

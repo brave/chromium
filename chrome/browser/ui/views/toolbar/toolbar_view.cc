@@ -63,7 +63,6 @@
 #include "chrome/browser/ui/views/global_media_controls/media_toolbar_button_view.h"
 #include "chrome/browser/ui/views/location_bar/intent_chip_button.h"
 #include "chrome/browser/ui/views/location_bar/star_view.h"
-#include "chrome/browser/ui/views/media_router/cast_toolbar_button.h"
 #include "chrome/browser/ui/views/page_action/page_action_container_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_container.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_controller.h"
@@ -348,7 +347,7 @@ void ToolbarView::Init() {
 
   PrefService* const prefs = browser_->profile()->GetPrefs();
   std::unique_ptr<HomeButton> home = std::make_unique<HomeButton>(
-      base::BindRepeating(callback, browser_, IDC_HOME), prefs);
+      browser_, base::BindRepeating(callback, browser_, IDC_HOME));
 
   std::unique_ptr<ExtensionsToolbarContainer> extensions_container;
   std::unique_ptr<views::View> toolbar_divider;
@@ -360,12 +359,6 @@ void ToolbarView::Init() {
         std::make_unique<ExtensionsToolbarContainer>(browser_);
 
     toolbar_divider = std::make_unique<views::View>();
-  }
-  std::unique_ptr<media_router::CastToolbarButton> cast;
-  if (!base::FeatureList::IsEnabled(features::kPinnedCastButton)) {
-    if (media_router::MediaRouterEnabled(browser_->profile())) {
-      cast = media_router::CastToolbarButton::Create(browser_);
-    }
   }
 
   std::unique_ptr<MediaToolbarButtonView> media_button;
@@ -445,10 +438,6 @@ void ToolbarView::Init() {
 
   performance_intervention_button_ = container_view_->AddChildView(
       std::make_unique<PerformanceInterventionButton>(browser_view_));
-
-  if (cast) {
-    cast_ = container_view_->AddChildView(std::move(cast));
-  }
 
   if (media_button) {
     media_button_ = container_view_->AddChildView(std::move(media_button));
@@ -631,6 +620,8 @@ void ToolbarView::UpdateForWebUITabStrip() {
   } else {
     new_tab_button_->SetVisible(false);
   }
+
+  UpdateRecedingCornerRadius();
 #endif  // BUILDFLAG(ENABLE_WEBUI_TAB_STRIP)
 }
 
@@ -701,13 +692,10 @@ ExtensionsToolbarButton* ToolbarView::GetExtensionsButton() const {
 }
 
 ToolbarButton* ToolbarView::GetCastButton() const {
-  if (base::FeatureList::IsEnabled(features::kPinnedCastButton)) {
-    return pinned_toolbar_actions_container()
-               ? pinned_toolbar_actions_container()->GetButtonFor(
-                     kActionRouteMedia)
-               : nullptr;
-  }
-  return cast_;
+  return pinned_toolbar_actions_container()
+             ? pinned_toolbar_actions_container()->GetButtonFor(
+                   kActionRouteMedia)
+             : nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -718,16 +706,16 @@ WebContents* ToolbarView::GetWebContents() {
 }
 
 LocationBarModel* ToolbarView::GetLocationBarModel() {
-  return browser_->location_bar_model();
+  return browser_->GetFeatures().location_bar_model();
 }
 
 const LocationBarModel* ToolbarView::GetLocationBarModel() const {
-  return browser_->location_bar_model();
+  return browser_->GetFeatures().location_bar_model();
 }
 
 ContentSettingBubbleModelDelegate*
 ToolbarView::GetContentSettingBubbleModelDelegate() {
-  return browser_->content_setting_bubble_model_delegate();
+  return browser_->GetFeatures().content_setting_bubble_model_delegate();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1270,19 +1258,26 @@ void ToolbarView::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
+  UpdateRecedingCornerRadius();
+}
+
+void ToolbarView::UpdateRecedingCornerRadius() {
   bool tab_strip_has_trailing_frame_buttons =
       (browser_view_->tabstrip()->controller()->IsFrameButtonsRightAligned() ^
        base::i18n::IsRTL());
   bool tab_strip_has_leading_action_buttons =
       (!tabs::GetTabSearchTrailingTabstrip(browser()->profile()) &&
        !features::IsTabSearchMoving());
-  bool first_tab_selected = tab_strip_model->active_index() == 0;
+  bool first_tab_selected = browser_->tab_strip_model()->active_index() == 0;
 
   int new_corner_radius;
+
   // If there is anything on the leading side or not the first tab is selected,
   // then the corner radius is shown, otherwise we hide the corner radius.
-  if (!tab_strip_has_trailing_frame_buttons ||
-      tab_strip_has_leading_action_buttons || !first_tab_selected) {
+  // Also when showing WebUITabStrip, toolbar should not have receding corners.
+  if (!browser_view_->webui_tab_strip() &&
+      (!tab_strip_has_trailing_frame_buttons ||
+       tab_strip_has_leading_action_buttons || !first_tab_selected)) {
     new_corner_radius = GetLayoutConstant(TOOLBAR_CORNER_RADIUS);
   } else {
     new_corner_radius = 0;

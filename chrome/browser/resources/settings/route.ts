@@ -56,14 +56,6 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
 
   if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
     r.SECURITY_KEYS = r.SECURITY.createChild('/securityKeys');
-    if (loadTimeData.getBoolean('enableSecurityKeysManagePhones')) {
-      r.SECURITY_KEYS_PHONES =
-          r.SECURITY_KEYS.createChild('/securityKeys/phones');
-    }
-    // <if expr="is_win">
-  } else if (loadTimeData.getBoolean('enableSecurityKeysManagePhones')) {
-    r.SECURITY_KEYS_PHONES = r.SECURITY.createChild('/securityKeys/phones');
-    // </if>
   }
 
   r.SITE_SETTINGS_ALL = r.SITE_SETTINGS.createChild('all');
@@ -172,17 +164,24 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
 function createRoutes(): SettingsRoutes {
   const r: Partial<SettingsRoutes> = {};
 
-  // Root pages.
+  // Root page.
   r.BASIC = new Route('/');
-  r.ABOUT = new Route('/help', loadTimeData.getString('aboutPageTitle'));
 
+  r.ABOUT = r.BASIC.createSection(
+      '/help', 'about', loadTimeData.getString('aboutPageTitle'));
+  r.ABOUT.hasMigratedToPlugin = true;
+
+  // Search page.
   r.SEARCH = r.BASIC.createSection(
       '/search', 'search', loadTimeData.getString('searchPageTitle'));
+  r.SEARCH.hasMigratedToPlugin = true;
+  r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
+  r.SEARCH_ENGINES.hasMigratedToPlugin = true;
 
   if (!loadTimeData.getBoolean('isGuest')) {
     r.PEOPLE = r.BASIC.createSection(
         '/people', 'people', loadTimeData.getString('peoplePageTitle'));
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     r.SIGN_OUT = r.PEOPLE.createChild('/signOut');
     r.SIGN_OUT.isNavigableDialog = true;
     r.IMPORT_DATA = r.PEOPLE.createChild('/importData');
@@ -220,7 +219,7 @@ function createRoutes(): SettingsRoutes {
     // </if>
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   if (visibility.people !== false) {
     assert(r.PEOPLE);
     r.MANAGE_PROFILE = r.PEOPLE.createChild('/manageProfile');
@@ -260,65 +259,78 @@ function createRoutes(): SettingsRoutes {
     r.DEFAULT_BROWSER = r.BASIC.createSection(
         '/defaultBrowser', 'defaultBrowser',
         loadTimeData.getString('defaultBrowser'));
+    r.DEFAULT_BROWSER.hasMigratedToPlugin = true;
   }
   // </if>
-
-  r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
 
   if (visibility.onStartup !== false) {
     r.ON_STARTUP = r.BASIC.createSection(
         '/onStartup', 'onStartup', loadTimeData.getString('onStartup'));
+    r.ON_STARTUP.hasMigratedToPlugin = true;
   }
 
   // Advanced Routes
-  if (visibility.advancedSettings !== false) {
-    r.ADVANCED = new Route('/advanced');
+  r.ADVANCED = new Route('/advanced');
+  r.ADVANCED.hasMigratedToPlugin = true;
 
+  if (visibility.languages !== false) {
     r.LANGUAGES = r.ADVANCED.createSection(
         '/languages', 'languages',
         loadTimeData.getString('languagesPageTitle'));
-    r.SPELL_CHECK = r.LANGUAGES.createSection('/spellCheck', 'spellCheck');
-    // <if expr="not chromeos_ash and not is_macosx">
+    r.LANGUAGES.hasMigratedToPlugin = true;
+    r.SPELL_CHECK = r.LANGUAGES.createSection('/spellCheck', 'languages');
+    r.SPELL_CHECK.hasMigratedToPlugin = true;
+    // <if expr="not is_chromeos and not is_macosx">
     r.EDIT_DICTIONARY = r.SPELL_CHECK.createChild('/editDictionary');
+    r.EDIT_DICTIONARY.hasMigratedToPlugin = true;
     // </if>
+  }
 
-    if (visibility.downloads !== false) {
-      r.DOWNLOADS = r.ADVANCED.createSection(
-          '/downloads', 'downloads',
-          loadTimeData.getString('downloadsPageTitle'));
-    }
+  if (visibility.downloads !== false) {
+    r.DOWNLOADS = r.ADVANCED.createSection(
+        '/downloads', 'downloads',
+        loadTimeData.getString('downloadsPageTitle'));
+    r.DOWNLOADS.hasMigratedToPlugin = true;
+  }
 
+  if (visibility.a11y !== false) {
     r.ACCESSIBILITY = r.ADVANCED.createSection(
         '/accessibility', 'a11y', loadTimeData.getString('a11yPageTitle'));
+    r.ACCESSIBILITY.hasMigratedToPlugin = true;
 
     // <if expr="is_linux">
     r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
+    r.CAPTIONS.hasMigratedToPlugin = true;
     // </if>
+  }
 
-    // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
+  if (visibility.system !== false) {
     r.SYSTEM = r.ADVANCED.createSection(
         '/system', 'system', loadTimeData.getString('systemPageTitle'));
-    // </if>
-
-    if (visibility.reset !== false) {
-      r.RESET = r.ADVANCED.createSection(
-          '/reset', 'reset', loadTimeData.getString('resetPageTitle'));
-      r.RESET_DIALOG = r.RESET.createChild('/resetProfileSettings');
-      r.RESET_DIALOG.isNavigableDialog = true;
-      r.TRIGGERED_RESET_DIALOG =
-          r.RESET.createChild('/triggeredResetProfileSettings');
-      r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
-      // <if expr="_google_chrome and is_win">
-      r.CHROME_CLEANUP = r.RESET.createChild('/cleanup');
-      // </if>
-    }
-
-    if (visibility.performance !== false) {
-      r.PERFORMANCE = r.BASIC.createSection(
-          '/performance', 'performance',
-          loadTimeData.getString('performancePageTitle'));
-    }
+    r.SYSTEM.hasMigratedToPlugin = true;
   }
+  // </if>
+
+  if (visibility.reset !== false) {
+    r.RESET = r.ADVANCED.createSection(
+        '/reset', 'reset', loadTimeData.getString('resetPageTitle'));
+    r.RESET.hasMigratedToPlugin = true;
+    r.RESET_DIALOG = r.RESET.createChild('/resetProfileSettings');
+    r.RESET_DIALOG.hasMigratedToPlugin = true;
+    r.RESET_DIALOG.isNavigableDialog = true;
+    r.TRIGGERED_RESET_DIALOG =
+        r.RESET.createChild('/triggeredResetProfileSettings');
+    r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
+    r.TRIGGERED_RESET_DIALOG.hasMigratedToPlugin = true;
+  }
+
+  if (visibility.performance !== false) {
+    r.PERFORMANCE = r.BASIC.createSection(
+        '/performance', 'performance',
+        loadTimeData.getString('performancePageTitle'));
+  }
+
   return r as unknown as SettingsRoutes;
 }
 

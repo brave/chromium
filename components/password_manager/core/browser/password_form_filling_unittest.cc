@@ -90,14 +90,11 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 class MockPasswordChangeService : public PasswordChangeServiceInterface {
  public:
   MOCK_METHOD(bool, IsPasswordChangeAvailable, (), (override));
-  MOCK_METHOD(bool, IsPasswordChangeSupported, (const GURL& url), (override));
+  MOCK_METHOD(bool,
+              IsPasswordChangeSupported,
+              (const GURL&, const autofill::LanguageCode&),
+              (override));
 };
-
-// Matcher for PasswordAndMetadata.
-MATCHER_P3(IsLogin, username, password, uses_account_store, std::string()) {
-  return arg.username == username && arg.password == password &&
-         arg.uses_account_store == uses_account_store;
-}
 
 PasswordFormFillData::LoginCollection::const_iterator FindPasswordByUsername(
     const std::vector<autofill::PasswordAndMetadata>& logins,
@@ -133,6 +130,7 @@ class PasswordFormFillingTest : public testing::Test {
     saved_match_.action = GURL("https://accounts.google.com/a/ServiceLogin");
     saved_match_.username_value = u"test@gmail.com";
     saved_match_.password_value = u"test1";
+    saved_match_.SetPasswordBackupNote(u"backup_password");
     saved_match_.match_type = PasswordForm::MatchType::kExact;
 
     psl_saved_match_ = saved_match_;
@@ -186,6 +184,8 @@ TEST_F(PasswordFormFillingTest, Autofill) {
   PasswordForm another_saved_match = saved_match_;
   another_saved_match.username_value += u"1";
   another_saved_match.password_value += u"1";
+  // Reset the backup password
+  another_saved_match.SetPasswordBackupNote(u"");
   best_matches.push_back(another_saved_match);
 
   EXPECT_CALL(driver_, InformNoSavedCredentials).Times(0);
@@ -222,6 +222,9 @@ TEST_F(PasswordFormFillingTest, Autofill) {
             fill_data.preferred_login.username_value);
   EXPECT_EQ(saved_match_.password_value,
             fill_data.preferred_login.password_value);
+  ASSERT_TRUE(fill_data.preferred_login.backup_password_value.has_value());
+  EXPECT_EQ(saved_match_.GetPasswordBackup(),
+            fill_data.preferred_login.backup_password_value);
 
   // Check that information about non-preferred best matches is filled.
   ASSERT_EQ(1u, fill_data.additional_logins.size());
@@ -229,6 +232,8 @@ TEST_F(PasswordFormFillingTest, Autofill) {
             fill_data.additional_logins.begin()->username_value);
   EXPECT_EQ(another_saved_match.password_value,
             fill_data.additional_logins.begin()->password_value);
+  EXPECT_FALSE(
+      fill_data.additional_logins.begin()->backup_password_value.has_value());
   // Realm is empty for non-psl match.
   EXPECT_TRUE(fill_data.additional_logins.begin()->realm.empty());
 }
@@ -877,6 +882,8 @@ TEST(PasswordFormFillDataTest, TestGroupedAffiliation) {
 
 TEST_F(PasswordFormFillingTest, PasswordChangeSupported) {
   observed_form_.accepts_webauthn_credentials = true;
+  saved_match_.change_password_url =
+      GURL("https://example.com/.well-known/change-password/");
   std::vector<PasswordForm> best_matches = {saved_match_};
 
   EXPECT_CALL(client_, PasswordWasAutofilled);
@@ -894,8 +901,28 @@ TEST_F(PasswordFormFillingTest, PasswordChangeSupported) {
   EXPECT_TRUE(fill_data.notify_browser_of_successful_filling);
 }
 
+TEST_F(PasswordFormFillingTest, PasswordChangeUrlMissing) {
+  observed_form_.accepts_webauthn_credentials = true;
+  std::vector<PasswordForm> best_matches = {saved_match_};
+
+  EXPECT_CALL(client_, PasswordWasAutofilled);
+  EXPECT_CALL(password_change_service_, IsPasswordChangeAvailable).Times(0);
+  PasswordFormFillData fill_data;
+  EXPECT_CALL(driver_, PropagateFillDataOnParsingCompletion)
+      .WillOnce(SaveArg<0>(&fill_data));
+
+  SendFillInformationToRenderer(&client_, &driver_, observed_form_,
+                                best_matches, federated_matches_, &saved_match_,
+                                metrics_recorder_.get(),
+                                /*webauthn_suggestions_available=*/false,
+                                /*suggestion_banned_fields=*/{});
+  EXPECT_FALSE(fill_data.notify_browser_of_successful_filling);
+}
+
 TEST_F(PasswordFormFillingTest, PasswordChangeNotSupported) {
   observed_form_.accepts_webauthn_credentials = true;
+  saved_match_.change_password_url =
+      GURL("https://example.com/.well-known/change-password/");
   std::vector<PasswordForm> best_matches = {saved_match_};
 
   EXPECT_CALL(client_, PasswordWasAutofilled);

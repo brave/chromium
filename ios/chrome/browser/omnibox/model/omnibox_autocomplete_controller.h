@@ -7,17 +7,24 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/omnibox/model/autocomplete_result_wrapper_delegate.h"
+#import <string>
+
+#import "base/time/time.h"
+#import "components/omnibox/browser/omnibox_popup_selection.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_result_wrapper_delegate.h"
 #import "ui/base/window_open_disposition.h"
 
 @protocol AutocompleteSuggestion;
 struct AutocompleteMatch;
+class AutocompleteController;
 class AutocompleteResult;
 @class AutocompleteResultWrapper;
 @protocol OmniboxAutocompleteControllerDelegate;
 @protocol OmniboxAutocompleteControllerDebuggerDelegate;
-class OmniboxControllerIOS;
+class OmniboxClient;
+@class OmniboxMetricsRecorder;
 @class OmniboxTextController;
+struct OmniboxTextModel;
 
 /// Controller for the omnibox autocomplete system. Handles interactions with
 /// the autocomplete system and dispatches results.
@@ -38,21 +45,42 @@ class OmniboxControllerIOS;
 /// Controller of the omnibox text.
 @property(nonatomic, weak) OmniboxTextController* omniboxTextController;
 
+/// Metrics recorder.
+@property(nonatomic, weak) OmniboxMetricsRecorder* omniboxMetricsRecorder;
+
 // Whether or not the popup has suggestions.
 @property(nonatomic, assign, readonly) BOOL hasSuggestions;
 
-/// Initializes with an OmniboxController.
-- (instancetype)initWithOmniboxController:
-    (OmniboxControllerIOS*)omniboxController NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithOmniboxClient:(OmniboxClient*)omniboxClient
+                     omniboxTextModel:(OmniboxTextModel*)omniboxTextModel
+    NS_DESIGNATED_INITIALIZER;
+
 - (instancetype)init NS_UNAVAILABLE;
+
+/// Returns the underlying autocomplete controller.
+- (AutocompleteController*)autocompleteController;
 
 /// Removes all C++ references.
 - (void)disconnect;
 
-#pragma mark - OmniboxEditModel event
-
 /// Updates the popup suggestions.
 - (void)updatePopupSuggestions;
+
+/// Cancels any pending asynchronous query. If `clearSuggestions` is true, will
+/// also erase the suggestions.
+- (void)stopAutocompleteWithClearSuggestions:(BOOL)clearSuggestions;
+
+/// Opens given selection. Most kinds of selection invoke an action or
+/// otherwise call `openMatch`, but some may `acceptInputWithDisposition` which
+/// is not guaranteed to open a match or commit the omnibox.
+- (void)openSelection:(OmniboxPopupSelection)selection
+            timestamp:(base::TimeTicks)timestamp
+          disposition:(WindowOpenDisposition)disposition;
+
+/// A simplified version of OpenSelection that opens the model's current
+/// selection.
+- (void)openCurrentSelectionWithDisposition:(WindowOpenDisposition)disposition
+                                  timestamp:(base::TimeTicks)timestamp;
 
 #pragma mark - OmniboxPopup event
 
@@ -83,6 +111,18 @@ class OmniboxControllerIOS;
 
 #pragma mark - OmniboxText events
 
+/// Starts autocomplete with `text`.
+- (void)startAutocompleteWithText:(const std::u16string&)text
+                   cursorPosition:(size_t)cursorPosition
+        preventInlineAutocomplete:(bool)preventInlineAutocomplete;
+
+/// Starts a request for zero-prefix suggestions if no query is currently
+/// running and the popup is closed. This can be called multiple times without
+/// harm, since it will early-exit if an earlier request is in progress or done.
+/// `text` should either be empty or the pre-edit text.
+- (void)startZeroSuggestRequestWithText:(const std::u16string&)text
+                          userClobbered:(BOOL)userClobberedPermanentText;
+
 /// Closes the omnibox popup.
 - (void)closeOmniboxPopup;
 
@@ -96,10 +136,16 @@ class OmniboxControllerIOS;
 /// Notifies thumbnail update.
 - (void)setHasThumbnail:(BOOL)hasThumbnail;
 
-#pragma mark - OmniboxAutocomplete event
+#pragma mark - Prefetch events
 
-/// Updates the omnibox popup with sorted`result`.
-- (void)updateWithSortedResults:(const AutocompleteResult&)results;
+/// Starts an autocomplete prefetch request so that zero-prefix providers can
+/// optionally start a prefetch request to warm up the their underlying
+/// service(s) and/or optionally cache their otherwise async response.
+- (void)startZeroSuggestPrefetch;
+
+/// Informs autocomplete provider clients whether the app is currently in the
+/// background.
+- (void)setBackgroundStateForProviders:(BOOL)inBackground;
 
 @end
 

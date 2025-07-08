@@ -44,6 +44,16 @@ const char* ErrorCodeToString(InputController::ErrorCode error) {
       return "STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR";
     case (InputController::STREAM_OPEN_DEVICE_IN_USE_ERROR):
       return "STREAM_OPEN_DEVICE_IN_USE_ERROR";
+    case (InputController::REFERENCE_STREAM_ERROR):
+      return "REFERENCE_STREAM_ERROR";
+    case (InputController::REFERENCE_STREAM_CREATE_ERROR):
+      return "REFERENCE_STREAM_CREATE_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_ERROR):
+      return "REFERENCE_STREAM_OPEN_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR):
+      return "REFERENCE_STREAM_OPEN_SYSTEM_PERMISSIONS_ERROR";
+    case (InputController::REFERENCE_STREAM_OPEN_DEVICE_IN_USE_ERROR):
+      return "REFERENCE_STREAM_OPEN_DEVICE_IN_USE_ERROR";
     default:
       NOTREACHED();
   }
@@ -68,7 +78,7 @@ InputStream::InputStream(
     mojo::PendingReceiver<media::mojom::AudioInputStream> receiver,
     mojo::PendingRemote<media::mojom::AudioInputStreamClient> client,
     mojo::PendingRemote<media::mojom::AudioInputStreamObserver> observer,
-    mojo::PendingRemote<media::mojom::AudioLog> log,
+    mojo::SharedRemote<media::mojom::AudioLog> log,
     media::AudioManager* audio_manager,
     media::AecdumpRecordingManager* aecdump_recording_manager,
     std::unique_ptr<ReferenceSignalProvider> reference_signal_provider,

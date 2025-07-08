@@ -16,6 +16,7 @@
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
@@ -479,7 +480,8 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!web_data_backend_ || !web_data_backend_->GetDatabase() ||
       !GetAutofillTable() || !GetSyncMetadataStore()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load AutofillWebDatabase."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kWalletMetadataFailedToLoadDatabase});
     return;
   }
 
@@ -489,7 +491,7 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!GetAutofillTable()->GetServerCardsMetadata(cards_metadata) ||
       !GetAutofillTable()->GetServerIbansMetadata(ibans_metadata)) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed reading autofill data from WebDatabase."});
+        {FROM_HERE, syncer::ModelError::Type::kWalletMetadataFailedToReadData});
     return;
   }
   for (const PaymentsMetadata& card_metadata : cards_metadata) {
@@ -507,7 +509,8 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!GetSyncMetadataStore()->GetAllSyncMetadata(
           syncer::AUTOFILL_WALLET_METADATA, batch.get())) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed reading autofill metadata from WebDatabase."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kWalletMetadataFailedToReadMetadata});
     return;
   }
 

@@ -451,6 +451,25 @@ void BrowserCommandController::WebContentsFocusChanged() {
   UpdateCommandsForWebContentsFocus();
 }
 
+void BrowserCommandController::ShowCustomizeChromeSidePanel(
+    std::optional<CustomizeChromeSection> section) {
+  tabs::TabInterface* tab = browser_->tab_strip_model()->GetActiveTab();
+  if (!tab || !tab->GetTabFeatures() ||
+      !tab->GetTabFeatures()->customize_chrome_side_panel_controller()) {
+    return;
+  }
+
+  customize_chrome::SidePanelController* side_panel_controller =
+      tab->GetTabFeatures()->customize_chrome_side_panel_controller();
+
+  if (!side_panel_controller ||
+      !side_panel_controller->IsCustomizeChromeEntryAvailable()) {
+    return;
+  }
+
+  side_panel_controller->OpenSidePanel(SidePanelOpenTrigger::kAppMenu, section);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserCommandController, CommandUpdater implementation:
 
@@ -915,6 +934,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_SHOW_GOOGLE_LENS_SHORTCUT:
       ToggleShowGoogleLensShortcut(browser_);
       break;
+    case IDC_SHOW_SEARCH_TOOLS:
+      ToggleShowSearchTools(browser_);
+      break;
     case IDC_PROFILING_ENABLED:
       content::Profiling::Toggle();
       break;
@@ -1218,11 +1240,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
             g_browser_process->local_state()->GetInteger(
                 prefs::kDefaultBrowserDeclinedCount) +
                 1);
-        base::UmaHistogramCustomTimes(
-            "DefaultBrowser.AppMenu.TimeToSetDefault",
-            base::Time::Now() - g_browser_process->local_state()->GetTime(
-                                    prefs::kDefaultBrowserFirstShownTime),
-            base::Milliseconds(1), base::Days(7), 50);
       }
       chrome::startup::default_prompt::UpdatePrefsForDismissedPrompt(
           browser_->profile());
@@ -1361,6 +1378,11 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_FOCUS_NEXT_TAB_GROUP, true);
   command_updater_.UpdateCommandEnabled(IDC_FOCUS_PREV_TAB_GROUP, true);
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_TAB_GROUP, true);
+
+  // Omnibox commands
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_FULL_URLS, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_GOOGLE_LENS_SHORTCUT, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_SEARCH_TOOLS, true);
 
   // Window management commands
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_WINDOW, true);
@@ -1630,9 +1652,6 @@ void BrowserCommandController::UpdateSharedCommandsForIncognitoAvailability(
       extensions::ExtensionRegistrar::Get(profile);
   const bool enable_extensions =
       extension_registrar && extension_registrar->extensions_enabled();
-
-  command_updater->UpdateCommandEnabled(IDC_SHOW_FULL_URLS, true);
-  command_updater->UpdateCommandEnabled(IDC_SHOW_GOOGLE_LENS_SHORTCUT, true);
 
   // Bookmark manager and settings page/subpages are forced to open in normal
   // mode. For this reason we disable these commands when incognito is forced.
@@ -2222,25 +2241,6 @@ BrowserWindow* BrowserCommandController::window() {
 
 Profile* BrowserCommandController::profile() {
   return browser_->profile();
-}
-
-void BrowserCommandController::ShowCustomizeChromeSidePanel(
-    std::optional<CustomizeChromeSection> section) {
-  tabs::TabInterface* tab = browser_->tab_strip_model()->GetActiveTab();
-  if (!tab || !tab->GetTabFeatures() ||
-      !tab->GetTabFeatures()->customize_chrome_side_panel_controller()) {
-    return;
-  }
-
-  customize_chrome::SidePanelController* side_panel_controller =
-      tab->GetTabFeatures()->customize_chrome_side_panel_controller();
-
-  if (!side_panel_controller ||
-      !side_panel_controller->IsCustomizeChromeEntryAvailable()) {
-    return;
-  }
-
-  side_panel_controller->OpenSidePanel(SidePanelOpenTrigger::kAppMenu, section);
 }
 
 }  // namespace chrome

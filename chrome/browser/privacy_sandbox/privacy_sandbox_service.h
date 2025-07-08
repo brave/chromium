@@ -327,7 +327,7 @@ class PrivacySandboxService : public KeyedService {
   virtual void TopicsToggleChanged(bool new_value) const = 0;
 
   // Whether the current profile requires consent for Topics to operate.
-  virtual bool TopicsConsentRequired() const = 0;
+  virtual bool TopicsConsentRequired() = 0;
 
   // Whether there is an active consent for Topics currently recorded.
   virtual bool TopicsHasActiveConsent() const = 0;
@@ -338,6 +338,11 @@ class PrivacySandboxService : public KeyedService {
   TopicsConsentLastUpdateSource() const = 0;
   virtual base::Time TopicsConsentLastUpdateTime() const = 0;
   virtual std::string TopicsConsentLastUpdateText() const = 0;
+
+  // Notice Framework Result Callbacks.
+  virtual void UpdateTopicsApiResult(bool value) = 0;
+  virtual void UpdateProtectedAudienceApiResult(bool value) = 0;
+  virtual void UpdateMeasurementApiResult(bool value) = 0;
 };
 
 #endif  // CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_H_

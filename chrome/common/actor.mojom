@@ -4,6 +4,8 @@
 
 module actor.mojom;
 
+import "mojo/public/mojom/base/time.mojom";
+import "third_party/blink/public/mojom/content_extraction/ai_page_content.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 
 // This interface is meant to largely mirror the
@@ -20,9 +22,14 @@ union ToolTarget {
   gfx.mojom.Point coordinate;
 };
 
+// Attributes of the Node target returned from hit test on last observed APC.
+struct ObservedToolTarget {
+  blink.mojom.AIPageContentAttributes node_attribute;
+};
+
 // Information specific to a click action.
 struct ClickAction {
-    // Corresponds to ClickAction.ClickType
+  // Corresponds to ClickAction.ClickType
   enum Type {
     kLeft = 1,
     kRight = 2,
@@ -35,12 +42,10 @@ struct ClickAction {
   };
   Type type;
   Count count;
-  ToolTarget target;
 };
 
 // Information specific to a mouse move action.
 struct MouseMoveAction {
-  ToolTarget target;
 };
 
 // Information specific to the type (keyboard input) action.  Note: TypeAction
@@ -58,7 +63,6 @@ struct TypeAction {
   };
 
   Mode mode;
-  ToolTarget target;
   // text should be ASCII only for now.
   string text;
   bool follow_by_enter;
@@ -84,10 +88,6 @@ struct ScrollAction {
     kDown = 4,
   };
 
-  // This target is the element to scroll. A null target implies scrolling the
-  // page's viewport. If the scroll action returns failure, it means the target
-  // isn't scrollable.
-  ToolTarget? target;
   ScrollDirection direction;
   // Scroll distance in physical pixels, and it should always be positive.
   float distance;
@@ -95,8 +95,6 @@ struct ScrollAction {
 
 // Action for selecting an option from a <select> element.
 struct SelectAction {
-  ToolTarget target;
-
   // The value of the option to set as the currently selected option. The action
   // fails if the given value doesn't match the value of one of the element's
   // <option> children. Case-sensitive.
@@ -106,7 +104,6 @@ struct SelectAction {
 // Performs a left mouse button down on the from_target, then moves to and
 // releases on the to_target.
 struct DragAndReleaseAction {
-  ToolTarget from_target;
   ToolTarget to_target;
 };
 
@@ -119,6 +116,10 @@ union ToolAction {
   SelectAction select;
   TypeAction type;
 };
+
+
+
+// LINT.IfChange(ActionResultCode)
 
 // Result codes for outcomes of an action.
 // kOk     - Action was successful.
@@ -175,6 +176,17 @@ enum ActionResultCode {
 
   // The task for the action was paused.
   kTaskPaused = 23,
+
+  // The tool executor in the renderer was destroyed before the tool finished
+  // executing.
+  kExecutorDestroyed = 24,
+
+  // The target window no longer exists.
+  kWindowWentAway = 25,
+
+  // The current frame target under supplied coordinate does not match the
+  // frame under that coordinate during time of observation.
+  kFrameLocationChangedSinceObservation = 26,
 
   ///////////////////////////////////////////////////////////////////////
   // Codes 100-199: Errors for navigation. (Not part of the ToolAction union
@@ -287,9 +299,23 @@ enum ActionResultCode {
   kHistoryErrorPage = 805,
 };
 
+// LINT.ThenChange(//tools/metrics/histograms/metadata/actor/enums.xml:ActionResultCode)
+
 // All information required to invoke a tool in the renderer.
 struct ToolInvocation {
+  // The task ID owning this invocation.
+  int32 task_id;
+
+  // The action to carry out in this invocation.
   ToolAction action;
+
+  // Target of this tool invocation.
+  ToolTarget target;
+
+  // Target from hit test on the last observed page content.
+  // This is optional and is used for checking if the action target has changed
+  // since last observation.
+  ObservedToolTarget? observed_target;
 };
 
 struct ActionResult {
@@ -298,4 +324,43 @@ struct ActionResult {
 
   // If the code is not kOk, an English language message describing the error.
   string message;
+};
+
+// The type of the journal entry.
+enum JournalEntryType {
+  kBegin,
+  kEnd,
+  kInstant,
+};
+
+// Represents a journal entry. This should only be used for logging and
+// debugging. It should not be used to make logic decisions since a
+// compromised renderer could lie about events (such as mismatched
+// or missing begin and end events).
+struct JournalEntry {
+  // What type of entry this is.
+  JournalEntryType type;
+
+  // The task ID associated with this entry.
+  int32 task_id;
+
+  // Unique identifier for entry. Begin/End types
+  // should use the same id.
+  uint64 id;
+
+  // The time the event occurred at.
+  mojo_base.mojom.Time timestamp;
+
+  // The event name.
+  string event;
+
+  // Specific details of the event logged.
+  string details;
+};
+
+// Use to listen for new journal entries. Lives in the browser process and
+// is used to receive entries from renderer processes.
+interface JournalClient {
+  // New log messages are sent in batches to limit the frequency of calls.
+  AddEntriesToJournal(array<JournalEntry> entries);
 };

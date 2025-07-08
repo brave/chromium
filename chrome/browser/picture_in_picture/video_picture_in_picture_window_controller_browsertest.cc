@@ -154,7 +154,8 @@ class ControlVisibilityObserver : views::ViewObserver {
 
   // views::ViewObserver overrides.
   void OnViewVisibilityChanged(views::View* observed_view,
-                               views::View* starting_view) override {
+                               views::View* starting_view,
+                               bool visible) override {
     MaybeNotifyOfVisibilityChange(observed_view);
   }
   void OnViewBoundsChanged(views::View* observed_view) override {
@@ -222,7 +223,11 @@ class OverlayControlsBecomingVisibleObserver : public views::ViewObserver {
   OverlayControlsBecomingVisibleObserver(views::View* controls_container,
                                          base::OnceClosure cb)
       : visibility_changed_callback_(std::move(cb)) {
-    observation_.Observe(controls_container);
+    if (controls_container->GetVisible()) {
+      std::move(visibility_changed_callback_).Run();
+    } else {
+      observation_.Observe(controls_container);
+    }
   }
   OverlayControlsBecomingVisibleObserver(
       const OverlayControlsBecomingVisibleObserver&) = delete;
@@ -232,7 +237,8 @@ class OverlayControlsBecomingVisibleObserver : public views::ViewObserver {
   ~OverlayControlsBecomingVisibleObserver() override = default;
 
   void OnViewVisibilityChanged(views::View*,
-                               views::View* controls_container) override {
+                               views::View* controls_container,
+                               bool visible) override {
     if (controls_container->GetVisible()) {
       std::move(visibility_changed_callback_).Run();
     } else {
@@ -402,8 +408,7 @@ IN_PROC_BROWSER_TEST_F(VideoPictureInPictureWindowControllerBrowserTest,
   // window has been moved.
   base::RunLoop run_loop;
   OverlayControlsBecomingVisibleObserver observer(
-      GetOverlayWindow()->GetControlsContainerView(),
-      base::BindLambdaForTesting([&] { run_loop.Quit(); }));
+      GetOverlayWindow()->GetControlsContainerView(), run_loop.QuitClosure());
   run_loop.Run();
 
   EXPECT_TRUE(GetOverlayWindow()->AreControlsVisible());

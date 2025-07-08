@@ -21,6 +21,7 @@
 #include "base/memory/raw_ref.h"
 #include "build/build_config.h"
 #include "cc/base/rtree.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_action_handler_registry.h"
 #include "ui/accessibility/ax_location_and_scroll_updates.h"
@@ -143,6 +144,14 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
       ax::mojom::AriaNotificationPriority priority_property,
       ax::mojom::AriaNotificationInterrupt interrupt_property,
       const std::string& type) {}
+  // Performs the platform-specific check to determine if we should use extra
+  // announcement nodes for ARIA notifications.
+  virtual bool ShouldExposeExtraAnnouncementNodes() const;
+  virtual BrowserAccessibility* GetExtraAnnouncementNodeFromNode(
+      const BrowserAccessibility* node,
+      ax::mojom::AriaNotificationPriority priority_property) const;
+  virtual bool TreeHasExtraAnnouncementNodes() const;
+  virtual size_t TreeExtraAnnouncementNodesCount() const;
 
   virtual void FireBlinkEvent(ax::mojom::Event event_type,
                               BrowserAccessibility* node,
@@ -408,8 +417,8 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   void OnNodeReparented(AXTree* tree, AXNode* node) override;
   void OnAtomicUpdateStarting(
       AXTree* tree,
-      const std::set<AXNodeID>& deleted_node_ids,
-      const std::set<AXNodeID>& reparented_node_ids) override;
+      const absl::flat_hash_set<AXNodeID>& deleted_node_ids,
+      const absl::flat_hash_set<AXNodeID>& reparented_node_ids) override;
   void OnAtomicUpdateFinished(
       AXTree* tree,
       bool root_changed,
@@ -504,7 +513,7 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   AXPlatformNodeId GetNodeUniqueId(const BrowserAccessibility* node);
 
   // Returns the global accessibility focus. Only relevant on a root manager.
-  BrowserAccessibility* GetAccessibilityFocus();
+  virtual BrowserAccessibility* GetAccessibilityFocus() const;
 
  protected:
   FRIEND_TEST_ALL_PREFIXES(content::BrowserAccessibilityManagerTest,
@@ -525,7 +534,7 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   void CollectChangedNodesAndParentsForAtomicUpdate(
       AXTree* tree,
       const std::vector<AXTreeObserver::Change>& changes,
-      std::set<AXPlatformNode*>* nodes_needing_update);
+      absl::flat_hash_set<AXPlatformNode*>* nodes_needing_update);
 
   bool ShouldFireEventForNode(BrowserAccessibility* node) const;
 
@@ -541,7 +550,8 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   // nodes from AXTableInfo.
   // TODO(accessibility) Find a way to have a single map for both, perhaps by
   // having BrowserAccessibility into a subclass of AXNode.
-  std::map<AXNodeID, std::unique_ptr<BrowserAccessibility>> id_wrapper_map_;
+  absl::flat_hash_map<AXNodeID, std::unique_ptr<BrowserAccessibility>>
+      id_wrapper_map_;
 
   // True if the user has initiated a navigation to another page.
   bool user_is_navigating_away_;

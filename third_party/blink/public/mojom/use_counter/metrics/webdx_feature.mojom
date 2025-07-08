@@ -371,7 +371,7 @@ enum WebDXFeature {
   kAppLaunchHandler = 309,
   kFunction = 310,
   kIf = 311,
-  kWebAppManifestUpdateToken = 312,
+  kDRAFT_WebAppManifestUpdate = 312,
   kReadingFlow = 313,
   kComposedRanges = 314,
   kCompressionDictionaryTransport = 315,
@@ -402,6 +402,15 @@ enum WebDXFeature {
   kLinkRelExpect = 340,
   kUaClientHints = 341,
   kCustomizableSelect = 342,
+  kNot = 343,
+  kScripting = 344,
+  kAlignContentBlock = 345,
+  kSizesAuto = 346,
+  kWasmSimd = 347,
+  kObservable = 348,
+  kMetaApplicationTitle = 349,
+  kDialogClosedby = 350,
+  kFontFamilyMath = 351,
 
   // Add new features immediately above this line. Don't change assigned
   // numbers of any item, and don't reuse removed slots.

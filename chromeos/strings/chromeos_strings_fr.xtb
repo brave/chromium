@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Pour le moment, les résultats contenant des personnes ne sont pas affichés. Essayez une autre requête.</translation>
 <translation id="1815850098929213707">La touche <ph name="KEYS" /> est sélectionnée. Appuyez sur le bouton pour modifier la commande.</translation>
 <translation id="1818174214124933000">Lorsque vous sélectionnez "Envoyer", vos commentaires et votre contenu (présentés ci-dessous) sont envoyés à Google, examinés par des réviseurs humains et utilisés pour entraîner ou améliorer nos produits et services, conformément aux <ph name="LINK_POLICY_BEGIN" />Règles de confidentialité<ph name="LINK_POLICY_END" /> et aux <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Conditions d'utilisation de Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Indiquez à votre enseignant qu'il a envoyé une ressource non compatible.</translation>
 <translation id="1823120442877418684">Caractères</translation>
 <translation id="1827738518074806965">Galerie d'art</translation>
 <translation id="183287940576828840">Choquant/Dangereux</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Changer de disposition</translation>
 <translation id="224421911978987610">exposition longue</translation>
 <translation id="2244834438220057800">vert</translation>
+<translation id="2248689665683494517">nature morte minimaliste illustrant des coquelicots dans un vase en verre sur fond noir</translation>
 <translation id="225692081236532131">État d'activation</translation>
 <translation id="2267285889943769271">Ajouter une capture d'écran</translation>
 <translation id="2268044343513325586">Affiner</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">mousseline de soie</translation>
 <translation id="4310735698903592804">Fonds d'écran récents optimisés par l'IA de Google</translation>
 <translation id="4320904097188876154">rose fluo</translation>
+<translation id="432961742358282111">Effectuer un clic droit ou appuyer de manière prolongée pour obtenir des définitions, des traductions ou des conversions d'unités. Utiliser les flèches vers la gauche ou vers la droite pour gérer cette fonctionnalité.</translation>
 <translation id="4333390807948134856">Touche <ph name="KEY_NAME" /> appuyée</translation>
 <translation id="4334293042716981313">Vous pouvez aussi <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />écrire votre propre requête<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">touche</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Posez vos questions aux experts sur le forum d'aide Chromebook</translation>
-<translation id="7309823890857024809">nature morte minimaliste illustrant des tiges de coquelicots dans un vase en verre sur fond noir</translation>
 <translation id="7311368985037279727">couleur clavier</translation>
 <translation id="7317831949569936035">Enregistrement auprès de l'établissement</translation>
 <translation id="7319430975418800333">A3</translation>

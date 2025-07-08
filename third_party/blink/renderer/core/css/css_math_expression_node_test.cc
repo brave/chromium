@@ -399,7 +399,7 @@ TEST(CSSMathExpressionNode, TestSteppedValueFunctionsToCalculationExpression) {
         CSSMathExpressionNumericLiteral::Create(
             10, CSSPrimitiveValue::UnitType::kNumber)};
     const auto* operation = MakeGarbageCollected<CSSMathExpressionOperation>(
-        kCalcNumber, std::move(operands), test_case.op);
+        kCalcNumber, std::move(operands), test_case.op, CSSMathType());
     CSSToLengthConversionData resolver{/*element=*/nullptr};
     const CalculationExpressionNode* node =
         operation->ToCalculationExpression(resolver);
@@ -491,7 +491,7 @@ TEST(CSSMathExpressionNode, TestExponentialFunctionsToCalculationExpression) {
         CSSMathExpressionNumericLiteral::Create(
             4.0f, CSSPrimitiveValue::UnitType::kNumber)};
     const auto* operation = MakeGarbageCollected<CSSMathExpressionOperation>(
-        kCalcNumber, std::move(operands), test_case.op);
+        kCalcNumber, std::move(operands), test_case.op, CSSMathType());
     CSSToLengthConversionData resolver{/*element=*/nullptr};
     const CalculationExpressionNode* node =
         operation->ToCalculationExpression(resolver);
@@ -548,7 +548,7 @@ TEST(CSSMathExpressionNode, TestProgressNotation) {
   } test_cases[] = {
       {"progress(1px, 0px, 4px)", 0.25f},
       {"progress(10deg, 0deg, 10deg)", 1.0f},
-      {"progress(progress(10%, 0%, 40%) * 1px, 0.5px, 1px)", -0.5f},
+      {"progress(progress(10%, 0%, 40%) * 1px, 0.5px, 1px)", 0.f},
   };
 
   for (const auto& test_case : test_cases) {
@@ -777,9 +777,9 @@ TEST(CSSMathExpressionNode, CSSMathTypeSum) {
     CSSMathType sum_type = type1 + type2;
     CSSMathType reversed_sum_type = type2 + type1;
     EXPECT_EQ(sum_type.IsValid(), is_valid);
-    EXPECT_EQ(sum_type.Type(), type);
+    EXPECT_EQ(sum_type.Category(), type);
     EXPECT_EQ(reversed_sum_type.IsValid(), is_valid);
-    EXPECT_EQ(reversed_sum_type.Type(), type);
+    EXPECT_EQ(reversed_sum_type.Category(), type);
   };
 
   CSSMathType number(kCalcNumber);
@@ -788,7 +788,7 @@ TEST(CSSMathExpressionNode, CSSMathTypeSum) {
 
   check_type_sum(number, length, false, kCalcOther);
   check_type_sum(number, percent, false, kCalcOther);
-  check_type_sum(percent, length, true, kCalcLength);
+  check_type_sum(percent, length, true, kCalcLengthFunction);
 
   check_type_sum(number, number, true, kCalcNumber);
   check_type_sum(length, length, true, kCalcLength);
@@ -800,25 +800,29 @@ TEST(CSSMathExpressionNode, CSSMathTypeProduct) {
   CSSMathType length(kCalcLength);
   CSSMathType percent(kCalcPercent);
 
-  EXPECT_EQ((number * number).Type(), kCalcNumber);
-  EXPECT_EQ((number * number / number).Type(), kCalcNumber);
-  EXPECT_EQ((number * length).Type(), kCalcLength);
-  EXPECT_EQ((length / length).Type(), kCalcNumber);
-  EXPECT_EQ((length * length / length).Type(), kCalcLength);
-  EXPECT_EQ((length * length / length / length).Type(), kCalcNumber);
-  EXPECT_EQ((length * length / (length * length)).Type(), kCalcNumber);
-  EXPECT_EQ((length * (length / length) * number).Type(), kCalcLength);
+  EXPECT_EQ((number * number).Category(), kCalcNumber);
+  EXPECT_EQ((number * number / number).Category(), kCalcNumber);
+  EXPECT_EQ((number * length).Category(), kCalcLength);
+  EXPECT_EQ((length / number).Category(), kCalcLength);
+  EXPECT_EQ((length / length).Category(), kCalcNumber);
+  EXPECT_EQ((length / length * length).Category(), kCalcLength);
+  EXPECT_EQ((length * length / length).Category(), kCalcLength);
+  EXPECT_EQ((length * length / length / length).Category(), kCalcNumber);
+  EXPECT_EQ((length * length / (length * length)).Category(), kCalcNumber);
+  EXPECT_EQ((length * (length / length) * number).Category(), kCalcLength);
 
-  EXPECT_EQ((length * length).Type(), kCalcOther);
-  EXPECT_EQ((percent * length).Type(), kCalcOther);
-  EXPECT_EQ((percent * percent).Type(), kCalcOther);
-  EXPECT_EQ((number / length).Type(), kCalcOther);
+  EXPECT_EQ((length * length).Category(), kCalcIntermediate);
+  EXPECT_EQ((percent * length).Category(), kCalcIntermediate);
+  EXPECT_EQ((percent * percent).Category(), kCalcIntermediate);
+  EXPECT_EQ((number / length).Category(), kCalcIntermediate);
 }
 
 TEST(CSSMathExpressionNode, CSSMathTypeComplex) {
+  CSSMathType number(kCalcNumber);
   CSSMathType length(kCalcLength);
 
-  EXPECT_EQ(((length + length) / length).Type(), kCalcNumber);
+  EXPECT_EQ(((length + length) / length).Category(), kCalcNumber);
+  EXPECT_EQ(((length + length) * (number + number)).Category(), kCalcLength);
 }
 
 }  // anonymous namespace

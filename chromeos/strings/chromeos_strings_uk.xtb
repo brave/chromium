@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Зараз ця функція не показує згенеровані зображення, на яких є люди. Спробуйте інший запит.</translation>
 <translation id="1815850098929213707">Вибрано клавішу <ph name="KEYS" />. Натисніть кнопку, щоб змінити елемент керування.</translation>
 <translation id="1818174214124933000">Коли ви натиснете кнопку "Надіслати", ваш відгук, а також контент, який показано нижче, буде надіслано в Google. Після перевірки нашими спеціалістами ці дані використовуватимуться для навчання й покращення наших продуктів і сервісів відповідно до <ph name="LINK_POLICY_BEGIN" />Політики конфіденційності<ph name="LINK_POLICY_END" /> й <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Загальних положень і умов Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Викладач надіслав непідтримуваний ресурс. Повідомте про це.</translation>
 <translation id="1823120442877418684">Об’єкти</translation>
 <translation id="1827738518074806965">Мистецька галерея</translation>
 <translation id="183287940576828840">Образливий або небезпечний контент</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Перемикач розкладки клавіатури</translation>
 <translation id="224421911978987610">довга витримка</translation>
 <translation id="2244834438220057800">зеленому</translation>
+<translation id="2248689665683494517">Мінімалістичний натюрморт із кількома квітками дикого маку в скляній вазі на чорному тлі</translation>
 <translation id="225692081236532131">Статус активації</translation>
 <translation id="2267285889943769271">Додати знімок екрана</translation>
 <translation id="2268044343513325586">Уточнити</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">шифону</translation>
 <translation id="4310735698903592804">Фонові малюнки, нещодавно створені за допомогою ШІ від Google</translation>
 <translation id="4320904097188876154">неоново-рожевому</translation>
+<translation id="432961742358282111">Щоб отримати визначення або переклад чи конвертувати одиниці вимірювання, натисніть текст правою кнопкою миші або втримуйте його. Щоб керувати цією функцією, натискайте стрілки вліво або вправо.</translation>
 <translation id="4333390807948134856">Клавішу "<ph name="KEY_NAME" />" натиснено</translation>
 <translation id="4334293042716981313">Ви також можете <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />написати власний запит<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">клавіша</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Ставте запитання спеціалістам на довідковому форуму Chromebook</translation>
-<translation id="7309823890857024809">Мінімалістичний натюрморт із кількома квітками римського маку в скляній вазі на чорному фоні</translation>
 <translation id="7311368985037279727">колір клавіатури</translation>
 <translation id="7317831949569936035">Реєстрація в закладі освіти</translation>
 <translation id="7319430975418800333">A3</translation>

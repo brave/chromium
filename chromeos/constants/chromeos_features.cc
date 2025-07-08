@@ -24,6 +24,12 @@ BASE_FEATURE(kBluetoothWifiQSPodRefresh,
              "BluetoothWifiQSPodRefresh",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// System location provider will use caching to optimize GCP usage. This flag
+// will be enabled with Finch.
+BASE_FEATURE(kCachedLocationProvider,
+             "CachedLocationProvider",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Enables cloud game features.
 BASE_FEATURE(kCloudGamingDevice,
              "CloudGamingDevice",
@@ -42,11 +48,6 @@ BASE_FEATURE(kBlinkExtension,
 // Enables ChromeOS Kiosk APIs.
 BASE_FEATURE(kBlinkExtensionKiosk,
              "BlinkExtensionKiosk",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enables handling of key press event in background.
-BASE_FEATURE(kCrosAppsBackgroundEventHandling,
-             "CrosAppsBackgroundEventHandling",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables the use of cros-component UI elements. Contact:
@@ -144,7 +145,7 @@ BASE_FEATURE(kFeatureManagementMahi,
 // Does nothing if "Mahi" and "FeatureManagementMahi" are disabled.
 BASE_FEATURE(kMahiPanelResizable,
              "MahiPanelResizable",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls whether mahi sends url when making request to the server.
 BASE_FEATURE(kMahiSendingUrl,
@@ -160,12 +161,12 @@ BASE_FEATURE(kMahiDebugging,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls enabling / disabling the pompano feature.
-BASE_FEATURE(kPompano, "Pompano", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kPompano, "Pompano", base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls enabling / disabling the summary of selected text feature.
 BASE_FEATURE(kMahiSummarizeSelected,
              "MahiSummarizeSelected",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls whether NotebookLM is preinstalled.
 BASE_FEATURE(kNotebookLmAppPreinstall,
@@ -234,6 +235,12 @@ BASE_FEATURE(kFeatureManagementDisableChromeCompose,
 // feature management module.
 BASE_FEATURE(kFeatureManagementRoundedWindows,
              "FeatureManagementRoundedWindows",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables the reworked implementation of usage indicators for the
+// `getAllScreensMedia` API.
+BASE_FEATURE(kMultiCaptureReworkedUsageIndicators,
+             "MultiCaptureReworkedUsageIndicators",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables the first wave of new features for the chrome.enterprise.platformKeys
@@ -386,6 +393,11 @@ BASE_FEATURE(kNotebookLmAppShelfPinReset,
              "NotebookLmAppShelfPinReset",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Enables support for protocols handlers registered via web app manifest.
+BASE_FEATURE(kWebAppManifestProtocolHandlerSupport,
+             "WebAppManifestProtocolHandlerSupport",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 const char kRoundedWindowsRadius[] = "window_radius";
 
 bool IsApnPoliciesEnabled() {
@@ -398,6 +410,10 @@ bool IsBatteryBadgeIconEnabled() {
 
 bool IsBluetoothWifiQSPodRefreshEnabled() {
   return base::FeatureList::IsEnabled(kBluetoothWifiQSPodRefresh);
+}
+
+bool IsCachedLocationProviderEnabled() {
+  return base::FeatureList::IsEnabled(kCachedLocationProvider);
 }
 
 bool IsCloudGamingDeviceEnabled() {
@@ -594,6 +610,10 @@ int RoundedWindowsRadius() {
   return base::GetFieldTrialParamByFeatureAsInt(kRoundedWindows,
                                                 kRoundedWindowsRadius,
                                                 /*default_value=*/12);
+}
+
+bool IsWebAppManifestProtocolHandlerSupportEnabled() {
+  return base::FeatureList::IsEnabled(kWebAppManifestProtocolHandlerSupport);
 }
 
 }  // namespace chromeos::features

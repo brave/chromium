@@ -26,6 +26,7 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.android_webview.client_hints.AwUserAgentMetadata;
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.Lifetime;
@@ -66,7 +67,7 @@ public class AwSettings {
     private static final String TAG = "AwSettings";
     private static final boolean TRACE = false;
 
-    /* See {@link android.webkit.WebSettings}. */
+    /** See {@link android.webkit.WebSettings}. */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
         LAYOUT_ALGORITHM_NORMAL,
@@ -79,11 +80,15 @@ public class AwSettings {
     public @interface LayoutAlgorithm {}
 
     public static final int LAYOUT_ALGORITHM_NORMAL = 0;
-    /* See {@link android.webkit.WebSettings}. */
+
+    /** See {@link android.webkit.WebSettings}. */
     public static final int LAYOUT_ALGORITHM_SINGLE_COLUMN = 1;
-    /* See {@link android.webkit.WebSettings}. */
+
+    /** See {@link android.webkit.WebSettings}. */
     public static final int LAYOUT_ALGORITHM_NARROW_COLUMNS = 2;
+
     public static final int LAYOUT_ALGORITHM_TEXT_AUTOSIZING = 3;
+    private static final int LAYOUT_ALGORITHM_COUNT = 4;
 
     public static final int FORCE_DARK_OFF = ForceDarkMode.FORCE_DARK_OFF;
     public static final int FORCE_DARK_AUTO = ForceDarkMode.FORCE_DARK_AUTO;
@@ -1303,6 +1308,8 @@ public class AwSettings {
     /** See {@link android.webkit.WebSettings#setLayoutAlgorithm}. */
     public void setLayoutAlgorithm(@LayoutAlgorithm int l) {
         if (TRACE) Log.i(TAG, "setLayoutAlgorithm=" + l);
+        RecordHistogram.recordEnumeratedHistogram(
+                "Android.WebView.SetLayoutAlgorithm", l, LAYOUT_ALGORITHM_COUNT);
         synchronized (mAwSettingsLock) {
             if (mLayoutAlgorithm != l) {
                 mLayoutAlgorithm = l;

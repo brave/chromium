@@ -84,6 +84,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.state.LevelDBPersistedDataStorage;
 import org.chromium.chrome.browser.tab.state.LevelDBPersistedDataStorageJni;
 import org.chromium.chrome.browser.tab.state.ShoppingPersistedTabData;
+import org.chromium.chrome.browser.tab_ui.TabCardThemeUtil;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.ResourceTabFavicon;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.StaticTabFaviconType;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.TabFavicon;
@@ -92,6 +93,8 @@ import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
 import org.chromium.chrome.browser.tab_ui.ThumbnailProvider;
 import org.chromium.chrome.browser.tasks.tab_management.TabListMediator.TabActionButtonData;
 import org.chromium.chrome.browser.tasks.tab_management.TabListMediator.TabActionButtonData.TabActionButtonType;
+import org.chromium.chrome.browser.tasks.tab_management.TabListModel.AnimationStatus;
+import org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties;
 import org.chromium.chrome.browser.tasks.tab_management.TabProperties.TabActionState;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -304,6 +307,7 @@ public class TabListViewHolderTest {
                                     .with(TabProperties.IS_INCOGNITO, false)
                                     .with(TabProperties.TAB_ID, TAB1_ID)
                                     .with(TabProperties.IS_SELECTED, false)
+                                    .with(TabProperties.TAB_GROUP_CARD_COLOR, null)
                                     .with(TabProperties.TAB_CLICK_LISTENER, mMockSelectedListener)
                                     .with(
                                             TabProperties.TAB_ACTION_BUTTON_DATA,
@@ -322,6 +326,7 @@ public class TabListViewHolderTest {
                             new PropertyModel.Builder(TabProperties.ALL_KEYS_TAB_GRID)
                                     .with(TabProperties.TAB_ACTION_STATE, TabActionState.SELECTABLE)
                                     .with(TabProperties.IS_SELECTED, false)
+                                    .with(TabProperties.TAB_GROUP_CARD_COLOR, null)
                                     .with(
                                             TabProperties.TAB_ACTION_BUTTON_DATA,
                                             new TabActionButtonData(
@@ -362,8 +367,7 @@ public class TabListViewHolderTest {
         CurrencyFormatterJni.setInstanceForTesting(mCurrencyFormatterJniMock);
         doReturn(1L)
                 .when(mCurrencyFormatterJniMock)
-                .initCurrencyFormatterAndroid(
-                        any(CurrencyFormatter.class), anyString(), anyString());
+                .initCurrencyFormatterAndroid(anyString(), anyString());
         doNothing().when(mCurrencyFormatterJniMock).setMaxFractionalDigits(anyLong(), anyInt());
         OptimizationGuideBridgeFactoryJni.setInstanceForTesting(
                 mOptimizationGuideBridgeFactoryJniMock);
@@ -413,8 +417,7 @@ public class TabListViewHolderTest {
                 () -> {
                     mGridModel.set(TabProperties.IS_SELECTED, true);
                     mGridModel.set(
-                            TabProperties.CARD_ANIMATION_STATUS,
-                            TabGridView.AnimationStatus.CARD_RESTORE);
+                            CardProperties.CARD_ANIMATION_STATUS, AnimationStatus.CARD_RESTORE);
                 });
         CriteriaHelper.pollUiThread(() -> !((TabGridView) mTabGridView).getIsAnimatingForTesting());
 
@@ -425,8 +428,7 @@ public class TabListViewHolderTest {
                 () -> {
                     mGridModel.set(TabProperties.IS_SELECTED, false);
                     mGridModel.set(
-                            TabProperties.CARD_ANIMATION_STATUS,
-                            TabGridView.AnimationStatus.CARD_RESTORE);
+                            CardProperties.CARD_ANIMATION_STATUS, AnimationStatus.CARD_RESTORE);
                 });
         CriteriaHelper.pollUiThread(() -> !((TabGridView) mTabGridView).getIsAnimatingForTesting());
         Assert.assertEquals(View.GONE, backgroundView.getVisibility());
@@ -691,7 +693,8 @@ public class TabListViewHolderTest {
         boolean isSelected = false;
         mGridModel.set(TabProperties.IS_SELECTED, isSelected);
         ColorStateList unselectedColorStateList =
-                TabUiThemeProvider.getActionButtonTintList(sActivity, isIncognito, isSelected);
+                TabCardThemeUtil.getActionButtonTintList(
+                        sActivity, isIncognito, isSelected, /* colorId */ null);
 
         Assert.assertEquals(
                 unselectedColorStateList, ImageViewCompat.getImageTintList(gridActionButton));
@@ -699,7 +702,8 @@ public class TabListViewHolderTest {
         isSelected = true;
         mGridModel.set(TabProperties.IS_SELECTED, isSelected);
         ColorStateList selectedColorStateList =
-                TabUiThemeProvider.getActionButtonTintList(sActivity, isIncognito, isSelected);
+                TabCardThemeUtil.getActionButtonTintList(
+                        sActivity, isIncognito, isSelected, /* colorId */ null);
         Assert.assertEquals(
                 selectedColorStateList, ImageViewCompat.getImageTintList(gridActionButton));
     }

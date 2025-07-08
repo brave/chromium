@@ -260,6 +260,11 @@ void BinaryUploadService::Request::set_require_metadata_verdict(
       require_metadata_verdict);
 }
 
+void BinaryUploadService::Request::set_is_content_encrypted(
+    bool is_content_encrypted) {
+  content_analysis_request_.set_is_content_encrypted(is_content_encrypted);
+}
+
 void BinaryUploadService::Request::set_blocking(bool blocking) {
   content_analysis_request_.set_blocking(blocking);
 }
@@ -280,6 +285,12 @@ void BinaryUploadService::Request::set_content_area_account_email(
     const std::string& email) {
   content_analysis_request_.mutable_request_data()
       ->set_content_area_account_email(email);
+}
+
+void BinaryUploadService::Request::set_source_content_area_account_email(
+    const std::string& email) {
+  content_analysis_request_.mutable_request_data()
+      ->set_source_content_area_account_email(email);
 }
 
 void BinaryUploadService::Request::set_frame_url_chain(

@@ -90,8 +90,27 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
 
   String cookie_url_host = cookie_url.Host().ToString();
   String domain;
+  // Trying to set `__http-` prefixed cookie will be rejected further down by
+  // CreateSanitizedCookie regardless of the condition below. Its role is to
+  // provide a more meaningful exception message than "Cookie was malformed..".
+  const bool is_http_prefix =
+      base::FeatureList::IsEnabled(net::features::kPrefixCookieHttp) &&
+      name.StartsWithIgnoringASCIICase("__http-");
+  const bool is_host_http_prefix =
+      base::FeatureList::IsEnabled(net::features::kPrefixCookieHostHttp) &&
+      name.StartsWithIgnoringASCIICase("__hosthttp-");
+  if (is_http_prefix || is_host_http_prefix) {
+    StringBuilder builder;
+    builder.AppendFormat(
+        "Cookies with \"%s\" prefix cannot be set using the CookieStore API.",
+        is_http_prefix ? "__Http-" : "__HostHttp-");
+    exception_state.ThrowTypeError(builder.ToString());
+    return nullptr;
+  }
+  const bool is_host_prefixed_cookie =
+      name.StartsWithIgnoringASCIICase("__host-");
   if (!options->domain().IsNull()) {
-    if (name.StartsWith("__Host-")) {
+    if (is_host_prefixed_cookie) {
       exception_state.ThrowTypeError(
           "Cookies with \"__Host-\" prefix cannot have a domain");
       return nullptr;
@@ -104,9 +123,9 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
 
-    domain = String(".") + options->domain();
+    domain = StrCat({".", options->domain()}).LowerASCII();
     if (!cookie_url_host.EndsWith(domain) &&
-        cookie_url_host != options->domain()) {
+        cookie_url_host != options->domain().LowerASCII()) {
       exception_state.ThrowTypeError(
           "Cookie domain must domain-match current host");
       return nullptr;
@@ -115,7 +134,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
 
   String path = options->path();
   if (!path.empty()) {
-    if (name.StartsWith("__Host-") && path != "/") {
+    if (is_host_prefixed_cookie && path != "/") {
       exception_state.ThrowTypeError(
           "Cookies with \"__Host-\" prefix cannot have a non-\"/\" path");
       return nullptr;
@@ -125,7 +144,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
     if (!path.EndsWith("/")) {
-      path = path + String("/");
+      path = StrCat({path, "/"});
     }
   }
 

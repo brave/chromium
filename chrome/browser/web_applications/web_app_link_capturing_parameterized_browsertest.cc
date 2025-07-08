@@ -20,6 +20,7 @@
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/task/current_thread.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -628,8 +629,8 @@ base::Value::Dict WebContentsToJson(const Browser& browser,
     }
   }
 
-  WebAppTabHelper* helper = WebAppTabHelper::FromWebContents(&web_contents);
-  if (helper->is_pinned_home_tab()) {
+  if (browser.app_controller() &&
+      browser.app_controller()->GetPinnedHomeTab() == &web_contents) {
     dict.Set("is_pinned_home_tab", true);
   }
 

@@ -14,6 +14,13 @@
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/jni_android.h"
+#include "base/android/jni_string.h"
+#include "components/autofill/android/main_autofill_jni_headers/AutofillProfilePayload_jni.h"
+#include "components/autofill/android/main_autofill_jni_headers/PaymentsPayload_jni.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
 namespace autofill {
 
 namespace {
@@ -97,6 +104,10 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kOfferTag";
     case Suggestion::Icon::kPenSpark:
       return "kPenSpark";
+    case Suggestion::Icon::kQuestionMark:
+      return "kQuestionMark";
+    case Suggestion::Icon::kRecoveryPassword:
+      return "kRecoveryPassword";
     case Suggestion::Icon::kScanCreditCard:
       return "kScanCreditCard";
     case Suggestion::Icon::kSettings:
@@ -161,6 +172,14 @@ Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
       signon_realm(signon_realm),
       display_signon_realm(display_signon_realm),
       is_cross_domain(is_cross_domain) {}
+
+Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
+    std::u16string_view username,
+    std::u16string_view password,
+    std::u16string_view backup_password)
+    : username(username),
+      password(password),
+      backup_password(backup_password) {}
 
 Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
     const PasswordSuggestionDetails&) = default;
@@ -236,6 +255,14 @@ Suggestion::AutofillProfilePayload::operator=(AutofillProfilePayload&&) =
 
 Suggestion::AutofillProfilePayload::~AutofillProfilePayload() = default;
 
+#if BUILDFLAG(IS_ANDROID)
+base::android::ScopedJavaLocalRef<jobject>
+Suggestion::AutofillProfilePayload::CreateJavaObject() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_AutofillProfilePayload_Constructor(env, guid.value());
+}
+#endif  // BUILDFLAG(IS_ANDROID)
+
 Suggestion::IdentityCredentialPayload::IdentityCredentialPayload() = default;
 Suggestion::IdentityCredentialPayload::IdentityCredentialPayload(
     GURL configURL,
@@ -281,6 +308,16 @@ Suggestion::PaymentsPayload& Suggestion::PaymentsPayload::operator=(
     PaymentsPayload&&) = default;
 
 Suggestion::PaymentsPayload::~PaymentsPayload() = default;
+
+#if BUILDFLAG(IS_ANDROID)
+base::android::ScopedJavaLocalRef<jobject>
+Suggestion::PaymentsPayload::CreateJavaObject() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_PaymentsPayload_Constructor(
+      env, main_text_content_description, should_display_terms_available,
+      guid.value(), is_local_payments_method);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 Suggestion::IPHMetadata::IPHMetadata() = default;
 

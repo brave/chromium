@@ -277,15 +277,10 @@ ReadingListSelectionState GetSelectionStateForSelectedCounts(
   }
 }
 
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (self.traitCollection.preferredContentSizeCategory !=
-      previousTraitCollection.preferredContentSizeCategory) {
-    [self verifyTableIsEmpty];
-  }
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  [_toolbarManager updateForReadingListWidth:self.view.bounds.size.width];
 }
-#endif
 
 #pragma mark - UITableViewDataSource
 
@@ -436,7 +431,7 @@ ReadingListSelectionState GetSelectionStateForSelectedCounts(
 
 - (void)keyCommand_close {
   CHECK(self.delegate.canDismiss, base::NotFatalUntil::M145);
-  base::RecordAction(base::UserMetricsAction("MobileKeyCommandClose"));
+  base::RecordAction(base::UserMetricsAction(kMobileKeyCommandClose));
   [self.delegate dismissReadingListListViewController:self];
 }
 
@@ -1167,7 +1162,7 @@ ReadingListSelectionState GetSelectionStateForSelectedCounts(
   [self setEditing:NO animated:animated];
 }
 
-#pragma mark - Accessibility
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityPerformEscape {
   if (!self.delegate.canDismiss) {

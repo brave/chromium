@@ -11,17 +11,24 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/time/time.h"
+#import "components/dom_distiller/core/extraction_utils.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
+#import "ios/chrome/browser/browser_container/model/edit_menu_tab_helper.h"
 #import "ios/chrome/browser/dom_distiller/model/offline_page_distiller_viewer.h"
 #import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_content_tab_helper.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_distiller_page.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_distiller_viewer.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_java_script_feature.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_metrics_helper.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/url_util.h"
 #import "ios/chrome/browser/shared/public/commands/reader_mode_commands.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
+#import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
 #import "ios/web/navigation/wk_navigation_util.h"
+#import "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/navigation/navigation_context.h"
 #import "ios/web/public/navigation/navigation_item.h"
@@ -55,52 +62,10 @@ void RecordReaderModeDistillationResult(bool is_distillable,
   }
 }
 
-bool IsKnownAmpCache(web::WebFrame* web_frame) {
-  url::Origin origin = web_frame->GetSecurityOrigin();
-  // Source:
-  // https://github.com/ampproject/amphtml/blob/main/build-system/global-configs/caches.json
-  return origin.DomainIs("cdn.ampproject.org") ||
-         origin.DomainIs("bing-amp.com");
-}
-
-// Records whether any available web frames in the current web state use AMP.
-// This metric will help determine whether AMP special casing will affect
-// distillation success.
-void RecordReaderModeForAmpDistill(bool is_distillable_page,
-                                   web::WebState* web_state) {
-  if (!web_state) {
-    return;
-  }
-
-  web::WebFramesManager* page_world_manager =
-      web_state->GetPageWorldWebFramesManager();
-  auto web_frames = page_world_manager->GetAllWebFrames();
-  bool is_amp =
-      std::any_of(web_frames.begin(), web_frames.end(), IsKnownAmpCache);
-
-  ReaderModeAmpClassification classification;
-  if (is_amp) {
-    classification = is_distillable_page
-                         ? ReaderModeAmpClassification::kPopulatedDistillWithAmp
-                         : ReaderModeAmpClassification::kEmptyDistillWithAmp;
-  } else {
-    classification = is_distillable_page
-                         ? ReaderModeAmpClassification::kPopulatedDistillNoAmp
-                         : ReaderModeAmpClassification::kEmptyDistillNoAmp;
-  }
-
-  UMA_HISTOGRAM_ENUMERATION(kReaderModeAmpClassificationHistogram,
-                            classification);
-}
-
 // Helper function to generate the snackbar message.
-NSString* GenerateSnackbarMessage(base::TimeDelta heuristic_latency,
-                                  bool is_distillable_page,
+NSString* GenerateSnackbarMessage(bool is_distillable_page,
                                   base::TimeDelta distillation_latency) {
-  std::string message =
-      "Heuristic Latency: " +
-      base::NumberToString(heuristic_latency.InMilliseconds()) + "ms";
-  message += "\nDistillation Result: ";
+  std::string message = "\nDistillation Result: ";
   message += (is_distillable_page ? "Distillable" : "Not Distillable");
   message += "\nDistillation Latency: " +
              base::NumberToString(distillation_latency.InMilliseconds()) + "ms";
@@ -114,11 +79,30 @@ bool CurrentPageSupportsReaderModeHeuristic(web::WebState* web_state) {
          !IsUrlNtp(web_state->GetVisibleURL()) && web_state->ContentIsHTML();
 }
 
+// Returns the Readability heuristic result if it is available otherwise returns
+// `kMalformedResponse`.
+ReaderModeHeuristicResult GetReaderModeHeuristicResult(
+    const base::Value* result) {
+  if (!result) {
+    return ReaderModeHeuristicResult::kMalformedResponse;
+  }
+  std::optional<bool> result_conversion = result->GetIfBool();
+  if (result_conversion.has_value()) {
+    return result_conversion.value()
+               ? ReaderModeHeuristicResult::kReaderModeEligible
+               : ReaderModeHeuristicResult::
+                     kReaderModeNotEligibleContentAndLength;
+  }
+  return ReaderModeHeuristicResult::kMalformedResponse;
+}
+
 }  // namespace
 
 ReaderModeTabHelper::ReaderModeTabHelper(web::WebState* web_state,
                                          DistillerService* distiller_service)
-    : web_state_(web_state), distiller_service_(distiller_service) {
+    : web_state_(web_state),
+      distiller_service_(distiller_service),
+      metrics_helper_(web_state) {
   CHECK(web_state_);
   web_state_observation_.Observe(web_state_);
 }
@@ -167,10 +151,6 @@ bool ReaderModeTabHelper::IsReaderModeWebStateAvailable() const {
 web::WebState* ReaderModeTabHelper::GetReaderModeWebState() {
   CHECK(IsReaderModeWebStateAvailable());
   return reader_mode_web_state_.get();
-}
-
-void ReaderModeTabHelper::ShowReaderModeOptions() {
-  // TODO(crbug.com/409941529): Show the Reader mode options UI.
 }
 
 bool ReaderModeTabHelper::CurrentPageSupportsReaderMode() const {
@@ -251,10 +231,24 @@ void ReaderModeTabHelper::ResetUrlEligibility(const GURL& url) {
   // Ensure that only one asynchronous eligibility check is running at a time.
   if (trigger_reader_mode_timer_.IsRunning()) {
     trigger_reader_mode_timer_.Stop();
+    metrics_helper_.CancelReaderHeuristicRecording();
   }
+
   // Do not reset URL eligibility for same-page navigations.
   if (!reader_mode_eligible_url_.EqualsIgnoringRef(url)) {
     reader_mode_eligible_url_ = GURL();
+  }
+}
+
+void ReaderModeTabHelper::ReaderModeContentDidLoadData(
+    ReaderModeContentTabHelper* reader_mode_content_tab_helper) {
+  // Generic snapshot image generation on side-swipe has a long tail latency.
+  // Force update the snapshot storage to ensure that the latest snapshot is
+  // presented before a transition.
+  SnapshotTabHelper* snapshot_tab_helper =
+      SnapshotTabHelper::FromWebState(web_state_);
+  if (snapshot_tab_helper) {
+    snapshot_tab_helper->UpdateSnapshotWithCallback(nil);
   }
 }
 
@@ -276,18 +270,16 @@ void ReaderModeTabHelper::ReaderModeContentDidCancelRequest(
   web_state_->GetNavigationManager()->LoadURLWithParams(params);
 }
 
+void ReaderModeTabHelper::HandleReadabilityHeuristicResult(
+    const GURL& url,
+    const base::Value* result) {
+  HandleReaderModeHeuristicResult(url, GetReaderModeHeuristicResult(result));
+}
+
 void ReaderModeTabHelper::HandleReaderModeHeuristicResult(
     const GURL& url,
     ReaderModeHeuristicResult result) {
-  UMA_HISTOGRAM_ENUMERATION(kReaderModeHeuristicResultHistogram, result);
-
-  const ukm::SourceId source_id =
-      ukm::GetSourceIdForWebStateDocument(web_state_);
-  if (source_id != ukm::kInvalidSourceId) {
-    ukm::builders::IOS_ReaderMode_Heuristic_Result(source_id)
-        .SetResult(static_cast<int64_t>(result))
-        .Record(ukm::UkmRecorder::Get());
-  }
+  metrics_helper_.RecordReaderHeuristicCompleted(result);
 
   if (url != web_state_->GetLastCommittedURL()) {
     // There has been a change in the committed URL since the last heuristic
@@ -304,19 +296,6 @@ void ReaderModeTabHelper::HandleReaderModeHeuristicResult(
   }
 }
 
-void ReaderModeTabHelper::RecordReaderModeHeuristicLatency(
-    const base::TimeDelta& delta) {
-  heuristic_latency_ = delta;
-  UMA_HISTOGRAM_TIMES(kReaderModeHeuristicLatencyHistogram, delta);
-  const ukm::SourceId source_id =
-      ukm::GetSourceIdForWebStateDocument(web_state_);
-  if (source_id != ukm::kInvalidSourceId) {
-    ukm::builders::IOS_ReaderMode_Heuristic_Latency(source_id)
-        .SetLatency(delta.InMilliseconds())
-        .Record(ukm::UkmRecorder::Get());
-  }
-}
-
 void ReaderModeTabHelper::TriggerReaderModeHeuristic(const GURL& url) {
   if (!IsReaderModeAvailable()) {
     return;
@@ -328,18 +307,28 @@ void ReaderModeTabHelper::TriggerReaderModeHeuristic(const GURL& url) {
     CallLastCommittedUrlEligibilityCallbacks(false);
     return;
   }
+
   web::WebFramesManager* web_frames_manager =
       ReaderModeJavaScriptFeature::GetInstance()->GetWebFramesManager(
           web_state_);
   if (!web_frames_manager) {
     return;
   }
-  web::WebFrame* web_frame = web_frames_manager->GetMainWebFrame();
-  if (!web_frame) {
+  web::WebFrame* main_frame = web_frames_manager->GetMainWebFrame();
+  if (!main_frame) {
     return;
   }
-  ReaderModeJavaScriptFeature::GetInstance()->TriggerReaderModeHeuristic(
-      web_frame);
+
+  metrics_helper_.RecordReaderHeuristicTriggered();
+  if (base::FeatureList::IsEnabled(kEnableReadabilityHeuristic)) {
+    main_frame->ExecuteJavaScript(
+        base::UTF8ToUTF16(dom_distiller::GetReadabilityTriggeringScript()),
+        base::BindOnce(&ReaderModeTabHelper::HandleReadabilityHeuristicResult,
+                       weak_ptr_factory_.GetWeakPtr(), url));
+  } else {
+    ReaderModeJavaScriptFeature::GetInstance()->TriggerReaderModeHeuristic(
+        main_frame);
+  }
 }
 
 void ReaderModeTabHelper::PageDistillationCompleted(
@@ -362,14 +351,12 @@ void ReaderModeTabHelper::PageDistillationCompleted(
 
   bool is_distillable_page = !html.empty();
   RecordReaderModeDistillationResult(is_distillable_page, source_id);
-  RecordReaderModeForAmpDistill(is_distillable_page, web_state_);
 
   if (IsReaderModeSnackbarEnabled()) {
     // Show a snackbar with the heuristic result, latency and page distillation
     // result and latency.
     MDCSnackbarMessage* message = [MDCSnackbarMessage
-        messageWithText:GenerateSnackbarMessage(heuristic_latency_,
-                                                is_distillable_page,
+        messageWithText:GenerateSnackbarMessage(is_distillable_page,
                                                 distillation_latency)];
     message.duration = MDCSnackbarMessageDurationMax;
     [snackbar_handler_ showSnackbarMessage:message];
@@ -403,11 +390,22 @@ void ReaderModeTabHelper::CreateReaderModeWebState() {
       ->SetDelegate(this);
   reader_mode_web_state_->SetWebUsageEnabled(true);
 
+  // Inherit edit menu from the current webState.
+  EditMenuTabHelper* main_tab_edit_menu_builder_tab_helper =
+      EditMenuTabHelper::FromWebState(web_state_);
+  if (main_tab_edit_menu_builder_tab_helper) {
+    EditMenuTabHelper::CreateForWebState(reader_mode_web_state_.get());
+    EditMenuTabHelper::FromWebState(reader_mode_web_state_.get())
+        ->SetEditMenuBuilder(
+            main_tab_edit_menu_builder_tab_helper->GetEditMenuBuilder());
+    WebSelectionTabHelper::CreateForWebState(reader_mode_web_state_.get());
+  }
+
   std::unique_ptr<ReaderModeDistillerPage> distiller_page =
       std::make_unique<ReaderModeDistillerPage>(web_state_);
-  distiller_viewer_.reset(new OfflinePageDistillerViewer(
-      distiller_service_, std::move(distiller_page),
-      web_state_->GetLastCommittedURL(),
+  distiller_viewer_.reset(new ReaderModeDistillerViewer(
+      reader_mode_web_state_.get(), distiller_service_,
+      std::move(distiller_page), web_state_->GetLastCommittedURL(),
       base::BindRepeating(&ReaderModeTabHelper::PageDistillationCompleted,
                           weak_ptr_factory_.GetWeakPtr(),
                           base::TimeTicks::Now())));
@@ -421,6 +419,12 @@ void ReaderModeTabHelper::DestroyReaderModeWebState() {
   reader_mode_web_state_.reset();
   // Cancel any ongoing distillation task.
   distiller_viewer_.reset();
+  // Update the snapshot with the original web page.
+  SnapshotTabHelper* snapshot_tab_helper =
+      SnapshotTabHelper::FromWebState(web_state_);
+  if (snapshot_tab_helper) {
+    snapshot_tab_helper->UpdateSnapshotWithCallback(nil);
+  }
 }
 
 void ReaderModeTabHelper::SetLastCommittedUrl(const GURL& url) {

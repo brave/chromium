@@ -221,7 +221,6 @@
 <translation id="181434555916624618">ಸದ್ಯಕ್ಕೆ, ಜನರನ್ನು ಹೊಂದಿರುವ ಫಲಿತಾಂಶಗಳನ್ನು ತೋರಿಸಲಾಗುವುದಿಲ್ಲ. ಬೇರೆ ಪ್ರಾಂಪ್ಟ್‌ ಅನ್ನು ಬಳಸಿ ನೋಡಿ.</translation>
 <translation id="1815850098929213707">ಆಯ್ಕೆಮಾಡಿರುವ ಕೀ <ph name="KEYS" /> ಆಗಿದೆ. ನಿಯಂತ್ರಣವನ್ನು ಎಡಿಟ್ ಮಾಡಲು ಬಟನ್ ಮೇಲೆ ಟ್ಯಾಪ್ ಮಾಡಿ</translation>
 <translation id="1818174214124933000">ನೀವು ಕಳುಹಿಸಿ ಅನ್ನು ಆಯ್ಕೆಮಾಡಿದಾಗ, ನಿಮ್ಮ ಫೀಡ್‌ಬ್ಯಾಕ್ ಮತ್ತು ಕಂಟೆಂಟ್ ಅನ್ನು (ಕೆಳಗೆ ತೋರಿಸಲಾಗಿದೆ) Google ಗೆ ಕಳುಹಿಸಲಾಗುತ್ತದೆ, ಮಾನವರಿಂದ ಪರಿಶೀಲಿಸಲಾಗುತ್ತದೆ ಮತ್ತು <ph name="LINK_POLICY_BEGIN" />ಗೌಪ್ಯತೆ ನೀತಿ<ph name="LINK_POLICY_END" /> ಮತ್ತು <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google ಸೇವಾ ನಿಯಮಗಳಿಗೆ<ph name="LINK_TERMS_OF_SERVICE_END" /> ಒಳಪಟ್ಟು ನಮ್ಮ ಉತ್ಪನ್ನಗಳು ಮತ್ತು ಸೇವೆಗಳನ್ನು ತರಬೇತಿಗೊಳಿಸಲು ಅಥವಾ ಸುಧಾರಿಸಲು ಬಳಸಲಾಗುತ್ತದೆ.</translation>
-<translation id="1821075635029692203">ನಿಮ್ಮ ಶಿಕ್ಷಕರು ಬೆಂಬಲಿತವಲ್ಲದ ಮಾಹಿತಿಯ ಮೂಲನ್ನು ಕಳುಹಿಸಿದ್ದಾರೆ. ಅವರಿಗೆ ತಿಳಿಸಿ.</translation>
 <translation id="1823120442877418684">ಪಾತ್ರಗಳು</translation>
 <translation id="1827738518074806965">ಆರ್ಟ್ ಗ್ಯಾಲರಿ</translation>
 <translation id="183287940576828840">ಆಕ್ಷೇಪಾರ್ಹ/ಅಸುರಕ್ಷಿತವಾಗಿದೆ</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">ಲೇಔಟ್ ಸ್ವಿಚ್</translation>
 <translation id="224421911978987610">ಲಾಂಗ್ ಎಕ್ಸ್‌ಪೋಷರ್</translation>
 <translation id="2244834438220057800">ಹಸಿರು</translation>
+<translation id="2248689665683494517">ಕಪ್ಪು ಹಿನ್ನೆಲೆಯಲ್ಲಿ ಗಾಜಿನ ಹೂದಾನಿಯಲ್ಲಿ ಕೆಲವು ಪಾಪಾವರ್ ರಿಯಾ ಹೂಗಳ ಕನಿಷ್ಠ ಸ್ಥಿರ ಜೀವಿತಾವಧಿ</translation>
 <translation id="225692081236532131">ಸಕ್ರಿಯ ಸ್ಥಿತಿ</translation>
 <translation id="2267285889943769271">ಸ್ಕ್ರೀನ್‌ಶಾಟ್‌ ಸೇರಿಸಿ</translation>
 <translation id="2268044343513325586">ಪರಿಷ್ಕರಿಸು</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">ಷಿಫಾನ್</translation>
 <translation id="4310735698903592804">Google AI ನಿಂದ ಚಾಲಿತವಾಗಿರುವ ಇತ್ತೀಚಿನ ವಾಲ್‌ಪೇಪರ್‌ಗಳು</translation>
 <translation id="4320904097188876154">ನಿಯಾನ್ ಗುಲಾಬಿ</translation>
+<translation id="432961742358282111">ವ್ಯಾಖ್ಯಾನಗಳು, ಅನುವಾದಗಳು ಅಥವಾ ಘಟಕದ ಪರಿವರ್ತನೆಗಳನ್ನು ಪಡೆಯಲು ಬಲ-ಕ್ಲಿಕ್ ಮಾಡಿ ಅಥವಾ ಒತ್ತಿ ಹಿಡಿದುಕೊಳ್ಳಿ. ಈ ಫೀಚರ್ ಅನ್ನು ನಿರ್ವಹಿಸಲು ಲೆಫ್ಟ್ ಅಥವಾ ರೈಟ್ ಗುರುತಿನ ಕೀಗಳನ್ನು ಬಳಸಿ.</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> ಕೀ ಒತ್ತಲಾಗಿದೆ</translation>
 <translation id="4334293042716981313">ನೀವು <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />ನಿಮ್ಮ ಸ್ವಂತ ಪ್ರಾಂಪ್ಟ್ ಅನ್ನು ಸಹ ಬರೆಯಬಹುದು<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">ಕೀ</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Chromebook ಸಹಾಯ ಫೋರಮ್‌ನಲ್ಲಿನ ತಜ್ಞರನ್ನು ಕೇಳಿ</translation>
-<translation id="7309823890857024809">ಕಪ್ಪು ಹಿನ್ನೆಲೆಯಲ್ಲಿ ಗಾಜಿನ ಹೂದಾನಿಯಲ್ಲಿ ಕೆಲವು ಪಾಪಾವರ್ ರಿಯಾ ಕಾಂಡಗಳ ಕನಿಷ್ಠ ಸ್ಥಿರ ಜೀವಿತಾವಧಿ.</translation>
 <translation id="7311368985037279727">ಕೀಬೋರ್ಡ್ ಬಣ್ಣ</translation>
 <translation id="7317831949569936035">ಶಾಲಾ ನೋಂದಣಿ</translation>
 <translation id="7319430975418800333">A3</translation>

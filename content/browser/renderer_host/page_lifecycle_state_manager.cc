@@ -4,9 +4,13 @@
 
 #include "content/browser/renderer_host/page_lifecycle_state_manager.h"
 
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/state_transitions.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -94,22 +98,50 @@ void PageLifecycleStateManager::SetFrameTreeVisibility(
   // automatically resume.
 }
 
-BASE_FEATURE(kBackForwardCacheNonStickyDoubleFix,
-             "BackForwardCacheNonStickyDoubleFix",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+void PageLifecycleStateManager::SetBackForwardCacheEntered(
+    BackForwardCacheEntered entered,
+    char context_for_bug_427316606) {
+  static const base::NoDestructor<
+      base::StateTransitions<BackForwardCacheEntered>>
+      transitions(base::StateTransitions<BackForwardCacheEntered>({
+          {BackForwardCacheEntered::kNo, {BackForwardCacheEntered::kEntering}},
+          {BackForwardCacheEntered::kEntering,
+           {BackForwardCacheEntered::kNo, BackForwardCacheEntered::kEntered}},
+          {BackForwardCacheEntered::kEntered, {BackForwardCacheEntered::kNo}},
+      }));
+  // TODO(https://crbug.com/427316606): Remove this when we understand how this
+  // transition sometimes occurs.
+  back_forward_cache_state_tracker_.append(
+      base::StringPrintf("%c%d", context_for_bug_427316606, entered));
+
+  if (back_forward_cache_entered_ == BackForwardCacheEntered::kNo &&
+      entered == BackForwardCacheEntered::kEntered) {
+    DumpWithoutCrashForBug427316606();
+  } else {
+    CHECK_STATE_TRANSITION(transitions, back_forward_cache_entered_, entered);
+  }
+  back_forward_cache_entered_ = entered;
+}
+
+void PageLifecycleStateManager::DumpWithoutCrashForBug427316606() {
+  SCOPED_CRASH_KEY_STRING64("bfcache", "tracker",
+                            back_forward_cache_state_tracker_);
+  base::debug::DumpWithoutCrashing();
+}
 
 void PageLifecycleStateManager::SetIsInBackForwardCache(
     bool is_in_back_forward_cache,
     blink::mojom::PageRestoreParamsPtr page_restore_params) {
-  if (is_in_back_forward_cache_ == is_in_back_forward_cache)
+  if (IsInBackForwardCache() == is_in_back_forward_cache) {
     return;
+  }
   // Prevent races by waiting for confirmation that the renderer will no longer
   // evict the page before allowing it to exit the back-forward cache
   DCHECK(is_in_back_forward_cache ||
          !last_acknowledged_state_->eviction_enabled);
-  is_in_back_forward_cache_ = is_in_back_forward_cache;
   eviction_enabled_ = is_in_back_forward_cache;
   if (is_in_back_forward_cache) {
+    SetBackForwardCacheEntered(BackForwardCacheEntered::kEntering, 'S');
     // When a page is put into BackForwardCache, the page can run a busy loop.
     // Set a timeout monitor to check that the transition finishes within the
     // time limit.
@@ -123,11 +155,7 @@ void PageLifecycleStateManager::SetIsInBackForwardCache(
     // When a page is restored from the back-forward cache, we should reset this
     // state so that it behaves correctly next time navigation occurs.
     pagehide_dispatch_ = blink::mojom::PagehideDispatch::kNotDispatched;
-    // TODO(https://crbug.com/360183659): Make this unconditional after
-    // measuring the impact.
-    if (base::FeatureList::IsEnabled(kBackForwardCacheNonStickyDoubleFix)) {
-      did_receive_back_forward_cache_ack_ = false;
-    }
+    SetBackForwardCacheEntered(BackForwardCacheEntered::kNo, 'S');
   }
 
   SendUpdatesToRendererIfNeeded(std::move(page_restore_params),
@@ -159,21 +187,21 @@ void PageLifecycleStateManager::DidSetPagehideDispatchDuringNewPageCommit(
             blink::mojom::PageVisibilityState::kHidden);
   DCHECK_NE(acknowledged_state->pagehide_dispatch,
             blink::mojom::PagehideDispatch::kNotDispatched);
-  OnPageLifecycleChangedAck(std::move(acknowledged_state),
-                            base::NullCallback());
+  OnPageLifecycleStateChanged(std::move(acknowledged_state),
+                              /*set_page_lifecycle_state_response=*/false);
 }
 
 void PageLifecycleStateManager::SetIsLeavingBackForwardCache(
     base::OnceClosure done_cb) {
-  DCHECK(is_in_back_forward_cache_);
+  DCHECK(IsInBackForwardCache());
   eviction_enabled_ = false;
   SendUpdatesToRendererIfNeeded(nullptr, std::move(done_cb));
 }
 
 bool PageLifecycleStateManager::RendererExpectedToSendChannelAssociatedIpcs()
     const {
-  // eviction_enabled_ => is_in_back_forward_cache_
-  DCHECK(!eviction_enabled_ || is_in_back_forward_cache_);
+  // eviction_enabled_ => IsInBackForwardCache()
+  DCHECK(!eviction_enabled_ || IsInBackForwardCache());
   return !eviction_enabled_ || !last_acknowledged_state_->eviction_enabled;
 }
 
@@ -207,22 +235,23 @@ void PageLifecycleStateManager::SendUpdatesToRendererIfNeeded(
 
   render_view_host_impl_->GetAssociatedPageBroadcast()->SetPageLifecycleState(
       std::move(state), std::move(page_restore_params),
-      base::BindOnce(&PageLifecycleStateManager::OnPageLifecycleChangedAck,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(new_state),
-                     std::move(done_cb)));
+      base::BindOnce(
+          &PageLifecycleStateManager::OnSetPageLifecycleStateResponse,
+          weak_ptr_factory_.GetWeakPtr(), std::move(new_state),
+          std::move(done_cb)));
 }
 
 blink::mojom::PageLifecycleStatePtr
 PageLifecycleStateManager::CalculatePageLifecycleState() {
   auto state = blink::mojom::PageLifecycleState::New();
-  state->is_in_back_forward_cache = is_in_back_forward_cache_;
-  state->is_frozen = is_in_back_forward_cache_ || frozen_explicitly_;
+  state->is_in_back_forward_cache = IsInBackForwardCache();
+  state->is_frozen = IsInBackForwardCache() || frozen_explicitly_;
   state->pagehide_dispatch = pagehide_dispatch_;
   // If a page is stored in the back-forward cache, or we have already
   // dispatched/are dispatching pagehide for the page, it should be treated as
   // "hidden" regardless of what |frame_tree_visibility_| is set to.
   state->visibility =
-      (is_in_back_forward_cache_ ||
+      (IsInBackForwardCache() ||
        pagehide_dispatch_ != blink::mojom::PagehideDispatch::kNotDispatched)
           ? blink::mojom::PageVisibilityState::kHidden
           : frame_tree_visibility_;
@@ -230,16 +259,29 @@ PageLifecycleStateManager::CalculatePageLifecycleState() {
   return state;
 }
 
-void PageLifecycleStateManager::OnPageLifecycleChangedAck(
+void PageLifecycleStateManager::OnPageLifecycleStateChanged(
     blink::mojom::PageLifecycleStatePtr acknowledged_state,
-    base::OnceClosure done_cb) {
+    bool set_page_lifecycle_state_response) {
   blink::mojom::PageLifecycleStatePtr old_state =
       std::move(last_acknowledged_state_);
 
   last_acknowledged_state_ = std::move(acknowledged_state);
 
-  if (last_acknowledged_state_->is_in_back_forward_cache) {
-    did_receive_back_forward_cache_ack_ = true;
+  // We can get here in the `kEntered` state a unrelated lifecycle state change
+  // arrives when we are already in back/forward-cache.
+  if (last_acknowledged_state_->is_in_back_forward_cache &&
+      back_forward_cache_entered_ != BackForwardCacheEntered::kEntered) {
+    SCOPED_CRASH_KEY_NUMBER("bfcache", "current_entered_",
+                            static_cast<int>(back_forward_cache_entered_));
+    SCOPED_CRASH_KEY_NUMBER("bfcache", "splsr",
+                            set_page_lifecycle_state_response);
+    SetBackForwardCacheEntered(BackForwardCacheEntered::kEntered,
+                               set_page_lifecycle_state_response ? 'R' : 'C');
+    // TODO(https://crbug.com/427316606): Remove this.
+    // This should only happen during a response to SetPageLifecycleState.
+    if (!set_page_lifecycle_state_response) {
+      DumpWithoutCrashForBug427316606();
+    }
 
     // TODO(crbug.com/41494183): currently after the navigation, the old
     // RenderViewHost is marked as inactive.
@@ -295,6 +337,13 @@ void PageLifecycleStateManager::OnPageLifecycleChangedAck(
     test_delegate_->OnLastAcknowledgedStateChanged(*old_state,
                                                    *last_acknowledged_state_);
   }
+}
+
+void PageLifecycleStateManager::OnSetPageLifecycleStateResponse(
+    blink::mojom::PageLifecycleStatePtr acknowledged_state,
+    base::OnceClosure done_cb) {
+  OnPageLifecycleStateChanged(std::move(acknowledged_state),
+                              /*set_page_lifecycle_state_response=*/true);
   if (done_cb)
     std::move(done_cb).Run();
 }
@@ -309,6 +358,19 @@ void PageLifecycleStateManager::SetDelegateForTesting(
     PageLifecycleStateManager::TestDelegate* test_delegate) {
   DCHECK(!test_delegate_ || !test_delegate);
   test_delegate_ = test_delegate;
+}
+
+std::ostream& operator<<(
+    std::ostream& o,
+    const PageLifecycleStateManager::BackForwardCacheEntered& s) {
+  switch (s) {
+    case PageLifecycleStateManager::BackForwardCacheEntered::kNo:
+      return o << "kNo";
+    case PageLifecycleStateManager::BackForwardCacheEntered::kEntering:
+      return o << "kEntering";
+    case PageLifecycleStateManager::BackForwardCacheEntered::kEntered:
+      return o << "kEntered";
+  }
 }
 
 }  // namespace content

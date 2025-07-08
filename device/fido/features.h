@@ -23,10 +23,12 @@ COMPONENT_EXPORT(DEVICE_FIDO)
 BASE_DECLARE_FEATURE(kWebAuthCableExtensionAnywhere);
 
 #if BUILDFLAG(IS_ANDROID)
+
 // Use the passkey cache service parallel to the FIDO2 module to retrieve
-// passkeys from GMSCore. This is for comparison only.
+// passkeys from GMSCore. This is for migration.
 COMPONENT_EXPORT(DEVICE_FIDO)
-BASE_DECLARE_FEATURE(kWebAuthnAndroidUsePasskeyCache);
+BASE_DECLARE_FEATURE(kWebAuthnAndroidPasskeyCacheMigration);
+
 #endif  // BUILDFLAG(IS_ANDROID)
 
 // These five feature flags control whether iCloud Keychain is the default
@@ -63,11 +65,6 @@ BASE_DECLARE_FEATURE(kWebAuthnEnclaveAuthenticatorDelay);
 // Enable non-autofill sign-in UI for conditional mediation.
 COMPONENT_EXPORT(DEVICE_FIDO)
 BASE_DECLARE_FEATURE(kWebAuthnAmbientSignin);
-
-// Enables linking of hybrid devices to Chrome, both pre-linking (i.e. through
-// Sync) and through hybrid.
-COMPONENT_EXPORT(DEVICE_FIDO)
-BASE_DECLARE_FEATURE(kWebAuthnHybridLinking);
 
 // Enables publishing prelinking information on Android.
 #if BUILDFLAG(IS_ANDROID)
@@ -116,11 +113,6 @@ BASE_DECLARE_FEATURE(kWebAuthnNoAccountTimeout);
 COMPONENT_EXPORT(DEVICE_FIDO)
 BASE_DECLARE_FEATURE(kSyncSecurityDomainBeforePINRenewal);
 
-// Feature flag for the
-// `WebAuthenticationRemoteDesktopAllowedOrigins` enterprise policy.
-COMPONENT_EXPORT(DEVICE_FIDO)
-BASE_DECLARE_FEATURE(kWebAuthnRemoteDesktopAllowedOriginsPolicy);
-
 // Enables using the Microsoft Software Key Storage Provider to store
 // unexportable keys when a TPM is not available.
 COMPONENT_EXPORT(DEVICE_FIDO)
@@ -164,6 +156,14 @@ BASE_DECLARE_FEATURE(kWebAuthnImmediateGetAutoselect);
 COMPONENT_EXPORT(DEVICE_FIDO)
 BASE_DECLARE_FEATURE(kWebAuthnLargeBlobForICloudKeychain);
 #endif  // BUILDFLAG(IS_MAC)
+
+// Enables large blob support for Google Password Manager.
+COMPONENT_EXPORT(DEVICE_FIDO)
+BASE_DECLARE_FEATURE(kWebAuthnLargeBlobForGPM);
+
+// Sends a PIN generation number to the enclave on a PIN wrapping request.
+COMPONENT_EXPORT(DEVICE_FIDO)
+BASE_DECLARE_FEATURE(kWebAuthnSendPinGeneration);
 
 }  // namespace device
 

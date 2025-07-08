@@ -53,7 +53,7 @@ TEST_F(AccessibilityTest, GetClosestElementSearchesAmongAncestors) {
   AXObject* button = GetAXObjectByElementId("button");
   button->LoadInlineTextBoxes();
   // Guaranteed to have no element since this should be the AX node created from
-  // pseudo element content
+  // pseudo-element content
   const AXObject* nodeWithNoElement =
       button->DeepestFirstChildIncludingIgnored()->ParentObject();
   ASSERT_EQ(nullptr, nodeWithNoElement->GetElement());
@@ -1179,8 +1179,8 @@ TEST_F(AccessibilityTest, SlotIsLineBreakingObject) {
   SetBodyContent(body_content);
   ShadowRoot& shadow_root =
       GetElementById("host")->AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow_root.setInnerHTML(String::FromUTF8(shadow_content),
-                           ASSERT_NO_EXCEPTION);
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(String::FromUTF8(shadow_content),
+                                              ASSERT_NO_EXCEPTION);
   UpdateAllLifecyclePhasesForTest();
 
   const AXObject* host = GetAXObjectByElementId("host");
@@ -1970,7 +1970,7 @@ TEST_F(AccessibilityTest, ScrollToMakeScrollerVisible) {
   Element* parent_scroller = GetElementById("parent-scroller");
   Element* scroller = GetElementById("scroller");
   // Scroll to 800px.
-  scroller->scrollTo(800, 0);
+  scroller->scrollToForTesting(800, 0);
   ASSERT_EQ(scroller->scrollLeft(), 800);
 
   // Scrolling to make the scrolling element visible shouldn't scroll

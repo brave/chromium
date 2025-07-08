@@ -7,8 +7,8 @@
 <translation id="1086486568852410168">Pretraži pomoću Google objektiva</translation>
 <translation id="1091252999271033193">To znači da će Chromium svaki put zahtijevati web-lokaciju za mobilne uređaje.</translation>
 <translation id="1115463765356382667">Dovršite predložene radnje u nastavku da biste iskoristili sve prednosti Chromiuma.</translation>
-<translation id="1140315115515116765">Koristite Chromium prema zadanim postavkama kako biste jednostavno dobili uvid u cijene</translation>
 <translation id="1185134272377778587">O pregledniku Chromium</translation>
+<translation id="1229234641991056119">Upotrebljavajte zaporke, povijest, oznake i kreditne kartice iz Safarija u Chromiumu</translation>
 <translation id="1257458525759135959">Da bi se slike spremale, dodirnite Postavke kako biste dopustili Chromiumu da dodaje vašim fotografijama</translation>
 <translation id="1260702988262336471">Otvorite izbornik Chromiuma</translation>
 <translation id="12739128458173458">Da biste poslali ovu karticu na drugi uređaj, prijavite se na Chromium na oba uređaja.</translation>
@@ -121,7 +121,6 @@ Pokušajte pričekati nekoliko minuta prije prebacivanja na drugi račun. Ako sa
 <translation id="3855938650519180865">Novosti u Chromiumu</translation>
 <translation id="3886689467633467988">Prijavite se na ovu web-lokaciju i Chromium kako biste imali pristup svojim oznakama i još toga na svim svojim uređajima.</translation>
 <translation id="3949514465204582407">Savjet za Chromium: dohvatite svoje zaporke u bilo kojoj aplikaciji</translation>
-<translation id="3983291422281996849">Postavite Chromium kao zadani preglednik da biste jednostavno pratili cijene i dobivali uvide u cijene artikala koje želite kupiti.</translation>
 <translation id="4005283307739974863">Otvara i pokreće sigurnosnu provjeru u Chromiumu.</translation>
 <translation id="4043291146360695975">Zaporke se spremaju u Upravitelj zaporki samo na ovom uređaju.</translation>
 <translation id="4066426933127344530">Koristi Chromium prema zadanim postavkama</translation>
@@ -174,8 +173,10 @@ Kako biste promijenili tu postavku, <ph name="BEGIN_LINK" />izbrišite podatke C
 <translation id="5203244847421322551">Spremanje i automatsko popunjavanje zaporki u Chromiumu</translation>
 <translation id="5224391634244552924">Nema nijedne spremljene zaporke. Chromium može provjeriti vaše zaporke kad ih spremite.</translation>
 <translation id="5259423875997548710">Pretraživanje vizualnih elemenata u Chromiumu.</translation>
+<translation id="5284913972719948193">Uvezite podatke da biste upotrebljavali svoje zaporke, povijest, oznake i kreditne kartice u Chromiumu</translation>
 <translation id="5308226104666789935">Chromium ne može provjeriti ima li ažuriranja</translation>
 <translation id="5311557153294205270">Dodaje unesene URL-ove vašim oznakama u Chromiumu.</translation>
+<translation id="5383251701169024761">Da biste lako dohvatili spremljene zaporke u drugim aplikacijama, odaberite Chromium za automatsko popunjavanje.</translation>
 <translation id="538767207339317086">Dopusti prijavu u Chromium</translation>
 <translation id="5389058611415066188">Ostanite sigurni uz Chromium</translation>
 <translation id="5415273218238091735">Savjet za Chromium</translation>
@@ -248,7 +249,6 @@ Važne napomene:
 <translation id="7018284295775193585">Chromium se ne može ažurirati</translation>
 <translation id="7055269218854630176">Vaša organizacija, <ph name="DOMAIN" />, upravlja računom na koji se prijavljujete i načinom na koji se Chromium može upotrebljavati. Vaš administrator može postaviti ili ograničiti određene značajke.</translation>
 <translation id="7099326575020694068">Chromium ne može upotrebljavati vaš fotoaparat u načinu podijeljenog prikaza</translation>
-<translation id="7129379408282555630">Iskoristite prednosti kupnje na Chromiumu</translation>
 <translation id="7165402419892018581">Odabir Chromiuma za automatsko popunjavanje</translation>
 <translation id="7175400662502680481">Vaša je zaporka ugrožena zbog povrede podataka. Upravitelj zaporki preporučuje da je odmah promijenite.</translation>
 <translation id="7185731475720473450">Načini plaćanja i adrese neće se šifrirati. Povijest pregledavanja iz Chromiuma neće se sinkronizirati.
@@ -276,7 +276,6 @@ Vaše šifrirane podatke može pročitati samo osoba koja ima vašu šifru. Šif
 <translation id="7763454117143368771">Koristite Chromium kao zadani preglednik da biste se zaštitili od opasnih web-lokacija i očuvali sigurnost svojih zaporki</translation>
 <translation id="7784950022329154821">Zaključaj anonimne kartice pri zatvaranju Chromiuma</translation>
 <translation id="78025249032851484">Chromium je zastario.</translation>
-<translation id="7811371919871579588">Da biste jednostavno dohvatili spremljene zaporke u drugim aplikacijama, odaberite Chromium za automatsko popunjavanje.</translation>
 <translation id="7859018312476869945">Kad upisujete u adresnu traku ili okvir za pretraživanje, ono što upisujete Chromium šalje vašoj zadanoj tražilici kako bi vam pružio bolje prijedloge. To je isključeno u anonimnom načinu.</translation>
 <translation id="7890287942691234100">Počnite koristiti Chromiumov skener</translation>
 <translation id="7905064834449738336">Kad upotrijebite zaporku, Chromium vas upozorava ako je objavljena online. Tom su prilikom vaše zaporke i korisnička imena šifrirani, tako da ih nitko ne može pročitati, uključujući Google.</translation>
@@ -307,6 +306,7 @@ Vaše šifrirane podatke može pročitati samo osoba koja ima vašu šifru. Šif
 <translation id="865600487977764604">Štiti vas na Chromiumu i može se upotrebljavati za poboljšanje sigurnosti u drugim Googleovim aplikacijama kad ste prijavljeni.</translation>
 <translation id="8663480472502753423">Ažuriranje Chromiuma</translation>
 <translation id="8685813584220679697">Prijavite se na ovu web-lokaciju i Chromium.</translation>
+<translation id="8698780336333802489">Uvezi u Chromium</translation>
 <translation id="8730503818204408000">Otvara postavku Chromiuma da bi se Chromium postavio kao zadani preglednik.</translation>
 <translation id="8754966941001340678">Chromium preporučuje poboljšanu zaštitu</translation>
 <translation id="8759037115129007407">Član obitelji trenutačno ne može primati zaporke. Zamolite člana da ažurira Chromium i sinkronizira svoje zaporke. <ph name="BEGIN_LINK" />Saznajte više<ph name="END_LINK" /></translation>
@@ -331,6 +331,7 @@ Pokušajte pričekati nekoliko minuta prije odjave. Ako se sada odjavite, ovi ć
 <translation id="9050790730841755540">Upotrebljavajte Chromium svaki put kad dodirnete veze u drugim aplikacijama.</translation>
 <translation id="9059693977935746710">Nećete morati pamtiti tu zaporku. Spremit će se u Upravitelj zaporki za <ph name="EMAIL" /></translation>
 <translation id="9089354809943900324">Chromium je zastario</translation>
+<translation id="9105645282262300612">Savjet za Chromium: pretražite ono što vidite</translation>
 <translation id="9152995302810511799">Savjet za Chromium: odaberite najsnažniju Chromiumovu zaštitu</translation>
 <translation id="9177628952266852500"><ph name="EMAIL" />. Chromium je upravljan.</translation>
 <translation id="921174536258924340">Chromium nije uspio provjeriti sve zaporke. Pokušajte ponovno sutra ili <ph name="BEGIN_LINK" />provjerite zaporke na svojem Google računu<ph name="END_LINK" />.</translation>

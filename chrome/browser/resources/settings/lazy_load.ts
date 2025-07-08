@@ -21,6 +21,7 @@ import './clear_browsing_data_dialog/clear_browsing_data_dialog_v2.js';
 import './clear_browsing_data_dialog/clear_browsing_data_time_picker.js';
 import './search_engines_page/search_engines_page.js';
 import './simple_confirmation_dialog.js';
+import './clear_browsing_data_dialog/other_google_data_dialog.js';
 import './privacy_page/anti_abuse_page.js';
 import './privacy_page/privacy_guide/privacy_guide_dialog.js';
 import './privacy_page/privacy_guide/privacy_guide_page.js';
@@ -32,9 +33,6 @@ import './privacy_page/incognito_tracking_protections_page.js';
 import './privacy_sandbox/privacy_sandbox_manage_topics_subpage.js';
 import './privacy_sandbox/privacy_sandbox_topics_subpage.js';
 import './privacy_page/security_keys_subpage.js';
-import './privacy_page/security_keys_phones_subpage.js';
-import './privacy_page/security_keys_phones_list.js';
-import './privacy_page/security_keys_phones_dialog.js';
 import './privacy_page/security_page_v2.js';
 import './privacy_page/security_page.js';
 import './safety_hub/safety_hub_page.js';
@@ -61,27 +59,25 @@ import './site_settings/zoom_levels.js';
 import './a11y_page/live_caption_section.js';
 import './people_page/import_data_dialog.js';
 // </if>
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import './people_page/manage_profile.js';
 // </if>
 import './people_page/signout_dialog.js';
 import './people_page/sync_controls.js';
 import './people_page/sync_page.js';
 // Sections
-import './a11y_page/a11y_page.js';
+import './a11y_page/a11y_page_index.js';
 import './downloads_page/downloads_page.js';
-// <if expr="not chromeos_ash">
-import './languages_page/languages_page.js';
-import './languages_page/spell_check_page.js';
-import './languages_page/translate_page.js';
+// <if expr="is_chromeos">
+import './languages_page/languages_page_index_cros.js';
+// </if>
+// <if expr="not is_chromeos">
+import './languages_page/languages.js';
+import './languages_page/languages_page_index.js';
 // </if>
 import './reset_page/reset_page.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import './system_page/system_page.js';
-// </if>
-
-// <if expr="not chromeos_ash and not is_macosx">
-import './languages_page/edit_dictionary_page.js';
 
 // </if>
 
@@ -106,7 +102,7 @@ export {getToastManager} from 'chrome://resources/cr_elements/cr_toast/cr_toast_
 export {CrTooltipElement} from 'chrome://resources/cr_elements/cr_tooltip/cr_tooltip.js';
 export {IronListElement} from 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 export {AccessibilityBrowserProxy, AccessibilityBrowserProxyImpl} from './a11y_page/a11y_browser_proxy.js';
-export {SettingsA11yPageElement} from './a11y_page/a11y_page.js';
+export {SettingsA11yPageElement, ToastAlertLevel} from './a11y_page/a11y_page.js';
 // <if expr="is_win or is_linux or is_macosx">
 export {SettingsAxAnnotationsSectionElement} from './a11y_page/ax_annotations_section.js';
 // </if>
@@ -151,6 +147,7 @@ export {SettingsClearBrowsingDataDialogElement} from './clear_browsing_data_dial
 export {getDataTypePrefName, SettingsClearBrowsingDataDialogV2Element} from './clear_browsing_data_dialog/clear_browsing_data_dialog_v2.js';
 export {getTimePeriodString, SettingsClearBrowsingDataTimePicker} from './clear_browsing_data_dialog/clear_browsing_data_time_picker.js';
 export {SettingsHistoryDeletionDialogElement} from './clear_browsing_data_dialog/history_deletion_dialog.js';
+export {SettingsOtherGoogleDataDialogElement} from './clear_browsing_data_dialog/other_google_data_dialog.js';
 export {SettingsPasswordsDeletionDialogElement} from './clear_browsing_data_dialog/passwords_deletion_dialog.js';
 export {ControlledButtonElement} from './controls/controlled_button.js';
 export {SettingsCheckboxElement} from './controls/settings_checkbox.js';
@@ -159,8 +156,9 @@ export {SettingsSliderElement} from './controls/settings_slider.js';
 export {SettingsToggleButtonElement} from './controls/settings_toggle_button.js';
 export {DownloadsBrowserProxy, DownloadsBrowserProxyImpl} from './downloads_page/downloads_browser_proxy.js';
 export {SettingsDownloadsPageElement} from './downloads_page/downloads_page.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 export {SettingsAddLanguagesDialogElement} from './languages_page/add_languages_dialog.js';
+export {getLanguageHelperInstance} from './languages_page/languages.js';
 // <if expr="not is_macosx">
 export {SettingsEditDictionaryPageElement} from './languages_page/edit_dictionary_page.js';
 // </if>
@@ -175,7 +173,7 @@ export {SettingsTranslatePageElement} from './languages_page/translate_page.js';
 export {BrowserProfile, ImportDataBrowserProxy, ImportDataBrowserProxyImpl, ImportDataStatus} from './people_page/import_data_browser_proxy.js';
 export {SettingsImportDataDialogElement} from './people_page/import_data_dialog.js';
 // </if>
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 export {SettingsManageProfileElement} from './people_page/manage_profile.js';
 export {ManageProfileBrowserProxy, ManageProfileBrowserProxyImpl, ProfileShortcutStatus} from './people_page/manage_profile_browser_proxy.js';
 // </if>
@@ -204,14 +202,13 @@ export {PrivacyGuideWelcomeFragmentElement} from './privacy_page/privacy_guide/p
 export {SecureDnsResolverType, SettingsSecureDnsElement} from './privacy_page/secure_dns.js';
 export {SecureDnsInputElement} from './privacy_page/secure_dns_input.js';
 export {BioEnrollDialogPage, SettingsSecurityKeysBioEnrollDialogElement} from './privacy_page/security_keys_bio_enroll_dialog.js';
-export {Ctap2Status, SampleStatus, SecurityKeysBioEnrollProxy, SecurityKeysBioEnrollProxyImpl, SecurityKeysCredentialBrowserProxy, SecurityKeysCredentialBrowserProxyImpl, SecurityKeysPhone, SecurityKeysPhonesBrowserProxy, SecurityKeysPhonesBrowserProxyImpl, SecurityKeysPhonesList, SecurityKeysPinBrowserProxy, SecurityKeysPinBrowserProxyImpl, SecurityKeysResetBrowserProxy, SecurityKeysResetBrowserProxyImpl} from './privacy_page/security_keys_browser_proxy.js';
+export {Ctap2Status, SampleStatus, SecurityKeysBioEnrollProxy, SecurityKeysBioEnrollProxyImpl, SecurityKeysCredentialBrowserProxy, SecurityKeysCredentialBrowserProxyImpl, SecurityKeysPinBrowserProxy, SecurityKeysPinBrowserProxyImpl, SecurityKeysResetBrowserProxy, SecurityKeysResetBrowserProxyImpl} from './privacy_page/security_keys_browser_proxy.js';
 export {CredentialManagementDialogPage, SettingsSecurityKeysCredentialManagementDialogElement} from './privacy_page/security_keys_credential_management_dialog.js';
-export {SecurityKeysPhonesSubpageElement} from './privacy_page/security_keys_phones_subpage.js';
 export {ResetDialogPage, SettingsSecurityKeysResetDialogElement} from './privacy_page/security_keys_reset_dialog.js';
 export {SetPinDialogPage, SettingsSecurityKeysSetPinDialogElement} from './privacy_page/security_keys_set_pin_dialog.js';
 export {SecurityKeysSubpageElement} from './privacy_page/security_keys_subpage.js';
 export {HttpsFirstModeSetting, SafeBrowsingSetting, SettingsSecurityPageElement} from './privacy_page/security_page.js';
-export {SettingsSecurityPageV2Element} from './privacy_page/security_page_v2.js';
+export {SecuritySettingsBundleSetting, SettingsSecurityPageV2Element} from './privacy_page/security_page_v2.js';
 export {SettingsPrivacySandboxAdMeasurementSubpageElement} from './privacy_sandbox/privacy_sandbox_ad_measurement_subpage.js';
 export {SettingsPrivacySandboxFledgeSubpageElement} from './privacy_sandbox/privacy_sandbox_fledge_subpage.js';
 export {PrivacySandboxInterestItemElement} from './privacy_sandbox/privacy_sandbox_interest_item.js';
@@ -266,7 +263,7 @@ export {ZoomLevelsElement} from './site_settings/zoom_levels.js';
 export {SettingsRecentSitePermissionsElement} from './site_settings_page/recent_site_permissions.js';
 export {defaultSettingLabel} from './site_settings_page/site_settings_list.js';
 export {SettingsSiteSettingsPageElement} from './site_settings_page/site_settings_page.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 export {SettingsSystemPageElement} from './system_page/system_page.js';
 export {SystemPageBrowserProxy, SystemPageBrowserProxyImpl} from './system_page/system_page_browser_proxy.js';
 

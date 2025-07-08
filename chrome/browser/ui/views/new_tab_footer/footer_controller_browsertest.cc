@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/views/new_tab_footer/footer_controller.h"
+
 #include <memory>
 
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -15,6 +19,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/new_tab_footer/footer_web_view.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -40,6 +45,10 @@ class FooterControllerExtensionTestBase
   void SetUpOnMainThread() override {
     extensions::ExtensionBrowserTest::SetUpOnMainThread();
     profile()->GetPrefs()->SetBoolean(prefs::kNtpFooterVisible, true);
+    browser()
+        ->GetFeatures()
+        .new_tab_footer_controller()
+        ->SkipErrorPageCheckForTesting(true);
   }
 
   scoped_refptr<const extensions::Extension> LoadNtpExtension() {
@@ -73,12 +82,26 @@ class FooterControllerExtensionTestBase
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   }
 
+  void VerifyNoticeMetricsRecorded(int total_count,
+                                   int management_count = 0,
+                                   int extension_count = 0) {
+    const std::string& notice_item = "NewTabPage.Footer.NoticeItem";
+    histogram_tester_.ExpectTotalCount(notice_item, total_count);
+    histogram_tester_.ExpectBucketCount(
+        notice_item, new_tab_footer::FooterNoticeItem::kManagementNotice,
+        management_count);
+    histogram_tester_.ExpectBucketCount(
+        notice_item, new_tab_footer::FooterNoticeItem::kExtensionAttribution,
+        extension_count);
+  }
+
   new_tab_footer::NewTabFooterWebView* footer() {
     return BrowserView::GetBrowserViewForBrowser(browser())
         ->new_tab_footer_web_view();
   }
 
  protected:
+  base::HistogramTester histogram_tester_;
   base::test::ScopedFeatureList feature_list_;
 };
 
@@ -87,8 +110,7 @@ class FooterControllerExtensionTest : public FooterControllerExtensionTestBase {
   FooterControllerExtensionTest() {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{ntp_features::kNtpFooter},
-        /*disabled_features=*/{features::kSideBySide,
-                               features::kEnterpriseBadgingForNtpFooter});
+        /*disabled_features=*/{features::kSideBySide});
   }
   ~FooterControllerExtensionTest() override = default;
 };
@@ -140,6 +162,49 @@ IN_PROC_BROWSER_TEST_F(FooterControllerExtensionTest,
   profile()->GetPrefs()->SetBoolean(
       prefs::kNTPFooterExtensionAttributionEnabled, true);
   EXPECT_TRUE(footer()->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(FooterControllerExtensionTest, MetricsRecorded) {
+  const std::string& visible_on_load = "NewTabPage.Footer.VisibleOnLoad";
+
+  auto extension = LoadNtpExtension();
+  histogram_tester_.ExpectTotalCount(visible_on_load, 0);
+  VerifyNoticeMetricsRecorded(0);
+
+  NavigateCurrentTab(extension->url());
+  histogram_tester_.ExpectTotalCount(visible_on_load, 1);
+  histogram_tester_.ExpectBucketCount(visible_on_load, true, 1);
+  VerifyNoticeMetricsRecorded(/*total_count= */ 1, /*management_count= */ 0,
+                              /*extension_count= */ 1);
+
+  profile()->GetPrefs()->SetBoolean(
+      prefs::kNTPFooterExtensionAttributionEnabled, false);
+  histogram_tester_.ExpectTotalCount(visible_on_load, 1);
+  histogram_tester_.ExpectBucketCount(visible_on_load, true, 1);
+
+  NavigateCurrentTab(extension->url());
+  histogram_tester_.ExpectTotalCount(visible_on_load, 2);
+  histogram_tester_.ExpectBucketCount(visible_on_load, true, 1);
+  histogram_tester_.ExpectBucketCount(visible_on_load, false, 1);
+  VerifyNoticeMetricsRecorded(/*total_count= */ 1, /*management_count= */ 0,
+                              /*extension_count= */ 1);
+}
+
+IN_PROC_BROWSER_TEST_F(FooterControllerExtensionTest, ShownTimeRecorded) {
+  base::HistogramTester histogram_tester_;
+  const std::string& shown_time = "NewTabPage.Footer.ShownTime";
+
+  auto extension = LoadNtpExtension();
+  histogram_tester_.ExpectTotalCount(shown_time, 0);
+
+  base::TimeTicks start = base::TimeTicks::Now();
+  NavigateCurrentTab(extension->url());
+  int max_expected = (base::TimeTicks::Now() - start).InMilliseconds();
+
+  histogram_tester_.ExpectTotalCount(shown_time, 1);
+  int actual = histogram_tester_.GetAllSamples(shown_time)[0].min;
+  EXPECT_GT(actual, 1);
+  EXPECT_LE(actual, max_expected);
 }
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
@@ -219,6 +284,35 @@ IN_PROC_BROWSER_TEST_P(FooterControllerEnterpriseTest, NoticePolicyChanged) {
   local_state()->SetBoolean(prefs::kNTPFooterManagementNoticeEnabled, true);
   EXPECT_EQ(managed(), footer()->GetVisible());
 }
+
+IN_PROC_BROWSER_TEST_P(FooterControllerEnterpriseTest,
+                       NoticeItemMetricsRecorded) {
+  if (!managed()) {
+    GTEST_SKIP() << "This test is relevant only for managed case. Unmanaged "
+                    "case is covered by the extension test.";
+  }
+
+  policy::ScopedManagementServiceOverrideForTesting browser_management(
+      policy::ManagementServiceFactory::GetForProfile(profile()),
+      policy::EnterpriseManagementAuthority::DOMAIN_LOCAL);
+  VerifyNoticeMetricsRecorded(0);
+
+  NavigateCurrentTab(GURL(chrome::kChromeUINewTabURL));
+  ASSERT_EQ(managed(), footer()->GetVisible());
+  VerifyNoticeMetricsRecorded(/*total_count= */ 1, /*management_count= */ 1);
+
+  auto extension = LoadNtpExtension();
+  NavigateCurrentTab(extension->url());
+  VerifyNoticeMetricsRecorded(/*total_count= */ 3, /*management_count= */ 2,
+                              /*extension_count= */ 1);
+
+  local_state()->SetBoolean(prefs::kNTPFooterManagementNoticeEnabled, false);
+  profile()->GetPrefs()->SetBoolean(
+      prefs::kNTPFooterExtensionAttributionEnabled, false);
+  NavigateCurrentTab(extension->url());
+  VerifyNoticeMetricsRecorded(/*total_count= */ 3, /*management_count= */ 2,
+                              /*extension_count= */ 1);
+}
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 // TODO(crbug.com/4438803): Once the controller supports SideBySide enablement,
@@ -229,8 +323,7 @@ class FooterControllerSideBySideTest : public InProcessBrowserTest {
  public:
   FooterControllerSideBySideTest() {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{ntp_features::kNtpFooter, features::kSideBySide,
-                              features::kEnterpriseBadgingForNtpFooter},
+        /*enabled_features=*/{ntp_features::kNtpFooter, features::kSideBySide},
         /*disabled_features=*/{});
   }
   ~FooterControllerSideBySideTest() override = default;

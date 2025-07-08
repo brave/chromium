@@ -17,6 +17,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/timer/timer.h"
@@ -169,10 +170,6 @@ std::string PrintMsgPrintParamsErrorDetails(const mojom::PrintParams& params) {
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
 }  // namespace
-
-BASE_FEATURE(kCheckPrintRfhIsActive,
-             "CheckPrintRfhIsActive",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 PrintViewManagerBase::PrintViewManagerBase(content::WebContents* web_contents)
     : PrintManager(web_contents),
@@ -635,8 +632,7 @@ void PrintViewManagerBase::GetDefaultPrintSettings(
   }
 
   content::RenderFrameHost* render_frame_host = GetCurrentTargetFrame();
-  if (base::FeatureList::IsEnabled(kCheckPrintRfhIsActive) &&
-      !render_frame_host->IsActive()) {
+  if (!render_frame_host->IsActive()) {
     // Only active RFHs should show UI elements.
     GetDefaultPrintSettingsReply(std::move(callback), nullptr);
     return;

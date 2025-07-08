@@ -5,13 +5,18 @@
 #include "components/supervised_user/core/browser/supervised_user_test_environment.h"
 
 #include <memory>
+#include <ostream>
 #include <string_view>
+#include <utility>
 
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_notifier_impl.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_search_api/fake_url_checker_client.h"
 #include "components/supervised_user/core/browser/supervised_user_metrics_service.h"
 #include "components/supervised_user/core/browser/supervised_user_pref_store.h"
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"
+#include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/supervised_user/test_support/supervised_user_url_filter_test_utils.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/model/sync_change_processor.h"
@@ -20,6 +25,11 @@
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 
 namespace supervised_user {
+
+// Defined in supervised_user_constants.h
+void PrintTo(const WebFilterType& web_filter_type, ::std::ostream* os) {
+  *os << WebFilterTypeToDisplayString(web_filter_type);
+}
 
 namespace {
 // Just like SupervisedUserPrefStore. The difference is that
@@ -74,6 +84,16 @@ void SetManualFilter(std::string_view content_pack_setting,
   settings_service.SetLocalSetting(content_pack_setting,
                                    std::move(dict_to_insert));
 }
+
+#if BUILDFLAG(IS_ANDROID)
+std::unique_ptr<ContentFiltersObserverBridge>
+CreateFakeContentFiltersObserverBridge(std::string_view setting_name,
+                                       base::RepeatingClosure on_enabled,
+                                       base::RepeatingClosure on_disabled) {
+  return std::make_unique<FakeContentFiltersObserverBridge>(
+      setting_name, on_enabled, on_disabled);
+}
+#endif
 }  // namespace
 
 SupervisedUserSettingsService* InitializeSettingsServiceForTesting(
@@ -107,10 +127,26 @@ SupervisedUserPrefStoreTestEnvironment::
   RegisterProfilePrefs(syncable_pref_service_->registry());
   SupervisedUserMetricsService::RegisterProfilePrefs(
       syncable_pref_service_->registry());
+
+  // Supervised user infra is not owning these prefs but is using them: enable
+  // conditionally only if not already registered (to avoid double
+  // registration).
+  if (syncable_pref_service_->FindPreference(
+          policy::policy_prefs::kIncognitoModeAvailability) == nullptr) {
+    syncable_pref_service_->registry()->RegisterIntegerPref(
+        policy::policy_prefs::kIncognitoModeAvailability,
+        static_cast<int>(policy::IncognitoModeAvailability::kEnabled));
+  }
+  if (syncable_pref_service_->FindPreference(
+          policy::policy_prefs::kForceGoogleSafeSearch) == nullptr) {
+    syncable_pref_service_->registry()->RegisterBooleanPref(
+        policy::policy_prefs::kForceGoogleSafeSearch, false);
+  }
 }
 
 SupervisedUserPrefStoreTestEnvironment::
     ~SupervisedUserPrefStoreTestEnvironment() = default;
+
 void SupervisedUserPrefStoreTestEnvironment::Shutdown() {
   settings_service_.Shutdown();
 }
@@ -123,7 +159,32 @@ PrefService* SupervisedUserPrefStoreTestEnvironment::pref_service() {
   return syncable_pref_service_.get();
 }
 
-SupervisedUserTestEnvironment::SupervisedUserTestEnvironment() = default;
+SupervisedUserTestEnvironment::SupervisedUserTestEnvironment()
+    : SupervisedUserTestEnvironment(
+          std::make_unique<MetricsServiceAccessorDelegateMock>()) {}
+
+SupervisedUserTestEnvironment::SupervisedUserTestEnvironment(
+    std::unique_ptr<MetricsServiceAccessorDelegateMock>
+        metrics_service_accessor_delegate) {
+  std::unique_ptr<safe_search_api::FakeURLCheckerClient> client =
+      std::make_unique<safe_search_api::FakeURLCheckerClient>();
+  url_checker_client_ = client.get();
+
+  service_ = std::make_unique<TestSupervisedUserService>(
+      identity_test_env_.identity_manager(),
+      test_url_loader_factory_.GetSafeWeakWrapper(),
+      *pref_store_environment_.pref_service(),
+      *pref_store_environment_.settings_service(), &sync_service_,
+      std::make_unique<SupervisedUserURLFilter>(
+          *pref_store_environment_.pref_service(),
+          std::make_unique<FakeURLFilterDelegate>(), std::move(client)),
+      std::make_unique<FakePlatformDelegate>());
+  metrics_service_ = std::make_unique<SupervisedUserMetricsService>(
+      pref_store_environment_.pref_service(), *service_.get(),
+      std::make_unique<SupervisedUserMetricsServiceExtensionDelegateFake>(),
+      std::move(metrics_service_accessor_delegate));
+}
+
 SupervisedUserTestEnvironment::~SupervisedUserTestEnvironment() = default;
 void SupervisedUserTestEnvironment::Shutdown() {
   metrics_service_->Shutdown();
@@ -222,5 +283,90 @@ SupervisedUserTestEnvironment::pref_service_syncable() {
   return static_cast<sync_preferences::TestingPrefServiceSyncable*>(
       pref_service());
 }
+safe_search_api::FakeURLCheckerClient*
+SupervisedUserTestEnvironment::url_checker_client() {
+  return url_checker_client_.get();
+}
+
+#if BUILDFLAG(IS_ANDROID)
+
+base::WeakPtr<FakeContentFiltersObserverBridge>
+SupervisedUserTestEnvironment::browser_content_filters_observer() {
+  return service_->browser_content_filters_observer_weak_ptr();
+}
+base::WeakPtr<FakeContentFiltersObserverBridge>
+SupervisedUserTestEnvironment::search_content_filters_observer() {
+  return service_->search_content_filters_observer_weak_ptr();
+}
+
+FakeContentFiltersObserverBridge::FakeContentFiltersObserverBridge(
+    std::string_view setting_name,
+    base::RepeatingClosure on_enabled,
+    base::RepeatingClosure on_disabled)
+    : ContentFiltersObserverBridge(setting_name, on_enabled, on_disabled) {}
+FakeContentFiltersObserverBridge::~FakeContentFiltersObserverBridge() = default;
+
+void FakeContentFiltersObserverBridge::Init() {
+  // Java class would call "onChange" in the constructor with the initial value.
+  OnChange(/*env=*/nullptr, IsEnabled());
+}
+void FakeContentFiltersObserverBridge::Shutdown() {
+  // Do nothing, specifically do not destroy the java bridge from super.
+}
+
+void FakeContentFiltersObserverBridge::SetEnabled(bool enabled) {
+  ContentFiltersObserverBridge::SetEnabled(enabled);
+  // This is fine: JNIEnv is not used, because OnChange notifies native code.
+  OnChange(/*env=*/nullptr, enabled);
+}
+
+base::WeakPtr<FakeContentFiltersObserverBridge>
+FakeContentFiltersObserverBridge::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+#endif  // BUILDFLAG(IS_ANDROID)
+
+MetricsServiceAccessorDelegateMock::MetricsServiceAccessorDelegateMock() =
+    default;
+MetricsServiceAccessorDelegateMock::~MetricsServiceAccessorDelegateMock() =
+    default;
+
+TestSupervisedUserService::TestSupervisedUserService(
+    signin::IdentityManager* identity_manager,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    PrefService& user_prefs,
+    SupervisedUserSettingsService& settings_service,
+    syncer::SyncService* sync_service,
+    std::unique_ptr<SupervisedUserURLFilter> url_filter,
+    std::unique_ptr<SupervisedUserService::PlatformDelegate> platform_delegate)
+    : SupervisedUserService(
+          identity_manager,
+          url_loader_factory,
+          user_prefs,
+          settings_service,
+          sync_service,
+          std::move(url_filter),
+          std::move(platform_delegate)
+#if BUILDFLAG(IS_ANDROID)
+              ,
+          base::BindRepeating(&CreateFakeContentFiltersObserverBridge)
+#endif
+      ) {
+}
+
+#if BUILDFLAG(IS_ANDROID)
+base::WeakPtr<FakeContentFiltersObserverBridge>
+TestSupervisedUserService::browser_content_filters_observer_weak_ptr() {
+  return static_cast<FakeContentFiltersObserverBridge*>(
+             browser_content_filters_observer())
+      ->GetWeakPtr();
+}
+base::WeakPtr<FakeContentFiltersObserverBridge>
+TestSupervisedUserService::search_content_filters_observer_weak_ptr() {
+  return static_cast<FakeContentFiltersObserverBridge*>(
+             search_content_filters_observer())
+      ->GetWeakPtr();
+}
+#endif  // BUILDFLAG(
 
 }  // namespace supervised_user

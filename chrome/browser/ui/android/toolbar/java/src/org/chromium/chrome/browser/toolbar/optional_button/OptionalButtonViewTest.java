@@ -159,7 +159,7 @@ public class OptionalButtonViewTest {
                 AppCompatResources.getDrawable(mActivity, R.drawable.ic_mic_white_24dp);
         OnClickListener clickListener = mock(OnClickListener.class);
         OnLongClickListener longClickListener = mock(OnLongClickListener.class);
-        String contentDescription = mActivity.getString(R.string.reader_view_text_alt);
+        String contentDescription = mActivity.getString(R.string.show_reading_mode_text);
 
         // Whether a button is static or dynamic is determined by the button variant.
         ButtonSpec buttonSpec =
@@ -915,6 +915,17 @@ public class OptionalButtonViewTest {
 
         // Text bubble is showing.
         assertThat(TextBubble.getTextBubbleSetForTesting().size(), Matchers.greaterThan(0));
+    }
+
+    @Test
+    public void testUpdateButton_canChangeOwnVisibility() {
+        ButtonDataImpl buttonData = getDataForReaderModeActionChip();
+        mOptionalButtonView.setVisibility(View.GONE);
+        mOptionalButtonView.setCanChangeVisibility(false);
+        mOptionalButtonView.updateButtonWithAnimation(buttonData);
+
+        // OptionalButtonView stays invisible after going through the animation.
+        assertEquals(View.GONE, mOptionalButtonView.getVisibility());
     }
 
     @Test

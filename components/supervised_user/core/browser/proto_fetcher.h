@@ -16,7 +16,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string_util.h"
+#include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "base/version_info/channel.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
@@ -28,7 +28,6 @@
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/backoff_entry.h"
-#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
@@ -105,11 +104,11 @@ class FetchProcess {
   // Third phase of fetching: the remote service responded
   void OnSimpleUrlLoaderComplete(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::unique_ptr<std::string> response_body);
+      std::optional<std::string> response_body);
 
   // Final phase of fetching: binary data is collected and ready to be
   // interpreted or error is encountered.
-  virtual void OnResponse(std::unique_ptr<std::string> response_body) = 0;
+  virtual void OnResponse(std::optional<std::string> response_body) = 0;
   virtual void OnError(const ProtoFetcherStatus& status) = 0;
 
   const raw_ref<signin::IdentityManager> identity_manager_;
@@ -169,7 +168,7 @@ class TypedFetchProcess : public FetchProcess {
   ~TypedFetchProcess() override = default;
 
  private:
-  void OnResponse(std::unique_ptr<std::string> response_body) override {
+  void OnResponse(std::optional<std::string> response_body) override {
     CHECK(response_body) << "Use OnError when there is no response.";
     std::unique_ptr<Response> response = std::make_unique<Response>();
     if (!response->ParseFromString(*response_body)) {

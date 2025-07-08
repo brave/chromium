@@ -606,7 +606,6 @@ Otherwise, the built-in touchpad will be re-enabled in <ph name="TIMEOUT_SECONDS
 <translation id="3033545621352269033">On</translation>
 <translation id="3033912566804961911">Combine with <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Open Files</translation>
-<translation id="3038571455154067151">To sign in, enter your Family Link parental access code</translation>
 <translation id="3039939407102840004">Stylus battery at <ph name="PERCENTAGE" /> per cent.</translation>
 <translation id="304097922505898963">Open Key Shortcuts app</translation>
 <translation id="304417730895741346">Your pinned and open apps are on the shelf. To pin an app to the shelf, right-click an app or tap your touchpad with two fingers.</translation>
@@ -1014,6 +1013,7 @@ Some features are limited to increase battery life.</translation>
 <translation id="4305817255990598646">Switch</translation>
 <translation id="4307713728991152670">Set up viewing your phone's recent photos, media and apps</translation>
 <translation id="4312840429157639164">Camera snapped to the top-right corner. Conflict with system surface.</translation>
+<translation id="4312935606722154789">Group or ungroup two side-by-side windows</translation>
 <translation id="4316910396681052118">ALL APPS</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Hide all Chrome browser suggestions</translation>
@@ -1582,7 +1582,6 @@ No devices connected.</translation>
 <translation id="6095425951508823973">Add connection with <ph name="PROVIDER" /></translation>
 <translation id="6099678161144790572">Edited in the past month</translation>
 <translation id="6103838137565245112">system</translation>
-<translation id="610395411842312282">Group two side-by-side windows</translation>
 <translation id="6108952804512516814">Create with AI</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" /> speech files downloaded</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

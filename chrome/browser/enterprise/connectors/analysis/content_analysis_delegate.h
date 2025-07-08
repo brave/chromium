@@ -123,6 +123,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
     // non-clipboard pastes, and clipboard pastes in special cases (ex. OTR).
     ContentMetaData::CopiedTextSource clipboard_source;
 
+    // The email for the content area user of the source of clipboard data.
+    // Only populated for Workspace sites.
+    std::string source_content_area_email;
+
     // The settings to use for the analysis of the data in this struct.
     AnalysisSettings settings;
   };
@@ -230,11 +234,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // in the background.
   //
   // Whether the UI is enabled or not, verdicts of the scan will be reported.
-  static void CreateForWebContents(
-      content::WebContents* web_contents,
-      Data data,
-      CompletionCallback callback,
-      safe_browsing::DeepScanAccessPoint access_point);
+  static void CreateForWebContents(content::WebContents* web_contents,
+                                   Data data,
+                                   CompletionCallback callback,
+                                   DeepScanAccessPoint access_point);
 
   // Helper function for calling CreateForWebContents() when the data to
   // process is a collection of files on disk.  This requires first expanding
@@ -244,11 +247,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   //
   // `data.paths` is expected to contain the files and/or directories to
   // analyze.  `text` and `page` are expected to be null/empty.
-  static void CreateForFilesInWebContents(
-      content::WebContents* web_contents,
-      Data data,
-      ForFilesCompletionCallback callback,
-      safe_browsing::DeepScanAccessPoint access_point);
+  static void CreateForFilesInWebContents(content::WebContents* web_contents,
+                                          Data data,
+                                          ForFilesCompletionCallback callback,
+                                          DeepScanAccessPoint access_point);
 
   // In tests, sets a factory function for creating fake
   // ContentAnalysisDelegates.
@@ -290,7 +292,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   ContentAnalysisDelegate(content::WebContents* web_contents,
                           Data data,
                           CompletionCallback callback,
-                          safe_browsing::DeepScanAccessPoint access_point);
+                          DeepScanAccessPoint access_point);
 
   // Callbacks from uploading data. Protected so they can be called from
   // testing derived classes.
@@ -454,7 +456,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   raw_ptr<ContentAnalysisDialogController> dialog_ = nullptr;
 
   // Access point to use to record UMA metrics.
-  safe_browsing::DeepScanAccessPoint access_point_;
+  DeepScanAccessPoint access_point_;
 
   // Scanning result to be shown to the user once every request is done.
   FinalContentAnalysisResult final_result_ =

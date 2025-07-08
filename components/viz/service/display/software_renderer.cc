@@ -320,7 +320,7 @@ void SoftwareRenderer::DoDrawQuad(const DrawQuad* quad,
 
     SkPoint clip_points[4];
     QuadFToSkPoints(local_draw_region, clip_points);
-    draw_region_clip_path.addPoly(clip_points, 4, true);
+    draw_region_clip_path.addPoly(clip_points, true);
 
     current_canvas_->clipPath(draw_region_clip_path);
   }
@@ -686,10 +686,10 @@ void SoftwareRenderer::CopyDrawnRenderPass(
 
   bitmap.setImmutable();
 
-  // Returning kNativeTextures results is only supported with blit requests, so
+  // Returning kSharedImage results is only supported with blit requests, so
   // we copy to client provided image.
   if (request->result_destination() ==
-          CopyOutputResult::Destination::kNativeTextures &&
+          CopyOutputResult::Destination::kSharedImage &&
       request->has_blit_request()) {
     const auto& blit_request = request->blit_request();
 
@@ -747,11 +747,10 @@ void SoftwareRenderer::CopyDrawnRenderPass(
           SkCanvas::kFast_SrcRectConstraint);
     }
 
-    request->SendResult(std::make_unique<CopyOutputTextureResult>(
+    request->SendResult(std::make_unique<CopyOutputSharedImageResult>(
         CopyOutputResult::Format::RGBA, geometry.result_selection,
-        CopyOutputResult::TextureResult(request->blit_request().mailbox(),
-                                        representation->color_space()),
-        CopyOutputResult::ReleaseCallbacks()));
+        request->blit_request().mailbox(), representation->color_space(),
+        "CopyDrawnRenderPass", CopyOutputResult::ReleaseCallbacks()));
 
     return;
   }

@@ -23,6 +23,7 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -178,7 +179,6 @@
 #include "net/http/http_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "partition_alloc/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/request_destination.h"
@@ -252,10 +252,6 @@
 #include "content/browser/date_time_chooser/date_time_chooser.h"
 #endif
 
-#if BUILDFLAG(ENABLE_PPAPI)
-#include "content/browser/media/session/pepper_playback_observer.h"
-#endif
-
 #if BUILDFLAG(ENABLE_VR)
 #include "content/browser/xr/service/xr_runtime_manager_impl.h"
 #endif
@@ -269,6 +265,10 @@
 #include "content/public/browser/document_picture_in_picture_window_controller.h"
 #include "content/public/browser/picture_in_picture_window_controller.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS)
+#include "content/browser/ios/nfc_host.h"
+#endif
 
 namespace content {
 
@@ -396,7 +396,8 @@ bool AreValidRegisterProtocolHandlerArguments(
     return false;
   }
 
-  blink::URLSyntaxErrorCode code = blink::IsValidCustomHandlerURLSyntax(url);
+  blink::URLSyntaxErrorCode code =
+      blink::IsValidCustomHandlerURLSyntax(url, security_level);
   if (code != blink::URLSyntaxErrorCode::kNoError) {
     return false;
   }
@@ -1397,14 +1398,12 @@ WebContentsImpl::WebContentsImpl(BrowserContext* browser_context)
       is_overlay_content_(false),
       showing_context_menu_(false),
       prerender_host_registry_(std::make_unique<PrerenderHostRegistry>(*this)),
-      compositor_frame_sink_grouping_id_(base::UnguessableToken::Create()) {
+      compositor_frame_sink_grouping_id_(base::UnguessableToken::Create()),
+      fenced_frame_viewport_observer_(
+          std::make_unique<FencedFrameViewportObserver>(this)) {
   TRACE_EVENT0("content", "WebContentsImpl::WebContentsImpl");
   WebContentsOfBrowserContext::Attach(*this);
   node_.SetFocusedFrameTree(&primary_frame_tree_);
-#if BUILDFLAG(ENABLE_PPAPI)
-  pepper_playback_observer_ = std::make_unique<PepperPlaybackObserver>(this);
-#endif
-
 #if BUILDFLAG(IS_ANDROID)
   safe_area_insets_host_ = SafeAreaInsetsHost::Create(this);
 #endif
@@ -1533,12 +1532,6 @@ WebContentsImpl::~WebContentsImpl() {
   // Currently the only instances of the non-primary FrameTrees are for
   // prerendering. Shutdown them by destructing PrerenderHostRegistry.
   prerender_host_registry_.reset();
-
-#if BUILDFLAG(ENABLE_PPAPI)
-  // Call this before WebContentsDestroyed() is broadcasted since
-  // AudioFocusManager will be destroyed after that.
-  pepper_playback_observer_.reset();
-#endif  // defined(ENABLED_PLUGINS)
 
   // If audio is playing then notify external observers of the audio stream
   // disappearing.
@@ -2084,6 +2077,25 @@ RenderWidgetHostView* WebContentsImpl::GetTopLevelRenderWidgetHostView() {
     return GetOuterWebContents()->GetTopLevelRenderWidgetHostView();
   }
   return GetRenderManager()->GetRenderWidgetHostView();
+}
+
+RenderWidgetHost* WebContentsImpl::FindWidgetAtPoint(const gfx::PointF& point) {
+  if (GetOuterWebContents()) {
+    return GetOuterWebContents()->FindWidgetAtPoint(point);
+  }
+  gfx::PointF transformed_point;
+  input::RenderWidgetHostViewInput* rwhvi =
+      GetInputEventRouter()->GetRenderWidgetHostViewInputAtPoint(
+          static_cast<RenderWidgetHostViewBase*>(
+              GetTopLevelRenderWidgetHostView()),
+          point, &transformed_point);
+
+  RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
+      static_cast<RenderWidgetHostViewBase*>(rwhvi)->GetRenderWidgetHost());
+  if (!widget_host) {
+    return nullptr;
+  }
+  return widget_host;
 }
 
 WebContentsView* WebContentsImpl::GetView() const {
@@ -3612,8 +3624,6 @@ const blink::web_pref::WebPreferences WebContentsImpl::ComputeWebPreferences(
                          !command_line.HasSwitch(switches::kDisableWebGL) &&
                          !command_line.HasSwitch(switches::kDisableWebGL2);
 
-  prefs.pepper_3d_enabled = !command_line.HasSwitch(switches::kDisablePepper3d);
-
   prefs.allow_file_access_from_file_urls =
       command_line.HasSwitch(switches::kAllowFileAccessFromFiles);
 
@@ -3771,10 +3781,6 @@ const blink::web_pref::WebPreferences WebContentsImpl::ComputeWebPreferences(
 
 #if BUILDFLAG(IS_ANDROID)
   prefs.device_scale_adjustment = GetDeviceScaleAdjustment(min_width_in_dp);
-
-  if (base::FeatureList::IsEnabled(blink::features::kForceOffTextAutosizing)) {
-    prefs.text_autosizing_enabled = false;
-  }
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // GuestViews in the same StoragePartition need to find each other's frames.
@@ -4948,11 +4954,9 @@ blink::mojom::DisplayMode WebContentsImpl::GetDisplayMode() const {
 void WebContentsImpl::RequestToLockPointer(
     RenderWidgetHostImpl* render_widget_host,
     bool user_gesture,
-    bool last_unlocked_by_target,
-    bool privileged) {
-  OPTIONAL_TRACE_EVENT2("content", "WebContentsImpl::RequestPointerLock",
-                        "render_widget_host", render_widget_host, "privileged",
-                        privileged);
+    bool last_unlocked_by_target) {
+  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::RequestPointerLock",
+                        "render_widget_host", render_widget_host);
   if (render_widget_host->frame_tree()->is_fenced_frame()) {
     // The renderer should have checked and disallowed the request for fenced
     // frames in PointerLockController and dispatched pointerlockerror. Ignore
@@ -4968,14 +4972,6 @@ void WebContentsImpl::RequestToLockPointer(
           blink::mojom::PointerLockResult::kAlreadyLocked);
       return;
     }
-  }
-
-  if (privileged) {
-    DCHECK(!GetOuterWebContents());
-    pointer_lock_widget_ = render_widget_host;
-    render_widget_host->GotResponseToPointerLockRequest(
-        blink::mojom::PointerLockResult::kSuccess);
-    return;
   }
 
   bool widget_in_frame_tree = false;
@@ -5993,9 +5989,9 @@ device::mojom::WakeLockContext* WebContentsImpl::GetWakeLockContext() {
   return wake_lock_context_host_->GetWakeLockContext();
 }
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS))
 void WebContentsImpl::GetNFC(
-    RenderFrameHost* render_frame_host,
+    RenderFrameHostImpl* render_frame_host,
     mojo::PendingReceiver<device::mojom::NFC> receiver) {
   if (!nfc_host_) {
     nfc_host_ = std::make_unique<NFCHost>(this);
@@ -8237,60 +8233,6 @@ void WebContentsImpl::OpenColorChooser(
 }
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 
-#if BUILDFLAG(ENABLE_PPAPI)
-void WebContentsImpl::OnPepperInstanceCreated(RenderFrameHostImpl* source,
-                                              int32_t pp_instance) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperInstanceCreated",
-                        "render_frame_host", source);
-  observers_.NotifyObservers(&WebContentsObserver::PepperInstanceCreated);
-  pepper_playback_observer_->PepperInstanceCreated(source, pp_instance);
-}
-
-void WebContentsImpl::OnPepperInstanceDeleted(RenderFrameHostImpl* source,
-                                              int32_t pp_instance) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperInstanceDeleted",
-                        "render_frame_host", source);
-  observers_.NotifyObservers(&WebContentsObserver::PepperInstanceDeleted);
-  pepper_playback_observer_->PepperInstanceDeleted(source, pp_instance);
-}
-
-void WebContentsImpl::OnPepperPluginHung(RenderFrameHostImpl* source,
-                                         int plugin_child_id,
-                                         const base::FilePath& path,
-                                         bool is_hung) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperPluginHung",
-                        "render_frame_host", source);
-  observers_.NotifyObservers(&WebContentsObserver::PluginHungStatusChanged,
-                             plugin_child_id, path, is_hung);
-}
-
-void WebContentsImpl::OnPepperStartsPlayback(RenderFrameHostImpl* source,
-                                             int32_t pp_instance) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperStartsPlayback",
-                        "render_frame_host", source);
-  pepper_playback_observer_->PepperStartsPlayback(source, pp_instance);
-}
-
-void WebContentsImpl::OnPepperStopsPlayback(RenderFrameHostImpl* source,
-                                            int32_t pp_instance) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperStopsPlayback",
-                        "render_frame_host", source);
-  pepper_playback_observer_->PepperStopsPlayback(source, pp_instance);
-}
-
-void WebContentsImpl::OnPepperPluginCrashed(RenderFrameHostImpl* source,
-                                            const base::FilePath& plugin_path,
-                                            base::ProcessId plugin_pid) {
-  OPTIONAL_TRACE_EVENT1("content", "WebContentsImpl::OnPepperPluginCrashed",
-                        "render_frame_host", source);
-  // TODO(nick): Eliminate the |plugin_pid| parameter, which can't be trusted,
-  // and is only used by WebTestControlHost.
-  observers_.NotifyObservers(&WebContentsObserver::PluginCrashed, plugin_path,
-                             plugin_pid);
-}
-
-#endif  // BUILDFLAG(ENABLE_PPAPI)
-
 void WebContentsImpl::UpdateFaviconURL(
     RenderFrameHostImpl* source,
     const std::vector<blink::mojom::FaviconURLPtr>& candidates) {
@@ -8600,9 +8542,6 @@ void WebContentsImpl::RenderFrameDeleted(
     observers_.NotifyObservers(&WebContentsObserver::RenderFrameDeleted,
                                render_frame_host);
   }
-#if BUILDFLAG(ENABLE_PPAPI)
-  pepper_playback_observer_->RenderFrameDeleted(render_frame_host);
-#endif
 
   if (safe_area_insets_host_) {
     safe_area_insets_host_->RenderFrameDeleted(render_frame_host);
@@ -9501,9 +9440,8 @@ void WebContentsImpl::RecursivelyConstructAXTree(
     std::vector<ui::AXNodeData>& nodes) {
   nodes.push_back(node->data());
 
-  for (auto iter = node->AllChildrenBegin(); iter != node->AllChildrenEnd();
-       ++iter) {
-    RecursivelyConstructAXTree(&(*iter), nodes);
+  for (ui::AXNode* child : node->GetAllChildren()) {
+    RecursivelyConstructAXTree(child, nodes);
   }
 }
 
@@ -10691,8 +10629,6 @@ void WebContentsImpl::UpdateWindowControlsOverlay(
           GetPrimaryMainFrame()->GetRenderWidgetHost()) {
     render_widget_host->SynchronizeVisualProperties();
   }
-
-  view_->UpdateWindowControlsOverlay(bounding_rect);
 }
 
 BrowserPluginEmbedder* WebContentsImpl::GetBrowserPluginEmbedder() const {
@@ -11403,6 +11339,13 @@ void WebContentsImpl::IsClipboardPasteAllowedWrapperCallback(
   --suppress_unresponsive_renderer_count_;
 }
 
+std::optional<std::vector<std::u16string>>
+WebContentsImpl::GetClipboardTypesIfPolicyApplied(
+    const ui::ClipboardSequenceNumberToken& seqno) {
+  return GetContentClient()->browser()->GetClipboardTypesIfPolicyApplied(
+      seqno);
+}
+
 void WebContentsImpl::BindScreenOrientation(
     RenderFrameHost* rfh,
     mojo::PendingAssociatedReceiver<device::mojom::ScreenOrientation>
@@ -11989,9 +11932,11 @@ std::unique_ptr<PrefetchHandle> WebContentsImpl::StartPrefetch(
     const blink::mojom::Referrer& referrer,
     const std::optional<url::Origin>& referring_origin,
     std::optional<net::HttpNoVarySearchData> no_vary_search_hint,
+    std::optional<PrefetchPriority> priority,
     scoped_refptr<PreloadPipelineInfo> preload_pipeline_info,
     base::WeakPtr<PreloadingAttempt> attempt,
-    std::optional<PreloadingHoldbackStatus> holdback_status_override) {
+    std::optional<PreloadingHoldbackStatus> holdback_status_override,
+    std::optional<base::TimeDelta> ttl) {
   if (!base::FeatureList::IsEnabled(
           features::kPrefetchBrowserInitiatedTriggers)) {
     return nullptr;
@@ -12007,9 +11952,9 @@ std::unique_ptr<PrefetchHandle> WebContentsImpl::StartPrefetch(
                              use_prefetch_proxy);
   auto container = std::make_unique<PrefetchContainer>(
       *this, prefetch_url, prefetch_type, embedder_histogram_suffix, referrer,
-      referring_origin, std::move(no_vary_search_hint),
+      referring_origin, std::move(no_vary_search_hint), std::move(priority),
       std::move(preload_pipeline_info), std::move(attempt),
-      holdback_status_override);
+      holdback_status_override, std::move(ttl));
 
   return prefetch_service->AddPrefetchContainerWithHandle(std::move(container));
 }
@@ -12030,7 +11975,8 @@ std::unique_ptr<PrerenderHandle> WebContentsImpl::StartPrerendering(
                                  const std::optional<UrlMatchType>&)>
         url_match_predicate,
     base::RepeatingCallback<void(NavigationHandle&)>
-        prerender_navigation_handle_callback) {
+        prerender_navigation_handle_callback,
+    bool allow_reuse) {
   PrerenderAttributes attributes(
       prerendering_url, trigger_type, embedder_histogram_suffix,
       /*speculation_rules_params=*/std::nullopt, content::Referrer(),
@@ -12040,7 +11986,8 @@ std::unique_ptr<PrerenderHandle> WebContentsImpl::StartPrerendering(
       std::move(url_match_predicate),
       std::move(prerender_navigation_handle_callback),
       base::WrapRefCounted(
-          static_cast<PreloadPipelineInfoImpl*>(preload_pipeline_info.get())));
+          static_cast<PreloadPipelineInfoImpl*>(preload_pipeline_info.get())),
+      allow_reuse);
 #if BUILDFLAG(IS_ANDROID)
   attributes.additional_headers = std::move(additional_headers);
 #else

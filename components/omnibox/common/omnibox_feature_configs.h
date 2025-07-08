@@ -152,6 +152,18 @@ struct ContextualSearch : Config<ContextualSearch> {
   // search matches.
   bool contextual_suggestions_ablate_others_when_present;
 
+  // Whether to restrict the ablation logic, triggered via
+  // `contextual_suggestions_ablate_others_when_present`, such that we only
+  // remove (non-contextual) search suggestions, instead of removing all
+  // (non-contextual) zero suggest matches altogether.
+  bool contextual_suggestions_ablate_search_only;
+
+  // Whether to restrict the ablation logic, triggered via
+  // `contextual_suggestions_ablate_others_when_present`, such that we only
+  // remove URL suggestions, instead of removing all (non-contextual) zero
+  // suggest matches altogether.
+  bool contextual_suggestions_ablate_url_only;
+
   // Whether the starter pack page scope is enabled.
   bool starter_pack_page;
 
@@ -208,6 +220,52 @@ struct MiaZPS : Config<MiaZPS> {
 
   MiaZPS();
   bool enabled;
+  // Whether to use non-normalized text for local history zp suggestions.
+  bool local_history_non_normalized_contents;
+  bool suppress_psuggest_backfill_with_mia;
+};
+
+// A config struct for the omnibox toolbelt.
+struct Toolbelt : Config<Toolbelt> {
+  DECLARE_FEATURE(kOmniboxToolbelt);
+
+  Toolbelt();
+
+  // Whether the toolbelt is to be included in the omnibox.
+  bool enabled;
+
+  // Whether the toolbelt will be preserved after user types (after
+  // input clears the zero suggest).
+  bool keep_toolbelt_after_input;
+
+  // Whether the toolbelt is preserved after entering keyword mode.
+  bool keep_toolbelt_in_keyword_mode;
+
+  // Whether the lens entrypoint action should stay unconditionally on the
+  // toolbelt. When this is false, the regular triggering conditions apply
+  // so the action can sometimes be included or sometimes not.
+  bool always_include_lens_action;
+
+  // Some of the variants we want to experiment with want a subset of actions.
+  // For flexibility, may as well make all the actions finch params.
+
+  // Disabling `show_lens_action` takes precedence over
+  // `always_include_lens_action`.
+  bool show_lens_action_on_non_ntp;
+  bool show_lens_action_on_ntp;
+  bool show_ai_mode_action_on_non_ntp;
+  bool show_ai_mode_action_on_ntp;
+  bool show_history_action_on_non_ntp;
+  bool show_history_action_on_ntp;
+  bool show_bookmarks_action_on_non_ntp;
+  bool show_bookmarks_action_on_ntp;
+  bool show_tabs_action_on_non_ntp;
+  bool show_tabs_action_on_ntp;
+
+  // Whether to rebuild button row views for the toolbelt without checking
+  // the row's action count. This defaults to true and is just a kill switch
+  // in case of an unexpected performance regression (safer to merge).
+  bool rebuild_button_row_views;
 };
 
 // If enabled, adjusts the indentation of the omnibox input and matches to fix
@@ -326,6 +384,7 @@ struct SearchAggregatorProvider : Config<SearchAggregatorProvider> {
   int scoring_score_per_weak_text_match;
   int scoring_max_text_score;
   int scoring_people_score_boost;
+  int scoring_people_email_match_score_boost;
   bool scoring_prefer_contents_over_queries;
   size_t scoring_scoped_max_low_quality_matches;
   size_t scoring_unscoped_max_low_quality_matches;
@@ -367,6 +426,18 @@ struct SuggestionAnswerMigration : Config<SuggestionAnswerMigration> {
   bool enabled;
 };
 
+struct OmniboxZpsSuggestionLimit : Config<OmniboxZpsSuggestionLimit> {
+  DECLARE_FEATURE(kOmniboxZpsSuggestionLimit);
+  OmniboxZpsSuggestionLimit();
+  bool enabled;
+  // Max number of zps suggestions to show.
+  size_t max_suggestions;
+  // Max number of search zps suggestions to show.
+  size_t max_search_suggestions;
+  // Max number of url zps suggestions to show.
+  size_t max_url_suggestions;
+};
+
 // Enables url suggestions when omnibox is focused on Web/SRP.
 struct OmniboxUrlSuggestionsOnFocus : Config<OmniboxUrlSuggestionsOnFocus> {
   DECLARE_FEATURE(kOmniboxUrlSuggestionsOnFocus);
@@ -376,12 +447,6 @@ struct OmniboxUrlSuggestionsOnFocus : Config<OmniboxUrlSuggestionsOnFocus> {
   ~OmniboxUrlSuggestionsOnFocus();
   bool enabled;
   bool show_recently_closed_tabs;
-  // Max number of zps suggestions to show.
-  size_t max_suggestions;
-  // Max number of search zps suggestions to show.
-  size_t max_search_suggestions;
-  // Max number of url zps suggestions to show.
-  size_t max_url_suggestions;
   // Number of days to consider for most visited sites (0-indexed).
   size_t most_visited_recency_window;
   // Recency factor heuristic used to calculate most visited sites.  Must be
@@ -396,6 +461,8 @@ struct OmniboxUrlSuggestionsOnFocus : Config<OmniboxUrlSuggestionsOnFocus> {
   // The debouncing delay (in milliseconds) to use when throttling
   // HistoryService requests.
   int prefetch_most_visited_sites_delay_ms;
+  // Max number of URLs that will be requested from history.
+  size_t max_requested_urls_from_history;
 
   bool MostVisitedPrefetchingEnabled() const;
 };

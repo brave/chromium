@@ -29,6 +29,10 @@ interface SearchBoxProperties {
             new WritableObjectPropertyKey<>();
     WritableObjectPropertyKey<OnClickListener> VOICE_SEARCH_CLICK_CALLBACK =
             new WritableObjectPropertyKey<>();
+
+    WritableBooleanPropertyKey COMPOSEPLATE_BUTTON_VISIBILITY = new WritableBooleanPropertyKey();
+    WritableObjectPropertyKey<OnClickListener> COMPOSEPLATE_BUTTON_CLICK_CALLBACK =
+            new WritableObjectPropertyKey<>();
     WritableBooleanPropertyKey LENS_VISIBILITY = new WritableBooleanPropertyKey();
     WritableObjectPropertyKey<OnClickListener> LENS_CLICK_CALLBACK =
             new WritableObjectPropertyKey<>();
@@ -46,6 +50,8 @@ interface SearchBoxProperties {
     WritableFloatPropertyKey SEARCH_TEXT_TRANSLATION_X = new WritableFloatPropertyKey();
     WritableFloatPropertyKey SEARCH_BOX_TEXT_SIZE = new WritableFloatPropertyKey();
 
+    WritableIntPropertyKey COMPOSEPLATE_BUTTON_ICON_RAW_RES_ID = new WritableIntPropertyKey();
+
     PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
                 ALPHA,
@@ -54,6 +60,8 @@ interface SearchBoxProperties {
                 VOICE_SEARCH_DRAWABLE,
                 VOICE_SEARCH_COLOR_STATE_LIST,
                 VOICE_SEARCH_CLICK_CALLBACK,
+                COMPOSEPLATE_BUTTON_VISIBILITY,
+                COMPOSEPLATE_BUTTON_CLICK_CALLBACK,
                 LENS_VISIBILITY,
                 LENS_CLICK_CALLBACK,
                 SEARCH_TEXT,
@@ -65,6 +73,7 @@ interface SearchBoxProperties {
                 SEARCH_BOX_TOP_MARGIN,
                 SEARCH_BOX_END_PADDING,
                 SEARCH_TEXT_TRANSLATION_X,
-                SEARCH_BOX_TEXT_SIZE
+                SEARCH_BOX_TEXT_SIZE,
+                COMPOSEPLATE_BUTTON_ICON_RAW_RES_ID,
             };
 }

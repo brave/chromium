@@ -16,6 +16,7 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/views/controls/button/md_text_button_with_spinner.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
@@ -102,10 +103,9 @@ void CookieControlsBubbleViewImpl::CloseWidget() {
 }
 
 base::CallbackListSubscription
-CookieControlsBubbleViewImpl::RegisterOnUserTriggeredReloadingActionCallback(
+CookieControlsBubbleViewImpl::RegisterOnUserClosedContentViewCallback(
     base::RepeatingClosureList::CallbackType callback) {
-  return on_user_triggered_reloading_action_callback_list_.Add(
-      std::move(callback));
+  return on_user_closed_content_view_callback_list_.Add(std::move(callback));
 }
 
 gfx::Size CookieControlsBubbleViewImpl::CalculatePreferredSize(
@@ -141,11 +141,12 @@ bool CookieControlsBubbleViewImpl::OnCloseRequested(
 
   // Ignore focus loss while the reloading view is visible. The reloading view
   // will automatically close when the page has loaded.
-  if (GetReloadingView()->GetVisible()) {
+  if (GetReloadingView()->GetVisible() ||
+      GetContentView()->GetTrackingProtectionsButton()->GetSpinnerVisible()) {
     return close_reason != views::Widget::ClosedReason::kLostFocus;
   }
 
-  on_user_triggered_reloading_action_callback_list_.Notify();
+  on_user_closed_content_view_callback_list_.Notify();
   return false;
 }
 

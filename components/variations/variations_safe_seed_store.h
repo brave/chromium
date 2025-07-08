@@ -32,10 +32,9 @@ class VariationsSafeSeedStore {
   // Getter for the milestone that was used for the safe seed.
   virtual int GetMilestone() const = 0;
 
-  // Getter and setter for the last server-provided safe seed date of when the
-  // seed to be used was fetched. (See GetTimeForStudyDateChecks.)
+  // Getter for the last server-provided safe seed date of when the seed to be
+  // used was fetched. (See VariationsSeedStore::GetTimeForStudyDateChecks().)
   virtual base::Time GetTimeForStudyDateChecks() const = 0;
-  virtual void SetTimeForStudyDateChecks(const base::Time& safe_seed_time) = 0;
 
   // Getter and setter for the compressed and base64-encoded safe seed.
   virtual StoredSeed GetCompressedSeed() const = 0;
@@ -46,17 +45,13 @@ class VariationsSafeSeedStore {
   virtual std::string GetLocale() const = 0;
   virtual void SetLocale(const std::string& locale) = 0;
 
-  // Getter and setter for the permanent consistency country associated with the
-  // safe seed in the underlying storage.
+  // Getter for the permanent consistency country associated with the safe seed
+  // in the underlying storage.
   virtual std::string GetPermanentConsistencyCountry() const = 0;
-  virtual void SetPermanentConsistencyCountry(
-      const std::string& permanent_consistency_country) = 0;
 
-  // Getter and setter for the session consistency country associated with the
-  // safe seed in the underlying storage.
+  // Getter for the session consistency country associated with the safe seed in
+  // the underlying storage.
   virtual std::string GetSessionConsistencyCountry() const = 0;
-  virtual void SetSessionConsistencyCountry(
-      const std::string& session_consistency_country) = 0;
 
   // Getter and setter for SeedReaderWriter for testing.
   virtual SeedReaderWriter* GetSeedReaderWriterForTesting() = 0;

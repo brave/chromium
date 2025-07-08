@@ -6,6 +6,7 @@
 #define COMPONENTS_PAGE_LOAD_METRICS_RENDERER_PAGE_TIMING_METRICS_SENDER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/containers/flat_set.h"
 #include "base/containers/small_map.h"
@@ -108,8 +109,7 @@ class PageTimingMetricsSender {
 
   void UpdateResourceMetadata(int resource_id, bool is_main_frame_resource);
 
-  void SetUpUkmReporting(
-      base::ReadOnlySharedMemoryRegion shared_memory_smoothness,
+  void SetUpDroppedFramesReporting(
       base::ReadOnlySharedMemoryRegion shared_memory_dropped_frames);
 
   void InitiateUserInteractionTiming();

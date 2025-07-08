@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_CONTEXTUAL_CUEING_CONTEXTUAL_CUEING_SERVICE_H_
 #define CHROME_BROWSER_CONTEXTUAL_CUEING_CONTEXTUAL_CUEING_SERVICE_H_
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "base/containers/lru_cache.h"
@@ -85,10 +87,12 @@ class ContextualCueingService
   void PrepareToFetchContextualGlicZeroStateSuggestions(
       content::WebContents* web_contents);
 
-  // Returns zero state suggestions for GLIC. Virtual for testing.
-  virtual void GetContextualGlicZeroStateSuggestions(
+  // Returns zero state suggestions for focused tab for GLIC. Virtual for
+  // testing.
+  virtual void GetContextualGlicZeroStateSuggestionsForFocusedTab(
       content::WebContents* web_contents,
       bool is_fre,
+      std::optional<std::vector<std::string>> supported_tools,
       GlicSuggestionsCallback callback);
 
  private:

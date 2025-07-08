@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_view_util.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "services/network/public/mojom/integrity_algorithm.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -105,7 +106,7 @@ class SubresourceIntegrityTest : public testing::Test {
 
   void ExpectAlgorithm(const String& text,
                        IntegrityAlgorithm expected_algorithm) {
-    StringUTF8Adaptor string_data(text);
+    StringUtf8Adaptor string_data(text);
 
     IntegrityAlgorithm algorithm;
     auto result = SubresourceIntegrity::ParseAttributeAlgorithm(
@@ -119,7 +120,7 @@ class SubresourceIntegrityTest : public testing::Test {
   void ExpectAlgorithmFailure(
       const String& text,
       SubresourceIntegrity::AlgorithmParseError expected_error) {
-    StringUTF8Adaptor string_data(text);
+    StringUtf8Adaptor string_data(text);
 
     IntegrityAlgorithm algorithm;
     auto result = SubresourceIntegrity::ParseAttributeAlgorithm(
@@ -129,7 +130,7 @@ class SubresourceIntegrityTest : public testing::Test {
   }
 
   void ExpectDigest(const String& text, const char* expected_digest) {
-    StringUTF8Adaptor string_data(text);
+    StringUtf8Adaptor string_data(text);
 
     String digest;
     EXPECT_TRUE(SubresourceIntegrity::ParseDigest(
@@ -138,7 +139,7 @@ class SubresourceIntegrityTest : public testing::Test {
   }
 
   void ExpectDigestFailure(const String& text) {
-    StringUTF8Adaptor string_data(text);
+    StringUtf8Adaptor string_data(text);
 
     String digest;
     EXPECT_FALSE(SubresourceIntegrity::ParseDigest(

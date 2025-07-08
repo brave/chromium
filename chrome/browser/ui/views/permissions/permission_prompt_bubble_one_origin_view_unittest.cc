@@ -8,6 +8,7 @@
 
 #include "base/containers/to_vector.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.h"
@@ -136,7 +137,7 @@ class TestDelegate : public permissions::PermissionPrompt::Delegate {
 std::unique_ptr<PermissionPromptBubbleOneOriginView> CreateBubble(
     TestDelegate* delegate) {
   return std::make_unique<PermissionPromptBubbleOneOriginView>(
-      nullptr, delegate->GetWeakPtr(), base::TimeTicks::Now(),
+      nullptr, delegate->GetWeakPtr(),
       PermissionPromptStyle::kBubbleOnly);
 }
 
@@ -250,7 +251,7 @@ class PermissionPromptBubbleOneOriginViewTestMediaPreview
                            std::vector<std::string>{kMicId},
                            std::vector<std::string>{kCameraId});
     permission_prompt_ = std::make_unique<PermissionPromptBubbleOneOriginView>(
-        browser(), test_delegate_->GetWeakPtr(), base::TimeTicks::Now(),
+        browser(), test_delegate_->GetWeakPtr(),
         PermissionPromptStyle::kBubbleOnly);
   }
 

@@ -117,8 +117,7 @@ class PermissionPromptBubbleTwoOriginsViewTest : public ChromeViewsTestBase {
   std::unique_ptr<PermissionPromptBubbleBaseView> CreateBubble(
       TestDelegateTwoOrigins* delegate) {
     return std::make_unique<PermissionPromptBubbleTwoOriginsView>(
-        browser(), delegate->GetWeakPtr(), base::TimeTicks::Now(),
-        PermissionPromptStyle::kBubbleOnly);
+        browser(), delegate->GetWeakPtr(), PermissionPromptStyle::kBubbleOnly);
   }
 
  private:
@@ -135,7 +134,7 @@ class PermissionPromptBubbleTwoOriginsViewTest : public ChromeViewsTestBase {
     Browser::CreateParams params(profile_.get(), /*user_gesture=*/true);
     params.type = Browser::TYPE_NORMAL;
     params.window = browser_window_.get();
-    browser_.reset(Browser::Create(params));
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   std::unique_ptr<TestingProfile> profile_;

@@ -364,9 +364,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 - (void)simulateExternalAppURLOpeningWithURL:(NSURL*)url;
 - (void)simulateExternalAppURLOpeningAndWaitUntilOpenedWithGURL:(GURL)url;
 
-// Simulates opening the add account sign-in flow from the web.
-- (void)simulateAddAccountFromWeb;
-
 // Closes the current tab and waits for the UI to complete.
 - (void)closeCurrentTab;
 
@@ -701,6 +698,11 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 // Fails if the execution causes an error.
 - (void)evaluateJavaScriptForSideEffect:(NSString*)javaScript;
 
+// Same as -evaluateJavaScriptForSideEffect but executes the javascript in the
+// isolated world instead of the page content world. This allows interacting
+// with the gcrweb objects that are injected there.
+- (void)evaluateJavaScriptInIsolatedWorldForSideEffect:(NSString*)javaScript;
+
 // Returns the user agent that should be used for the mobile version.
 - (NSString*)mobileUserAgentString;
 
@@ -852,6 +854,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 // Gets the value of a user pref in the original profile.
 - (bool)userBooleanPref:(const std::string&)prefName;
 - (int)userIntegerPref:(const std::string&)prefName;
+- (double)userDoublePref:(const std::string&)prefName;
 - (std::string)userStringPref:(const std::string&)prefName;
 
 // Sets the value of a user pref in the original profile.
@@ -859,6 +862,8 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
            forUserPref:(const std::string&)UTF8PrefName;
 - (void)setBoolValue:(BOOL)value forUserPref:(const std::string&)UTF8PrefName;
 - (void)setIntegerValue:(int)value forUserPref:(const std::string&)UTF8PrefName;
+- (void)setDoubleValue:(double)value
+           forUserPref:(const std::string&)UTF8PrefName;
 
 // Returns true if the LocaState Preference is currently using its default
 // value, and has not been set by any higher-priority source (even with the same

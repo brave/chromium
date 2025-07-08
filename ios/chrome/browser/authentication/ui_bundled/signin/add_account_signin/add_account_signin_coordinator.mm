@@ -110,10 +110,16 @@ using signin_metrics::PromoAction;
       // sign-in.
       break;
     case AddAccountSigninIntent::kPrimaryAccountReauth:
+      // The user wants to reauth their primary account.
+      CHECK(_authenticationService->HasPrimaryIdentity(
+                signin::ConsentLevel::kSignin),
+            base::NotFatalUntil::M143);
+      break;
     case AddAccountSigninIntent::kResignin:
+      // The user wants to add back their primary account.
       CHECK(!_authenticationService->HasPrimaryIdentity(
                 signin::ConsentLevel::kSignin),
-            base::NotFatalUntil::M142);
+            base::NotFatalUntil::M143);
       break;
   }
   _syncService = SyncServiceFactory::GetForProfile(profile);
@@ -144,18 +150,14 @@ using signin_metrics::PromoAction;
 
   [self stopPostSigninManagerCoordinatorAnimated:animated];
   [self interruptAddAccountSigninManager:animated];
+  [self stopAlertCoordinator];
+  [self stopHistorySyncPopupCoordinator];
 
   _accountManagerService = nullptr;
   _identityManager = nullptr;
   _authenticationService = nil;
   _continuationProvider.Reset();
   _syncService = nil;
-  // If one of those 3 DCHECK() fails, -[AddAccountSigninCoordinator
-  // runCompletionWithSigninResult] has not been called.
-  DCHECK(!self.addAccountSigninManager);
-  DCHECK(!self.alertCoordinator);
-  DCHECK(!self.postSigninManagerCoordinator);
-  DCHECK(!self.historySyncPopupCoordinator);
 }
 
 #pragma mark - AddAccountSigninManagerDelegate
@@ -189,8 +191,7 @@ using signin_metrics::PromoAction;
       DCHECK(error);
       __weak AddAccountSigninCoordinator* weakSelf = self;
       ProceduralBlock dismissAction = ^{
-        [weakSelf.alertCoordinator stop];
-        weakSelf.alertCoordinator = nil;
+        [weakSelf stopAlertCoordinator];
         [weakSelf
             addAccountDoneWithSigninResult:SigninCoordinatorResultCanceledByUser
                                   identity:nil];
@@ -231,6 +232,11 @@ using signin_metrics::PromoAction;
 }
 
 #pragma mark - Private
+
+- (void)stopAlertCoordinator {
+  [self.alertCoordinator stop];
+  self.alertCoordinator = nil;
+}
 
 - (void)interruptAddAccountSigninManager:(BOOL)animated {
   [self.addAccountSigninManager interruptAnimated:animated];
@@ -288,8 +294,7 @@ using signin_metrics::PromoAction;
   [self.alertCoordinator
       addItemWithTitle:l10n_util::GetNSString(IDS_OK)
                 action:^{
-                  [weakSelf.alertCoordinator stop];
-                  weakSelf.alertCoordinator = nil;
+                  [weakSelf stopAlertCoordinator];
                   [weakSelf continueAddAccountFlowWithSigninResult:
                                 SigninCoordinatorResultCanceledByUser
                                                           identity:nil];

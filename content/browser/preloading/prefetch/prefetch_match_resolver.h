@@ -47,6 +47,9 @@ class CONTENT_EXPORT PrefetchMatchResolver final
   void OnGotInitialEligibility(PrefetchContainer& prefetch_container,
                                PreloadingEligibility eligibility) override;
   void OnDeterminedHead(PrefetchContainer& prefetch_container) override;
+  void OnPrefetchCompletedOrFailed(
+      const network::URLLoaderCompletionStatus& completion_status,
+      const std::optional<int>& response_code) override;
 
   // Finds prefetch that matches to a navigation and is servable.
   //
@@ -172,7 +175,6 @@ concept MatchCandidate =
       t.ShouldWaitForNoVarySearchHeader(url);
       t.HasPrefetchStatus();
       t.GetPrefetchStatus();
-      t.HasPrefetchBeenConsideredToServe();
       t.IsDecoy();
       t.SetServingPageMetrics(serving_page_metrics_container);
       t.UpdateServingPageMetrics();
@@ -232,13 +234,6 @@ template <class T>
 bool IsCandidateAvailable(const T& candidate,
                           PrefetchContainer::ServableState servable_state,
                           bool is_nav_prerender) {
-  if (candidate.HasPrefetchBeenConsideredToServe()) {
-    DVLOG(1) << "CollectMatchCandidatesGeneric: skipped because already "
-                "considered to serve: candidate = "
-             << candidate;
-    return false;
-  }
-
   switch (servable_state) {
     case PrefetchContainer::ServableState::kNotServable:
       DVLOG(1) << "CollectMatchCandidatesGeneric: skipped because not "

@@ -28,7 +28,7 @@
 #include "base/threading/threading_features.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 
 namespace base {
@@ -218,53 +218,76 @@ BASE_FEATURE(kEnableHangWatcher,
 
 // Browser process.
 // Note: Do not use the prepared macro as of no need for a local cache.
+const char kBrowserProcessIoThreadLogLevelParam[] = "io_thread_log_level";
+const char kBrowserProcessUiThreadLogLevelParam[] = "ui_thread_log_level";
+const char kBrowserProcessThreadPoolLogLevelParam[] = "threadpool_log_level";
 constexpr base::FeatureParam<int> kIOThreadLogLevel{
-    &kEnableHangWatcher, "io_thread_log_level",
+    &kEnableHangWatcher, kBrowserProcessIoThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kUIThreadLogLevel{
-    &kEnableHangWatcher, "ui_thread_log_level",
+    &kEnableHangWatcher, kBrowserProcessUiThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kThreadPoolLogLevel{
-    &kEnableHangWatcher, "threadpool_log_level",
+    &kEnableHangWatcher, kBrowserProcessThreadPoolLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 
 // GPU process.
 // Note: Do not use the prepared macro as of no need for a local cache.
+const char kGpuProcessIoThreadLogLevelParam[] =
+    "gpu_process_io_thread_log_level";
+const char kGpuProcessMainThreadLogLevelParam[] =
+    "gpu_process_main_thread_log_level";
+const char kGpuProcessThreadPoolLogLevelParam[] =
+    "gpu_process_threadpool_log_level";
 constexpr base::FeatureParam<int> kGPUProcessIOThreadLogLevel{
-    &kEnableHangWatcher, "gpu_process_io_thread_log_level",
+    &kEnableHangWatcher, kGpuProcessIoThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kNone)};
 constexpr base::FeatureParam<int> kGPUProcessMainThreadLogLevel{
-    &kEnableHangWatcher, "gpu_process_main_thread_log_level",
+    &kEnableHangWatcher, kGpuProcessMainThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kNone)};
 constexpr base::FeatureParam<int> kGPUProcessThreadPoolLogLevel{
-    &kEnableHangWatcher, "gpu_process_threadpool_log_level",
+    &kEnableHangWatcher, kGpuProcessThreadPoolLogLevelParam,
     static_cast<int>(LoggingLevel::kNone)};
 
 // Renderer process.
 // Note: Do not use the prepared macro as of no need for a local cache.
+const char kRendererProcessIoThreadLogLevelParam[] =
+    "renderer_process_io_thread_log_level";
+const char kRendererProcessMainThreadLogLevelParam[] =
+    "renderer_process_main_thread_log_level";
+const char kRendererProcessThreadPoolLogLevelParam[] =
+    "renderer_process_threadpool_log_level";
+const char kRendererProcessCompositorThreadLogLevelParam[] =
+    "renderer_process_compositor_thread_log_level";
 constexpr base::FeatureParam<int> kRendererProcessIOThreadLogLevel{
-    &kEnableHangWatcher, "renderer_process_io_thread_log_level",
+    &kEnableHangWatcher, kRendererProcessIoThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kRendererProcessMainThreadLogLevel{
-    &kEnableHangWatcher, "renderer_process_main_thread_log_level",
+    &kEnableHangWatcher, kRendererProcessMainThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kRendererProcessThreadPoolLogLevel{
-    &kEnableHangWatcher, "renderer_process_threadpool_log_level",
+    &kEnableHangWatcher, kRendererProcessThreadPoolLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kRendererProcessCompositorThreadLogLevel{
-    &kEnableHangWatcher, "renderer_process_compositor_thread_log_level",
+    &kEnableHangWatcher, kRendererProcessCompositorThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 
 // Utility process.
 // Note: Do not use the prepared macro as of no need for a local cache.
+const char kUtilityProcessIoThreadLogLevelParam[] =
+    "utility_process_io_thread_log_level";
+const char kUtilityProcessMainThreadLogLevelParam[] =
+    "utility_process_main_thread_log_level";
+const char kUtilityProcessThreadPoolLogLevelParam[] =
+    "utility_process_threadpool_log_level";
 constexpr base::FeatureParam<int> kUtilityProcessIOThreadLogLevel{
-    &kEnableHangWatcher, "utility_process_io_thread_log_level",
+    &kEnableHangWatcher, kUtilityProcessIoThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kUtilityProcessMainThreadLogLevel{
-    &kEnableHangWatcher, "utility_process_main_thread_log_level",
+    &kEnableHangWatcher, kUtilityProcessMainThreadLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 constexpr base::FeatureParam<int> kUtilityProcessThreadPoolLogLevel{
-    &kEnableHangWatcher, "utility_process_threadpool_log_level",
+    &kEnableHangWatcher, kUtilityProcessThreadPoolLogLevelParam,
     static_cast<int>(LoggingLevel::kUmaOnly)};
 
 constexpr const char* kThreadName = "HangWatcher";
@@ -626,7 +649,9 @@ HangWatcher::~HangWatcher() {
   DCHECK_EQ(g_instance, this);
   DCHECK(watch_states_.empty());
   g_instance = nullptr;
-  Stop();
+  if (thread_started_) {
+    Stop();
+  }
 }
 
 void HangWatcher::Start() {
@@ -831,7 +856,6 @@ void HangWatcher::WatchStateSnapShot::Init(
         any_hung_thread_has_dumping_enabled = true;
       }
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
       // Emit trace events for monitored threads.
       if (ThreadTypeLoggingLevelGreaterOrEqual(watch_state.get()->thread_type(),
                                                LoggingLevel::kUmaOnly)) {
@@ -842,7 +866,6 @@ void HangWatcher::WatchStateSnapShot::Init(
                           now - monitoring_period);
         TRACE_EVENT_END("latency", track, now);
       }
-#endif
 
       // Attempt to mark the thread as needing to stay within its current
       // WatchHangsInScope until capture is complete.

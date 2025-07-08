@@ -297,9 +297,22 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
         selection_model = original_selection;
       }
     } else {
+      // Any groups where all the tabs are selected should get dragged.
+      std::map<tab_groups::TabGroupId, TabGroupHeader*> fully_selected_groups =
+          GetFullySelectedTabGroups();
+
+      // TODO(crbug.com/425933884): Look into using just the selected tabs.
       for (int i = 0; i < GetTabCount(); ++i) {
         Tab* other_tab = GetTabAt(i);
         if (tab_strip_->IsTabSelected(other_tab)) {
+          if (other_tab->group().has_value()) {
+            const tab_groups::TabGroupId group = other_tab->group().value();
+            if (fully_selected_groups.contains(group)) {
+              dragging_views.push_back(fully_selected_groups[group]);
+              fully_selected_groups.erase(group);
+            }
+          }
+
           dragging_views.push_back(other_tab);
           if (other_tab == source) {
             x += GetSizeNeededForViews(dragging_views) - other_tab->width();
@@ -571,9 +584,11 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
     // Reset the layout size as we've effectively laid out a different size.
     // This ensures a layout happens after the drag is done.
     tab_strip_->tab_container_->InvalidateIdealBounds();
-    if (views.at(0)->group().has_value()) {
-      tab_strip_->tab_container_->UpdateTabGroupVisuals(
-          views.at(0)->group().value());
+    for (auto* view : views) {
+      if (view->group().has_value()) {
+        tab_strip_->tab_container_->UpdateTabGroupVisuals(
+            view->group().value());
+      }
     }
   }
 
@@ -673,7 +688,7 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
     int source_view_index =
         static_cast<int>(std::ranges::find(views, source_view) - views.begin());
 
-    const auto should_animate_tab = [&](size_t index_in_views) {
+    const auto should_animate_tab = [&](size_t index_in_views) -> bool {
       // If the tab at `index_in_views` is already animating, don't interrupt
       // it.
       if (bounds_animator_.IsAnimating(views[index_in_views])) {
@@ -684,6 +699,14 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
       // so the tabs are guaranteed to be consecutive already.
       if (!source_view_model_index.has_value()) {
         return false;
+      }
+
+      // If the source of the drag is not a group header but a header is present
+      // in the dragging views, this result will be same as for the first tab in
+      // the group.
+      if (views[index_in_views]->GetTabSlotViewType() ==
+          TabSlotView::ViewType::kTabGroupHeader) {
+        index_in_views += 1;
       }
 
       // If the tab isn't at the right model index relative to `source_view`,
@@ -720,6 +743,30 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
         tab_strip_->tab_container_->UpdateTabGroupVisuals(
             view->group().value());
         updated_groups.insert(view->group().value());
+      }
+    }
+
+    // When multiple tabs are dragged out of a tab group at the right edge of
+    // the browser, some visual artifacts appear. Because the preferred size
+    // isn't changing and tab indices aren't changed, tabs aren't painted by
+    // default. When the dragged tabs aren't in a group, they are immediately
+    // to the right of a group, and they are the last tabs in the tab strip:
+    // ensure the tabs get repainted.
+    // TODO(crbug.com/423965262): Investigate if we can listen to `TabStrip`
+    // model changed events to call `SchedulePaint`.
+    const std::optional<int> leftmost_tab_in_drag = GetIndexOf(views[0]);
+    const std::optional<int> rightmost_tab_in_drag =
+        GetIndexOf(views[views.size() - 1]);
+    if (leftmost_tab_in_drag.has_value() && rightmost_tab_in_drag.has_value() &&
+        tab_strip_->IsValidModelIndex(leftmost_tab_in_drag.value() - 1)) {
+      TabSlotView* left_of_dragged_tabs =
+          tab_strip_->tab_at(leftmost_tab_in_drag.value() - 1);
+      if (updated_groups.empty() && left_of_dragged_tabs->group().has_value() &&
+          rightmost_tab_in_drag.value() == tab_strip_->GetTabCount() - 1) {
+        // Schedule paint for the dragged tabs.
+        for (TabSlotView* view : views) {
+          view->SchedulePaint();
+        }
       }
     }
   }
@@ -800,6 +847,26 @@ class TabStrip::TabDragContextImpl : public TabDragContext,
     const raw_ref<TabContainer> tab_container_;
     const raw_ref<TabSlotView, DanglingUntriaged> slot_view_;
   };
+
+  // Returns a map of all the tabgroups and the headers that are fully selected
+  // for drag.
+  std::map<tab_groups::TabGroupId, TabGroupHeader*>
+  GetFullySelectedTabGroups() {
+    std::map<tab_groups::TabGroupId, TabGroupHeader*> fully_selected_groups =
+        tab_strip_->GetGroupHeaders();
+    std::erase_if(fully_selected_groups, [this](const auto& entry) {
+      const gfx::Range tabs_in_group = tab_strip_->ListTabsInGroup(entry.first);
+      for (size_t index = tabs_in_group.start(); index < tabs_in_group.end();
+           index++) {
+        if (!GetTabAt(index)->IsSelected()) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    return fully_selected_groups;
+  }
 
   // Determines the index to move the dragged tabs to. The dragged tabs must
   // already be in the tabstrip. `dragged_bounds` is the union of the bounds
@@ -2181,6 +2248,10 @@ void TabStrip::Init() {
             tab_strip->tab_drag_count_5min_ = 0;
           },
           base::Unretained(this)));
+}
+
+std::map<tab_groups::TabGroupId, TabGroupHeader*> TabStrip::GetGroupHeaders() {
+  return tab_container_->GetGroupHeaders();
 }
 
 void TabStrip::NewTabButtonPressed(const ui::Event& event) {

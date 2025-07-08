@@ -7,6 +7,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/extensions/smart_card_provider_private/smart_card_provider_private_api.h"
@@ -26,6 +27,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features_generated.h"
 
 namespace scard_api = extensions::api::smart_card_provider_private;
 
@@ -318,6 +320,7 @@ class SmartCardProviderPrivateApiTest : public ExtensionApiTest {
 
  private:
   raw_ptr<const Extension, DanglingUntriaged> extension_;
+  base::test::ScopedFeatureList feature_list_{blink::features::kSmartCard};
 };
 
 class EventObserver : public EventRouter::TestObserver {
@@ -956,20 +959,22 @@ IN_PROC_BROWSER_TEST_F(SmartCardProviderPrivateApiTest,
       CreateConnection(*context.get());
   ASSERT_TRUE(connection.is_bound());
 
+  EventObserver event_observer;
+  EventRouter* event_router =
+      EventRouterFactory::GetForBrowserContext(profile());
+  event_router->AddObserverForTesting(&event_observer);
+
   base::test::TestFuture<SmartCardResultPtr> disconnect_result_future;
   connection->Disconnect(SmartCardDisposition::kLeave,
                          disconnect_result_future.GetCallback());
 
+  event_observer.WaitForEventCount(scard_api::OnDisconnectRequested::kEventName,
+                                   1u);
   ASSERT_TRUE(disconnect_result_future.Take()->is_success());
 
   DisconnectObserver disconnect_observer;
   ProviderAPI().SetDisconnectObserverForTesting(
       disconnect_observer.GetClosure());
-
-  EventObserver event_observer;
-  EventRouter* event_router =
-      EventRouterFactory::GetForBrowserContext(profile());
-  event_router->AddObserverForTesting(&event_observer);
 
   // Mojo disconnection from the remote endpoint should not cause
   // SmartCardProviderPrivateAPI to dispatch a
@@ -979,7 +984,9 @@ IN_PROC_BROWSER_TEST_F(SmartCardProviderPrivateApiTest,
   disconnect_observer.Wait();
   EXPECT_EQ(event_observer.GetEventCount(
                 scard_api::OnDisconnectRequested::kEventName),
-            0u);
+            1u);
+
+  event_router->RemoveObserverForTesting(&event_observer);
 }
 
 IN_PROC_BROWSER_TEST_F(SmartCardProviderPrivateApiTest, Cancel) {

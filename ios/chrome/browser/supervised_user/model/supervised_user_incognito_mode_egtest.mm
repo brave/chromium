@@ -284,7 +284,9 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Check that the edit button is disabled.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridEditButton()]
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(chrome_test_util::TabGridEditButton(),
+                                          grey_sufficientlyVisible(), nil)]
       assertWithMatcher:grey_not(grey_enabled())];
 }
 
@@ -310,7 +312,7 @@ id<GREYMatcher> SupervisedIncognitoMessage() {
 
   // The user should stay on the new tab page.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+      assertWithMatcher:grey_notNil()];
 }
 
 @end

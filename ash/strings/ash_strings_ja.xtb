@@ -300,7 +300,7 @@
 <translation id="1957958912175573503">言語を設定</translation>
 <translation id="1961239773406905488">カメラ プレビューが非表示になっています</translation>
 <translation id="1961832440516943645"><ph name="DATE" />、<ph name="TIME" /></translation>
-<translation id="1962969542251276847">画面をロック</translation>
+<translation id="1962969542251276847">ロック画面</translation>
 <translation id="1967970931040389207">アクセス ポイントをオンにする</translation>
 <translation id="1969011864782743497"><ph name="DEVICE_NAME" />（USB）</translation>
 <translation id="1971815855639997522">デスクとウィンドウが削除されました。操作を元に戻すには、Ctrl+Z キーを押します。</translation>
@@ -434,7 +434,7 @@
 <translation id="2455994958736234930">アドレスバーに「www.」と「.com」を追加してからウェブサイトを開く</translation>
 <translation id="2456008742792828469">カレンダー、<ph name="CURRENT_MONTH_YEAR" /></translation>
 <translation id="246052086404491029">ドリルダウン</translation>
-<translation id="2465145153332031561">バッテリーの状態 <ph name="BATTERY_HEALTH_PERCENTAGE" />%、サイクル数 <ph name="CYCLE_COUNT" /></translation>
+<translation id="2465145153332031561">バッテリー ヘルス <ph name="BATTERY_HEALTH_PERCENTAGE" />%、サイクル数 <ph name="CYCLE_COUNT" /></translation>
 <translation id="2473177541599297363">解像度の確定</translation>
 <translation id="2475783092753560388"><ph name="SEARCH_RESULT_TEXT" /> を挿入</translation>
 <translation id="2475982808118771221">エラーが発生しました</translation>
@@ -606,7 +606,6 @@
 <translation id="3033545621352269033">オン</translation>
 <translation id="3033912566804961911"><ph name="DESK_NAME" /> に移動</translation>
 <translation id="3036649622769666520">ファイルを開く</translation>
-<translation id="3038571455154067151">ログインするには、ファミリー リンクの保護者のアクセスコードを入力してください</translation>
 <translation id="3039939407102840004">タッチペンのバッテリー残量は <ph name="PERCENTAGE" />% です。</translation>
 <translation id="304097922505898963">キー ショートカット アプリを開く</translation>
 <translation id="304417730895741346">シェルフには、固定したアプリまたは開いているアプリが表示されます。アプリをシェルフに固定するには、アプリを右クリックするか、2 本の指でタッチパッドをタップします。</translation>
@@ -1014,6 +1013,7 @@
 <translation id="4305817255990598646">切り替え</translation>
 <translation id="4307713728991152670">スマートフォンの最近の写真、メディア、アプリの表示を設定</translation>
 <translation id="4312840429157639164">カメラは右上にスナップされています。システムのサーフェスと競合しています。</translation>
+<translation id="4312935606722154789">横に並んだ 2 つのウィンドウをグループ化またはグループ化を解除する</translation>
 <translation id="4316910396681052118">すべてのアプリ</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Chrome ブラウザの提案をすべて非表示にする</translation>
@@ -1282,7 +1282,7 @@
 <translation id="5147567197700016471">ロック解除済み</translation>
 <translation id="5150070631291639005">プライバシー設定</translation>
 <translation id="5155897006997040331">読み上げ速度</translation>
-<translation id="5163434717504750796">バッテリーの状態 <ph name="BATTERY_HEALTH_PERCENTAGE" />% | サイクル数 <ph name="CYCLE_COUNT" /></translation>
+<translation id="5163434717504750796">バッテリー ヘルス <ph name="BATTERY_HEALTH_PERCENTAGE" />% | サイクル数 <ph name="CYCLE_COUNT" /></translation>
 <translation id="5166007464919321363">デスクをテンプレートとして保存</translation>
 <translation id="5168181903108465623">キャスト デバイスを利用できます</translation>
 <translation id="5168753792967365150">Google ToDo リストで編集</translation>
@@ -1546,7 +1546,7 @@
 <translation id="6002122790816966947">他のデバイス</translation>
 <translation id="6012623610530968780"><ph name="SELECTED_PAGE" /> / <ph name="TOTAL_PAGE_NUM" /> ページ</translation>
 <translation id="601304062528754300">シェルフで次のアイテムをハイライト表示します</translation>
-<translation id="6015573907265691211">完了とする</translation>
+<translation id="6015573907265691211">タスクを完了</translation>
 <translation id="6018164090099858612">ミラーモードを終了しています</translation>
 <translation id="6019566113895157499">キー ショートカット</translation>
 <translation id="602001110135236999">左にスクロール</translation>
@@ -1582,7 +1582,6 @@
 <translation id="6095425951508823973"><ph name="PROVIDER" /> との接続を追加</translation>
 <translation id="6099678161144790572">過去 1 か月以内に編集したファイル</translation>
 <translation id="6103838137565245112">システム</translation>
-<translation id="610395411842312282">横に並んだ 2 つのウィンドウをグループ化する</translation>
 <translation id="6108952804512516814">AI を使用して作成</translation>
 <translation id="6114505516289286752"><ph name="LANGUAGE" />の音声ファイルをダウンロードしました</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />。<ph name="BATTERY_SAVER_STATE" /></translation>

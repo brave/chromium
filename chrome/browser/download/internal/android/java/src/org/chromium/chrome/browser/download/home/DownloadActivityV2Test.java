@@ -22,6 +22,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.AllOf.allOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
@@ -32,6 +33,7 @@ import android.util.Pair;
 import android.view.View;
 
 import androidx.recyclerview.widget.RecyclerView.ViewHolder;
+import androidx.test.espresso.Espresso;
 import androidx.test.espresso.action.ViewActions;
 import androidx.test.espresso.contrib.RecyclerViewActions;
 import androidx.test.espresso.matcher.BoundedMatcher;
@@ -47,6 +49,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
@@ -68,9 +71,10 @@ import org.chromium.chrome.browser.download.home.rename.RenameUtils;
 import org.chromium.chrome.browser.download.home.toolbar.DownloadHomeToolbar;
 import org.chromium.chrome.browser.download.internal.R;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
+import org.chromium.components.browser_ui.modaldialog.ModalDialogView;
 import org.chromium.components.browser_ui.util.date.StringUtils;
 import org.chromium.components.download.DownloadDangerType;
 import org.chromium.components.embedder_support.util.UrlConstants;
@@ -109,10 +113,11 @@ public class DownloadActivityV2Test {
     @Mock private Tracker mTracker;
     @Mock private SnackbarManager mSnackbarManager;
     @Mock private UrlFormatter.Natives mUrlFormatterJniMock;
+    @Mock private DownloadHelpPageLauncher mHelpPageLauncher;
 
     @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mOverrideContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
 
     private ModalDialogManager.Presenter mAppModalPresenter;
 
@@ -130,7 +135,7 @@ public class DownloadActivityV2Test {
      * @param text The text that the view holder has in its view hierarchy.
      */
     private static Matcher<ViewHolder> hasTextInViewHolder(String text) {
-        return new BoundedMatcher<ViewHolder, ListItemViewHolder>(ListItemViewHolder.class) {
+        return new BoundedMatcher<>(ListItemViewHolder.class) {
             @Override
             public void describeTo(Description description) {
                 description.appendText("has text: " + text);
@@ -153,6 +158,8 @@ public class DownloadActivityV2Test {
 
     @Before
     public void setUp() throws Exception {
+        ModalDialogView.disableButtonTapProtectionForTesting();
+
         UrlFormatterJni.setInstanceForTesting(mUrlFormatterJniMock);
         when(mUrlFormatterJniMock.formatUrlForSecurityDisplay(
                         any(), eq(SchemeDisplay.OMIT_HTTP_AND_HTTPS)))
@@ -189,15 +196,16 @@ public class DownloadActivityV2Test {
     }
 
     private void setUpUi() {
-        setUpUi(false);
+        setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ false);
     }
 
-    private void setUpUi(boolean showDangerousItems) {
+    private void setUpUi(boolean showDangerousItems, boolean autoFocusSearchBox) {
         DownloadManagerUiConfig config =
-                DownloadManagerUiConfigHelper.fromFlags()
+                DownloadManagerUiConfigHelper.fromFlags(sActivity)
                         .setOtrProfileId(null)
                         .setIsSeparateActivity(true)
                         .setShowDangerousItems(showDangerousItems)
+                        .setAutoFocusSearchBox(autoFocusSearchBox)
                         .build();
 
         mAppModalPresenter = new AppModalPresenter(sActivity);
@@ -226,6 +234,7 @@ public class DownloadActivityV2Test {
                         settingsNavigation,
                         mSnackbarManager,
                         mModalDialogManager,
+                        mHelpPageLauncher,
                         mTracker,
                         faviconProvider,
                         mStubbedOfflineContentProvider,
@@ -237,6 +246,28 @@ public class DownloadActivityV2Test {
                 mDownloadCoordinator.getBackPressHandlers());
 
         mDownloadCoordinator.updateForUrl(UrlConstants.DOWNLOADS_URL);
+    }
+
+    // Adds a dangerous item in Download Home. Returns ID of the item.
+    private ContentId setUpDangerousItem() {
+        OfflineItem dangerousItem =
+                StubbedProvider.createOfflineItem(
+                        "offline_guid_5",
+                        JUnitTestGURLs.URL_2,
+                        OfflineItemState.COMPLETE,
+                        1024,
+                        "dangerous",
+                        "/data/fake_path/Downloads/file_5",
+                        System.currentTimeMillis(),
+                        100000,
+                        OfflineItemFilter.OTHER);
+        dangerousItem.dangerType = DownloadDangerType.DANGEROUS_CONTENT;
+        dangerousItem.isDangerous = true;
+        dangerousItem.canRename = false;
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mStubbedOfflineContentProvider.addItem(dangerousItem));
+        return dangerousItem.id;
     }
 
     @Test
@@ -391,7 +422,7 @@ public class DownloadActivityV2Test {
     public void testAddRemoveDangerousItem() throws Exception {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    setUpUi(/*showDangerousItems*/ true);
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
                 });
 
         String storageHeaderText = "Using 1.10 KB of";
@@ -399,23 +430,7 @@ public class DownloadActivityV2Test {
 
         // Add a dangerous item. The new item should be visible and the storage text should not
         // include the size of the dangerous item.
-        OfflineItem dangerousItem =
-                StubbedProvider.createOfflineItem(
-                        "offline_guid_5",
-                        JUnitTestGURLs.URL_2,
-                        OfflineItemState.COMPLETE,
-                        1024,
-                        "dangerous",
-                        "/data/fake_path/Downloads/file_5",
-                        System.currentTimeMillis(),
-                        100000,
-                        OfflineItemFilter.OTHER);
-        dangerousItem.dangerType = DownloadDangerType.DANGEROUS_CONTENT;
-        dangerousItem.isDangerous = true;
-        dangerousItem.canRename = false;
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> mStubbedOfflineContentProvider.addItem(dangerousItem));
+        ContentId dangerousItemId = setUpDangerousItem();
         onView(withText("dangerous")).check(matches(isDisplayed()));
         onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
         onView(withText(containsString("Dangerous download blocked")))
@@ -426,15 +441,14 @@ public class DownloadActivityV2Test {
                 .check(matches(isDisplayed()))
                 .perform(ViewActions.click());
 
-        // TODO(crbug.com/397407934): Menu options should reflect the actions available for a
-        // dangerous download ("Delete from history" and "Download").
-        onView(withText("Delete")).check(matches(isDisplayed()));
+        onView(withText("Delete from history")).check(matches(isDisplayed()));
+        onView(withText("Download")).check(matches(isDisplayed()));
         onView(withText("Rename")).check(doesNotExist());
         onView(withText("Share")).check(doesNotExist());
 
         // Delete the item. The item should be gone and the storage text should be unchanged.
         ThreadUtils.runOnUiThreadBlocking(
-                () -> mStubbedOfflineContentProvider.removeItem(dangerousItem.id));
+                () -> mStubbedOfflineContentProvider.removeItem(dangerousItemId));
         onView(withText("dangerous")).check(doesNotExist());
         onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
         onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
@@ -445,7 +459,7 @@ public class DownloadActivityV2Test {
     public void testDangerousItemNotShownDueToConfig() throws Exception {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    setUpUi(/*showDangerousItems*/ false);
+                    setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ false);
                 });
 
         String storageHeaderText = "Using 1.10 KB of";
@@ -453,33 +467,139 @@ public class DownloadActivityV2Test {
 
         // Attempt to add a dangerous item. The new item should not be visible because the config
         // does not specify showDangerousItems.
-        OfflineItem dangerousItem =
-                StubbedProvider.createOfflineItem(
-                        "offline_guid_5",
-                        JUnitTestGURLs.URL_2,
-                        OfflineItemState.COMPLETE,
-                        1024,
-                        "dangerous",
-                        "/data/fake_path/Downloads/file_5",
-                        System.currentTimeMillis(),
-                        100000,
-                        OfflineItemFilter.OTHER);
-        dangerousItem.dangerType = DownloadDangerType.DANGEROUS_CONTENT;
-        dangerousItem.isDangerous = true;
-        dangerousItem.canRename = false;
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> mStubbedOfflineContentProvider.addItem(dangerousItem));
+        ContentId dangerousItemId = setUpDangerousItem();
         onView(withText("dangerous")).check(doesNotExist());
         onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
         onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
 
         // Delete the item. Nothing should change because it was never displayed.
         ThreadUtils.runOnUiThreadBlocking(
-                () -> mStubbedOfflineContentProvider.removeItem(dangerousItem.id));
+                () -> mStubbedOfflineContentProvider.removeItem(dangerousItemId));
         onView(withText("dangerous")).check(doesNotExist());
         onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
         onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/427410747")
+    public void testDeleteDangerousUsingMenu() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+
+        // Delete a dangerous item using three dot menu. The item should be removed from the list.
+        onView(allOf(withId(R.id.more), hasSibling(withText("dangerous"))))
+                .perform(ViewActions.click());
+        onView(withText("Delete from history"))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText("dangerous")).check(doesNotExist());
+                });
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/427410747")
+    public void testDeleteDangerousUsingSelection() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        // Long-press the dangerous item to select it.
+        onView(withText("dangerous"))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.longClick());
+
+        // Delete using the icon on the toolbar.
+        PostTask.runOrPostTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    DownloadHomeToolbar toolbar = sActivity.findViewById(R.id.download_toolbar);
+                    toolbar.getMenu()
+                            .performIdentifierAction(R.id.selection_mode_delete_menu_id, 0);
+                });
+
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText("dangerous")).check(doesNotExist());
+                });
+    }
+
+    @Test
+    @MediumTest
+    public void testBypassDangerousWarning() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        String storageHeaderText = "Using 1.10 KB of";
+        onView(withText(containsString(storageHeaderText))).check(matches(isDisplayed()));
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        // Open bypass dialog by clicking on the item.
+        onView(withText(containsString("Dangerous download blocked")))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Click the bypass button.
+        onView(allOf(withId(R.id.negative_button), withText("Download anyway")))
+                .inRoot(isDialog())
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Wait for the download to be validated.
+        mStubbedOfflineContentProvider.getValidateDangerousDownloadHelper().waitForOnly();
+
+        // The UI has updated that the download is no longer dangerous, and now counts towards the
+        // storage total.
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText(containsString("Dangerous download blocked")))
+                            .check(doesNotExist());
+                });
+        onView(withText(containsString("Using 2.10 KB of"))).check(matches(isDisplayed()));
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/423066352")
+    public void testWarningBypassDialogLearnMore() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+        // Open bypass dialog by clicking on the item.
+        onView(withText(containsString("Dangerous download blocked")))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Click the Learn more button.
+        onView(allOf(withId(R.id.positive_button), withText("Learn more")))
+                .inRoot(isDialog())
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        Mockito.verify(mHelpPageLauncher).openUrl(eq(sActivity), anyString());
     }
 
     @Test
@@ -744,6 +864,26 @@ public class DownloadActivityV2Test {
                 () -> {
                     onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
                 });
+    }
+
+    @Test
+    @MediumTest
+    public void testDownloadsFocus() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ true);
+                });
+
+        onView(withText("Download")).check(doesNotExist());
+        // Check the search field is displayed
+        onView(withId(R.id.search_text)).check(matches(isDisplayed()));
+        // Check we can type in search query
+        onView(withId(R.id.search_text)).perform(ViewActions.typeText("Google"));
+        // Close keyboard first then press back to Download Page.
+        Espresso.closeSoftKeyboard();
+        Espresso.pressBack();
+        // After back to download pagem user should see the search field
+        onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
     }
 
     /**

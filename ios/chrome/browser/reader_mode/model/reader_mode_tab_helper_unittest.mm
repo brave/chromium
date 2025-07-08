@@ -7,10 +7,12 @@
 #import "base/test/metrics/histogram_tester.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
 #import "components/ukm/test_ukm_recorder.h"
-#import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
+#import "ios/chrome/browser/browser_container/model/edit_menu_tab_helper.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_test.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/web_selection/model/web_selection_tab_helper.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
@@ -23,6 +25,8 @@ using IOS_ReaderMode_Distiller_Result =
     ukm::builders::IOS_ReaderMode_Distiller_Result;
 using IOS_ReaderMode_Heuristic_Result =
     ukm::builders::IOS_ReaderMode_Heuristic_Result;
+using base::Bucket;
+using base::BucketsAre;
 
 // Mock implementation of ReaderModeTabHelper::Observer using gMock.
 class MockReaderModeTabHelperObserver : public ReaderModeTabHelper::Observer {
@@ -51,17 +55,10 @@ class ReaderModeTabHelperTest : public ReaderModeTest {
 
     web_state_ = CreateWebState();
 
-    // Configure the web state resources.
-    CreateTabHelperForWebState(web_state());
     ukm::InitializeSourceUrlRecorderForWebState(web_state());
   }
 
   void TearDown() override { test_ukm_recorder_.Purge(); }
-
-  void CreateTabHelperForWebState(web::WebState* web_state) {
-    ReaderModeTabHelper::CreateForWebState(
-        web_state, DistillerServiceFactory::GetForProfile(profile()));
-  }
 
   ReaderModeTabHelper* reader_mode_tab_helper() {
     return ReaderModeTabHelper::FromWebState(web_state());
@@ -92,6 +89,9 @@ class ReaderModeTabHelperTest : public ReaderModeTest {
         IOS_ReaderMode_Heuristic_Result::kEntryName);
   }
 
+  // Destroys the web state to flush all associated Reading Mode metrics.
+  void FlushMetrics() { web_state_.reset(); }
+
  protected:
   std::unique_ptr<web::FakeWebState> web_state_;
 
@@ -119,13 +119,19 @@ TEST_F(ReaderModeTabHelperTest, TriggerHeuristicSkippedOnNewNavigation) {
   WaitForReaderModeContentReady();
 
   // The metrics for the navigation are recorded.
-  ASSERT_EQ(1u, GetHeuristicResultEntries().size());
-  auto heuristic_entries = GetHeuristicResultEntries();
-  ASSERT_EQ(1u, heuristic_entries.size());
-  const auto* entry = heuristic_entries[0].get();
-  test_ukm_recorder_.ExpectEntryMetric(
-      entry, IOS_ReaderMode_Heuristic_Result::kResultName,
-      static_cast<int64_t>(ReaderModeHeuristicResult::kReaderModeEligible));
+  FlushMetrics();
+  EXPECT_THAT(histogram_tester_.GetAllSamples(kReaderModeStateHistogram),
+              BucketsAre(Bucket(ReaderModeState::kHeuristicCanceled, 1),
+                         Bucket(ReaderModeState::kHeuristicCompleted, 1)));
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
+      BucketsAre(Bucket(ReaderModeHeuristicResult::kReaderModeEligible, 1)));
+  std::vector<int64_t> ukm_entries = test_ukm_recorder_.GetMetricsEntryValues(
+      IOS_ReaderMode_Heuristic_Result::kEntryName,
+      IOS_ReaderMode_Heuristic_Result::kResultName);
+  EXPECT_THAT(ukm_entries,
+              testing::UnorderedElementsAre(static_cast<int>(
+                  ReaderModeHeuristicResult::kReaderModeEligible)));
 }
 
 // Tests that trigger heuristic is canceled after a web state is destroyed.
@@ -136,11 +142,19 @@ TEST_F(ReaderModeTabHelperTest, WebStateDestructionCancelsHeuristic) {
   LoadWebpage(web_state(), test_url);
   task_environment()->RunUntilIdle();
 
-  // Destroy the web state.
+  // Destroy the web state, which also flushes metrics.
   web_state_.reset();
   WaitForReaderModeContentReady();
 
+  // Metrics reflect that the heuristic was canceled before running on page
+  // load.
   histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
+  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicLatencyHistogram, 0);
+  std::vector<int64_t> ukm_entries = test_ukm_recorder_.GetMetricsEntryValues(
+      IOS_ReaderMode_Heuristic_Result::kEntryName,
+      IOS_ReaderMode_Heuristic_Result::kResultName);
+  EXPECT_EQ(0u, ukm_entries.size());
 }
 
 // Tests that reader mode is not supported on NTP.
@@ -253,6 +267,30 @@ TEST_F(ReaderModeTabHelperTest, NotifiesObservers) {
   ReaderModeTabHelper::RemoveFromWebState(web_state_.get());
 }
 
+// Tests that ReaderMode WebState has the correct TabHelpers attached for edit
+// menu.
+TEST_F(ReaderModeTabHelperTest, TestTabHelpers) {
+  EditMenuTabHelper::CreateForWebState(web_state());
+
+  // Set a non-empty DOM Distiller result.
+  GURL test_url("https://test.url/");
+  LoadWebpage(web_state(), test_url);
+  SetReaderModeState(web_state(), test_url,
+                     ReaderModeHeuristicResult::kReaderModeEligible, "Content");
+
+  // Initially, no observer methods should be called.
+  WaitForReaderModeContentReady();
+
+  reader_mode_tab_helper()->SetActive(true);
+  WaitForReaderModeContentReady();
+  web::WebState* reader_mode_web_state =
+      reader_mode_tab_helper()->GetReaderModeWebState();
+  EXPECT_NE(nullptr, reader_mode_web_state);
+  EXPECT_NE(nullptr, EditMenuTabHelper::FromWebState(reader_mode_web_state));
+  EXPECT_NE(nullptr,
+            WebSelectionTabHelper::FromWebState(reader_mode_web_state));
+}
+
 class ReaderModeTabHelperWithEligibilityTest
     : public ReaderModeTabHelperTest,
       public ::testing::WithParamInterface<ReaderModeHeuristicResult> {
@@ -276,15 +314,62 @@ TEST_P(ReaderModeTabHelperWithEligibilityTest, TriggerHeuristicOnPageLoad) {
   ASSERT_EQ(eligibility == ReaderModeHeuristicResult::kReaderModeEligible,
             reader_mode_tab_helper()->CurrentPageSupportsReaderMode());
 
-  ASSERT_THAT(
+  // The metrics for the navigation are recorded.
+  FlushMetrics();
+  EXPECT_THAT(histogram_tester_.GetAllSamples(kReaderModeStateHistogram),
+              BucketsAre(Bucket(ReaderModeState::kHeuristicCompleted, 1)));
+  EXPECT_THAT(
       histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
-      BucketsAre(base::Bucket(eligibility, 1)));
-  auto heuristic_entries = GetHeuristicResultEntries();
-  ASSERT_EQ(1u, heuristic_entries.size());
-  const auto* entry = heuristic_entries[0].get();
-  test_ukm_recorder_.ExpectEntryMetric(
-      entry, IOS_ReaderMode_Heuristic_Result::kResultName,
-      static_cast<int64_t>(eligibility));
+      BucketsAre(Bucket(eligibility, 1)));
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicLatencyHistogram),
+      BucketsAre(Bucket(0, 1)));
+  std::vector<int64_t> ukm_entries = test_ukm_recorder_.GetMetricsEntryValues(
+      IOS_ReaderMode_Heuristic_Result::kEntryName,
+      IOS_ReaderMode_Heuristic_Result::kResultName);
+  EXPECT_THAT(ukm_entries, testing::ElementsAre(static_cast<int>(eligibility)));
+}
+
+// Tests that metrics are recorded correctly when the Readability trigger
+// heuristic runs on page load and returns a result.
+TEST_P(ReaderModeTabHelperWithEligibilityTest,
+       TriggerReadabilityHeuristicOnPageLoad) {
+  ReaderModeHeuristicResult eligibility = GetEligibility();
+  if (eligibility ==
+          ReaderModeHeuristicResult::kReaderModeNotEligibleContentOnly ||
+      eligibility ==
+          ReaderModeHeuristicResult::kReaderModeNotEligibleContentLength) {
+    GTEST_SKIP() << "Does not provide content and length heuristics.";
+  }
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(kEnableReadabilityHeuristic);
+
+  histogram_tester_.ExpectTotalCount(kReaderModeHeuristicResultHistogram, 0);
+  ASSERT_EQ(0u, GetHeuristicResultEntries().size());
+
+  GURL test_url("https://test.url/");
+  SetReaderModeState(web_state(), test_url, eligibility, "");
+
+  LoadWebpage(web_state(), test_url);
+  WaitForReaderModeContentReady();
+
+  ASSERT_EQ(eligibility == ReaderModeHeuristicResult::kReaderModeEligible,
+            reader_mode_tab_helper()->CurrentPageSupportsReaderMode());
+
+  FlushMetrics();
+  EXPECT_THAT(histogram_tester_.GetAllSamples(kReaderModeStateHistogram),
+              BucketsAre(Bucket(ReaderModeState::kHeuristicCompleted, 1)));
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicResultHistogram),
+      BucketsAre(Bucket(eligibility, 1)));
+  EXPECT_THAT(
+      histogram_tester_.GetAllSamples(kReaderModeHeuristicLatencyHistogram),
+      BucketsAre(Bucket(0, 1)));
+  std::vector<int64_t> ukm_entries = test_ukm_recorder_.GetMetricsEntryValues(
+      IOS_ReaderMode_Heuristic_Result::kEntryName,
+      IOS_ReaderMode_Heuristic_Result::kResultName);
+  EXPECT_THAT(ukm_entries, testing::ElementsAre(static_cast<int>(eligibility)));
 }
 
 // Tests that histograms related to distillation results are recorded after the
@@ -301,8 +386,9 @@ TEST_P(ReaderModeTabHelperWithEligibilityTest, TriggerDistillationOnActive) {
   reader_mode_tab_helper()->SetActive(true);
   task_environment()->RunUntilIdle();
 
+  // The metrics for the navigation are recorded.
+  FlushMetrics();
   histogram_tester_.ExpectTotalCount(kReaderModeDistillerLatencyHistogram, 1u);
-  histogram_tester_.ExpectTotalCount(kReaderModeAmpClassificationHistogram, 1u);
   ExpectDistillerLatencyEntriesCount(1u);
   // The metrics for the navigation are recorded.
   ASSERT_EQ(1u, GetDistillerResultEntries().size());
@@ -315,22 +401,6 @@ TEST_P(ReaderModeTabHelperWithEligibilityTest, TriggerDistillationOnActive) {
       static_cast<int64_t>(ReaderModeDistillerResult::kPageIsNotDistillable));
 }
 
-std::string TestParametersReaderModeHeuristicResultToString(
-    testing::TestParamInfo<ReaderModeHeuristicResult> info) {
-  switch (info.param) {
-    case ReaderModeHeuristicResult::kMalformedResponse:
-      return "MalformedResponse";
-    case ReaderModeHeuristicResult::kReaderModeEligible:
-      return "ReaderModeEligible";
-    case ReaderModeHeuristicResult::kReaderModeNotEligibleContentOnly:
-      return "ReaderModeNotEligibleContentOnly";
-    case ReaderModeHeuristicResult::kReaderModeNotEligibleContentLength:
-      return "ReaderModeNotEligibleContentLength";
-    case ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength:
-      return "ReaderModeNotEligibleContentAndLength";
-  }
-}
-
 INSTANTIATE_TEST_SUITE_P(
     All,
     ReaderModeTabHelperWithEligibilityTest,
@@ -340,4 +410,4 @@ INSTANTIATE_TEST_SUITE_P(
         ReaderModeHeuristicResult::kReaderModeNotEligibleContentOnly,
         ReaderModeHeuristicResult::kReaderModeNotEligibleContentLength,
         ReaderModeHeuristicResult::kReaderModeNotEligibleContentAndLength),
-    TestParametersReaderModeHeuristicResultToString);
+    ReaderModeTest::TestParametersReaderModeHeuristicResultToString);

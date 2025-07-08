@@ -56,6 +56,7 @@
 #include "content/renderer/media/renderer_webaudiodevice_impl.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "content/renderer/renderer_navigation_metrics_manager.h"
 #include "content/renderer/service_worker/controller_service_worker_connector.h"
 #include "content/renderer/service_worker/service_worker_subresource_loader.h"
 #include "content/renderer/v8_value_converter_impl.h"
@@ -354,12 +355,14 @@ blink::UserAgentMetadata RendererBlinkPlatformImpl::UserAgentMetadata() {
   return render_thread->GetUserAgentMetadata();
 }
 
-bool RendererBlinkPlatformImpl::IsRedirectSafe(const GURL& from_url,
-                                               const GURL& to_url) {
+bool RendererBlinkPlatformImpl::IsRedirectSafe(
+    const GURL& from_url,
+    const GURL& to_url,
+    const std::optional<url::Origin>& request_initiator) {
   return IsSafeRedirectTarget(from_url, to_url) &&
          (!GetContentClient()->renderer() ||  // null in unit tests.
-          GetContentClient()->renderer()->IsSafeRedirectTarget(from_url,
-                                                               to_url));
+          GetContentClient()->renderer()->IsSafeRedirectTarget(
+              from_url, to_url, request_initiator));
 }
 
 void RendererBlinkPlatformImpl::AppendVariationsThrottles(
@@ -996,6 +999,16 @@ std::unique_ptr<media::MediaLog> RendererBlinkPlatformImpl::GetMediaLog(
 
   return std::make_unique<BatchingMediaLog>(owner_task_runner,
                                             std::move(handlers));
+}
+
+//------------------------------------------------------------------------------
+
+void RendererBlinkPlatformImpl::AddCreateRemoteChildrenEvent(
+    const std::optional<base::UnguessableToken>& navigation_metrics_token,
+    const base::TimeTicks& start_time,
+    const base::TimeDelta& elapsed_time) {
+  RendererNavigationMetricsManager::Instance().AddCreateRemoteChildrenEvent(
+      navigation_metrics_token, start_time, elapsed_time);
 }
 
 //------------------------------------------------------------------------------

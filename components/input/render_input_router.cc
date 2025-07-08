@@ -11,6 +11,8 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/trace_event.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "cc/input/browser_controls_offset_tag_modifications.h"
 #include "components/input/input_constants.h"
@@ -178,14 +180,9 @@ void RenderInputRouter::RendererWidgetCreated(bool for_frame_widget,
                                               bool is_in_viz) {
   TRACE_EVENT("input", "RenderInputRouter::RendererWidgetCreated");
 
-  if (is_in_viz) {
-    client_remote_->GetWidgetInputHandlerForInputOnViz(
-        widget_input_handler_.BindNewPipeAndPassReceiver(task_runner_));
-  } else {
-    client_remote_->GetWidgetInputHandler(
-        widget_input_handler_.BindNewPipeAndPassReceiver(task_runner_),
-        input_router_->BindNewHost(task_runner_));
-  }
+  client_remote_->GetWidgetInputHandler(
+      widget_input_handler_.BindNewPipeAndPassReceiver(task_runner_),
+      input_router_->BindNewHost(task_runner_), is_in_viz);
 
   if (for_frame_widget) {
     // `for_frame_widget` is always true for RenderInputRouters created on Viz,

@@ -23,6 +23,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -896,6 +897,13 @@ void ProfileAttributesStorage::NotifyProfileHostedDomainChanged(
     const base::FilePath& profile_path) const {
   for (auto& observer : observer_list_)
     observer.OnProfileHostedDomainChanged(profile_path);
+}
+
+void ProfileAttributesStorage::NotifyProfileIsManagedChanged(
+    const base::FilePath& profile_path) const {
+  for (auto& observer : observer_list_) {
+    observer.OnProfileIsManagedChanged(profile_path);
+  }
 }
 
 void ProfileAttributesStorage::NotifyOnProfileHighResAvatarLoaded(

@@ -100,17 +100,19 @@ public class MostVisitedTilesPTTest {
         try (var histogram =
                 HistogramWatcher.newSingleRecordWatcher(
                         "NewTabPage.Module.Click", ModuleTypeOnStartAndNtp.MOST_VISITED_TILES)) {
-            mostVisitedPage = mvts.tileItems.get(index).scrollToAndSelect();
+            mostVisitedPage = mvts.ensureTileIsDisplayedAndGet(index).clickToNavigateToWebPage();
         }
 
         // Reset back to the NTP for batching
         page =
-                mostVisitedPage.pressBack(
-                        RegularNewTabPageStation.newBuilder()
-                                .withIncognito(false)
-                                .withIsOpeningTabs(0)
-                                .withTabAlreadySelected(mostVisitedPage.loadedTabElement.get())
-                                .build());
+                mostVisitedPage
+                        .pressBackTo()
+                        .arriveAt(
+                                RegularNewTabPageStation.newBuilder()
+                                        .withIncognito(false)
+                                        .withTabAlreadySelected(
+                                                mostVisitedPage.loadedTabElement.get())
+                                        .build());
         assertFinalDestination(page);
     }
 }

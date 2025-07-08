@@ -7,16 +7,20 @@
 #import <memory>
 
 #import "base/metrics/histogram_functions.h"
+#import "base/strings/sys_string_conversions.h"
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/intelligence/bwg/coordinator/bwg_mediator_delegate.h"
 #import "ios/chrome/browser/intelligence/bwg/metrics/bwg_metrics.h"
-#import "ios/chrome/browser/intelligence/bwg/model/bwg_service.h"
-#import "ios/chrome/browser/intelligence/bwg/model/bwg_service_factory.h"
+#import "ios/chrome/browser/intelligence/bwg/model/bwg_browser_agent.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/intelligence/proto_wrappers/page_context_wrapper.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
+#import "url/gurl.h"
 
 @interface BWGMediator ()
 
@@ -49,10 +53,17 @@
 }
 
 - (void)presentBWGFlow {
-  if (BWGPromoConsentVariationsParam() ==
-      BWGPromoConsentVariations::kSkipConsent) {
-    [self prepareBWGOverlay];
-    return;
+  switch (BWGPromoConsentVariationsParam()) {
+    case BWGPromoConsentVariations::kSkipConsent:
+      [self prepareBWGOverlay];
+      return;
+    case BWGPromoConsentVariations::kForceConsent:
+      // Resetting the consent pref will allow the BWG flow to act as if consent
+      // was never given.
+      _prefService->SetBoolean(prefs::kIOSBwgConsent, NO);
+      break;
+    default:
+      break;
   }
 
   BOOL didPresentBWGFRE = [self.delegate maybePresentBWGFRE];
@@ -68,23 +79,32 @@
 // Did consent to BWG.
 - (void)didConsentBWG {
   _prefService->SetBoolean(prefs::kIOSBwgConsent, YES);
-  [_delegate dismissBWGConsentUI];
+  __weak __typeof(self) weakSelf = self;
+  [_delegate dismissBWGConsentUIWithCompletion:^{
+    [weakSelf prepareBWGOverlay];
+  }];
 }
 
 // Did dismisses the Consent UI.
 - (void)didRefuseBWGConsent {
-  [_delegate dismissBWGConsentUI];
+  [_delegate dismissBWGFlow];
 }
 
 // Did close BWG Promo UI.
 - (void)didCloseBWGPromo {
-  [_delegate dismissBWGConsentUI];
+  [_delegate dismissBWGFlow];
+}
+
+// Open a new tab page given a URL.
+- (void)openNewTabWithURL:(const GURL&)URL {
+  OpenNewTabCommand* command = [OpenNewTabCommand commandWithURLFromChrome:URL];
+  [HandlerForProtocol(_browser->GetCommandDispatcher(), ApplicationCommands)
+      openURLInNewTab:command];
 }
 
 #pragma mark - Private
 
 // Prepares BWG overlay.
-// TODO(crbug.com/419064727): Add entry point to call this function.
 - (void)prepareBWGOverlay {
   // Cancel any ongoing page context operation.
   if (_pageContextWrapper) {
@@ -93,13 +113,11 @@
 
   // Configure the callback to be executed once the page context is ready.
   __weak __typeof(self) weakSelf = self;
-  base::OnceCallback<void(
-      std::unique_ptr<optimization_guide::proto::PageContext>)>
-      page_context_completion_callback = base::BindOnce(
-          ^void(std::unique_ptr<optimization_guide::proto::PageContext>
-                    page_context) {
+  base::OnceCallback<void(PageContextWrapperCallbackResponse)>
+      page_context_completion_callback =
+          base::BindOnce(^void(PageContextWrapperCallbackResponse response) {
             BWGMediator* strongSelf = weakSelf;
-            [strongSelf openBWGOverlayForPage:std::move(page_context)];
+            [strongSelf openBWGOverlayForPage:std::move(response)];
             strongSelf->_pageContextWrapper = nil;
           });
 
@@ -112,13 +130,12 @@
   [_pageContextWrapper populatePageContextFieldsAsync];
 }
 
-// Opens the BWG overlay with a given page context.
+// Opens the BWG overlay with a given PageContextWrapperCallbackResponse.
 - (void)openBWGOverlayForPage:
-    (std::unique_ptr<optimization_guide::proto::PageContext>)pageContext {
-  BwgService* bwgService =
-      BwgServiceFactory::GetForProfile(_browser->GetProfile());
-  bwgService->PresentOverlayOnViewController(self.baseViewController,
-                                             std::move(pageContext));
+    (PageContextWrapperCallbackResponse)pageContextWrapperResponse {
+  BwgBrowserAgent* BWGBrowserAgent = BwgBrowserAgent::FromBrowser(_browser);
+  BWGBrowserAgent->PresentBwgOverlay(self.baseViewController,
+                                     std::move(pageContextWrapperResponse));
 
   // TODO(crbug.com/419064727): Dismiss bwg promo/consent.
 }

@@ -10,7 +10,6 @@ import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorStateListDrawable;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.view.LayoutInflater;
 import android.view.View;
 
@@ -106,12 +105,12 @@ public class TileRenderer {
     /** Simple multimap from SiteSuggestion to SuggestionsTileView. */
     private static class SuggestionsTileViewCache {
         private final Map<SiteSuggestion, LinkedList<SuggestionsTileView>> mStorage =
-                new HashMap<SiteSuggestion, LinkedList<SuggestionsTileView>>();
+                new HashMap<>();
 
         void put(SiteSuggestion key, @NonNull SuggestionsTileView value) {
             LinkedList<SuggestionsTileView> bucket = mStorage.get(key);
             if (bucket == null) {
-                bucket = new LinkedList<SuggestionsTileView>();
+                bucket = new LinkedList<>();
                 mStorage.put(key, bucket);
             }
             bucket.addLast(value);
@@ -246,13 +245,10 @@ public class TileRenderer {
                                 .inflate(mTileLayoutResId, parent, false);
 
         tileView.initialize(tile, mTitleLinesCount);
-        // TODO(crbug.com/403353768): Unify tile background.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tileView.setBackground(
-                    new ColorStateListDrawable(
-                            AppCompatResources.getColorStateList(
-                                    parent.getContext(), R.color.tile_bg_color_list)));
-        }
+        tileView.setBackground(
+                new ColorStateListDrawable(
+                        AppCompatResources.getColorStateList(
+                                parent.getContext(), R.color.tile_bg_color_list)));
 
         if (!mNativeInitializationComplete || setupDelegate == null) {
             return tileView;

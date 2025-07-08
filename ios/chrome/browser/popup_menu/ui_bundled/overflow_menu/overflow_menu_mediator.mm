@@ -42,6 +42,7 @@
 #import "ios/chrome/browser/follow/model/follow_menu_updater.h"
 #import "ios/chrome/browser/follow/model/follow_tab_helper.h"
 #import "ios/chrome/browser/follow/model/follow_util.h"
+#import "ios/chrome/browser/intelligence/bwg/model/bwg_tab_helper.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/intents/model/intents_donation_helper.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
@@ -79,6 +80,7 @@
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/bookmarks_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
+#import "ios/chrome/browser/shared/public/commands/bwg_commands.h"
 #import "ios/chrome/browser/shared/public/commands/find_in_page_commands.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_overlay_commands.h"
@@ -707,7 +709,7 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
     self.AIPrototypeAction = [self openAIPrototypeAction];
   }
 
-  if (IsPageActionMenuEnabled()) {
+  if ([self isAIHubAvailable]) {
     self.askBWGAction = [self openAskBWGAction];
   }
 
@@ -843,12 +845,19 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
 
 - (OverflowMenuAction*)openAskBWGAction {
   __weak __typeof(self) weakSelf = self;
-  // TODO(crbug.com/414777888): Change the icon.
+#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+  BOOL isBrandedIcon = YES;
+  NSString* symbolName = kGeminiBrandedLogoImage;
+#else
+  BOOL isBrandedIcon = NO;
+  NSString* symbolName = kGeminiNonBrandedLogoImage;
+#endif
   return
-      [self createOverflowMenuActionWithName:@"Ask BWG"
+      [self createOverflowMenuActionWithName:l10n_util::GetNSString(
+                                                 IDS_IOS_AI_HUB_GEMINI_LABEL)
                                   actionType:overflow_menu::ActionType::AskBWG
-                                  symbolName:kMagicStackSymbol
-                                systemSymbol:YES
+                                  symbolName:symbolName
+                                systemSymbol:!isBrandedIcon
                             monochromeSymbol:NO
                              accessibilityID:kToolsMenuOpenAskBWG
                                 hideItemText:nil
@@ -1440,6 +1449,12 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
   bool canFetchUserPolicies =
       _authenticationService && _profilePrefs &&
       CanFetchUserPolicy(_authenticationService, _profilePrefs);
+  bool isReaderModeActive = false;
+  if (IsReaderModeAvailable()) {
+    ReaderModeTabHelper* readerModeTabHelper =
+        ReaderModeTabHelper::FromWebState(self.webState);
+    isReaderModeActive = readerModeTabHelper && readerModeTabHelper->IsActive();
+  }
   // Set footer (on last section), if any.
   web::BrowserState* browserState =
       self.webState ? self.webState->GetBrowserState() : nullptr;
@@ -1465,20 +1480,24 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
 
   // The "Add to Reading List" functionality requires JavaScript execution,
   // which is paused while overlays are displayed over the web content area.
-  self.readLaterAction.enabled =
-      !self.webContentAreaShowingOverlay && [self isCurrentURLWebURL];
+  self.readLaterAction.enabled = !self.webContentAreaShowingOverlay &&
+                                 [self isCurrentURLWebURL] &&
+                                 !isReaderModeActive;
 
   BOOL bookmarkEnabled =
       [self isCurrentURLWebURL] && [self isEditBookmarksEnabled];
-  self.addBookmarkAction.enabled = bookmarkEnabled;
-  self.editBookmarkAction.enabled = bookmarkEnabled;
-  self.translateAction.enabled = [self isTranslateEnabled];
-  self.findInPageAction.enabled = [self isFindInPageEnabled];
-  self.textZoomAction.enabled = [self isTextZoomEnabled];
+  self.addBookmarkAction.enabled = bookmarkEnabled && !isReaderModeActive;
+  self.editBookmarkAction.enabled = bookmarkEnabled && !isReaderModeActive;
+  self.translateAction.enabled =
+      [self isTranslateEnabled] && !isReaderModeActive;
+  self.findInPageAction.enabled =
+      [self isFindInPageEnabled] && !isReaderModeActive;
+  self.textZoomAction.enabled = [self isTextZoomEnabled] && !isReaderModeActive;
   self.requestDesktopAction.enabled =
-      [self userAgentType] == web::UserAgentType::MOBILE;
+      [self userAgentType] == web::UserAgentType::MOBILE && !isReaderModeActive;
   self.requestMobileAction.enabled =
-      [self userAgentType] == web::UserAgentType::DESKTOP;
+      [self userAgentType] == web::UserAgentType::DESKTOP &&
+      !isReaderModeActive;
 
   // Enable/disable items based on enterprise policies.
   self.openTabAction.enterpriseDisabled =
@@ -1487,26 +1506,11 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
       IsIncognitoModeDisabled(self.profilePrefs);
 
   if (IsLensOverlayAvailable(_profilePrefs)) {
-    BOOL isPortrait = !IsCompactHeight(self.baseViewController.traitCollection);
-    BOOL isSupported =
-        search_engines::SupportsSearchImageWithLens(self.templateURLService);
-    BOOL portraitOverride =
-        IsLensOverlayLandscapeOrientationEnabled(_profilePrefs);
-    self.lensOverlayAction.enabled =
-        isSupported && (isPortrait || portraitOverride);
+    self.lensOverlayAction.enabled = ![self isLensOverlayVisible];
   }
 
   if (IsReaderModeAvailable()) {
     self.readerModeAction.enabled = [self isReaderModeEnabled];
-  }
-
-  // If Lens Overlay is already being displayed, disable the action.
-  if (self.webState) {
-    if (LensOverlayTabHelper* lensOverlayTabHelper =
-            LensOverlayTabHelper::FromWebState(self.webState)) {
-      self.lensOverlayAction.enabled =
-          !lensOverlayTabHelper->IsLensOverlayUIAttachedAndAlive();
-    }
   }
 }
 
@@ -1576,7 +1580,28 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
 
 // Returns whether translate is enabled on the current page.
 - (BOOL)isTranslateEnabled {
-  return [self canManuallyTranslate:NO];
+  return [self canManuallyTranslate:NO] && ![self isLensOverlayVisible];
+}
+
+- (BOOL)isLensOverlayEnabled {
+  BOOL isPortrait = !IsCompactHeight(self.baseViewController.traitCollection);
+  BOOL isSupported =
+      search_engines::SupportsSearchImageWithLens(self.templateURLService);
+  BOOL portraitOverride =
+      IsLensOverlayLandscapeOrientationEnabled(_profilePrefs);
+  return isSupported && (isPortrait || portraitOverride) &&
+         ![self isLensOverlayVisible];
+}
+
+// Returns whether Lens Overlay is currently being displayed.
+- (BOOL)isLensOverlayVisible {
+  if (!self.webState) {
+    return NO;
+  }
+  LensOverlayTabHelper* lensOverlayTabHelper =
+      LensOverlayTabHelper::FromWebState(self.webState);
+  return lensOverlayTabHelper &&
+         lensOverlayTabHelper->IsLensOverlayUIAttachedAndAlive();
 }
 
 // Determines whether or not translate is available on the page and logs the
@@ -1737,6 +1762,20 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
     self.engagementTracker->NotifyEvent(
         feature_engagement::events::kIOSOverflowMenuOffscreenItemUsed);
   }
+}
+
+/// Returns whether the AI Hub is currently available for the web state.
+- (BOOL)isAIHubAvailable {
+  if (!IsPageActionMenuEnabled()) {
+    return NO;
+  }
+  if (_webState) {
+    BwgTabHelper* BWGTabHelper = BwgTabHelper::FromWebState(_webState);
+    if (BWGTabHelper) {
+      return BWGTabHelper->IsBwgAvailableForWebState();
+    }
+  }
+  return NO;
 }
 
 #pragma mark - CRWWebStateObserver
@@ -2092,7 +2131,7 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
     actions.push_back(overflow_menu::ActionType::AIPrototype);
   }
 
-  if (IsPageActionMenuEnabled()) {
+  if ([self isAIHubAvailable]) {
     actions.push_back(overflow_menu::ActionType::AskBWG);
   }
 
@@ -2445,7 +2484,7 @@ OverflowMenuFooter* CreateOverflowMenuManagedFooter(
 // Starts ask BWG.
 - (void)startAskBWG {
   [self dismissMenu];
-  [self.pageActionMenuHandler showPageActionMenu];
+  [self.BWGHandler startBWGFlow];
 }
 
 // Opens the "Set a reminder" screen for the user's current tab.

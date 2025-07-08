@@ -20,7 +20,6 @@
 #include "content/public/common/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "pdf/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "rlz/buildflags/buildflags.h"
 
@@ -961,11 +960,6 @@ inline constexpr char kSecondEolWarningDismissed[] =
 inline constexpr char kEolNotificationDismissed[] =
     "eol_notification_dismissed";
 
-inline constexpr char kEolApproachingIncentiveNotificationDismissed[] =
-    "approaching_eol_incentive_dismissed";
-inline constexpr char kEolPassedFinalIncentiveDismissed[] =
-    "passed_eol_incentive_dismissed";
-
 // A boolean pref that controls whether the PIN autosubmit feature is enabled.
 // This feature, when enabled, exposes the user's PIN length by showing how many
 // digits are necessary to unlock the device. Can be recommended.
@@ -1531,8 +1525,11 @@ inline constexpr char kPartitionPerHostZoomLevels[] =
 inline constexpr char kPinnedTabs[] = "pinned_tabs";
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-// Preference to disable 3D APIs (WebGL, Pepper 3D).
+// Preference to disable 3D APIs (WebGL).
 inline constexpr char kDisable3DAPIs[] = "disable_3d_apis";
+
+// Preference to enable SwiftShader for WebGL fallback.
+inline constexpr char kEnableUnsafeSwiftShader[] = "enable_unsafe_swiftshader";
 
 // Whether to enable hyperlink auditing ("<a ping>").
 inline constexpr char kEnableHyperlinkAuditing[] = "enable_a_ping";
@@ -1583,16 +1580,6 @@ inline constexpr char kImportDialogSavedPasswords[] =
     "import_dialog_saved_passwords";
 inline constexpr char kImportDialogSearchEngine[] =
     "import_dialog_search_engine";
-
-#if BUILDFLAG(IS_CHROMEOS)
-// Boolean controlling whether native client is force allowed by policy.
-inline constexpr char kNativeClientForceAllowed[] =
-    "native_client_force_allowed";
-inline constexpr char kDeviceNativeClientForceAllowed[] =
-    "device_native_client_force_allowed";
-inline constexpr char kDeviceNativeClientForceAllowedCache[] =
-    "device_native_client_force_allowed_cache";
-#endif
 
 // Profile avatar and name
 inline constexpr char kProfileAvatarIndex[] = "profile.avatar_index";
@@ -2386,6 +2373,9 @@ inline constexpr char kNtpCollapsedSnapshotDocument[] =
 // Keeps track of sync promo collapsed state in the Other Devices menu.
 inline constexpr char kNtpCollapsedSyncPromo[] = "ntp.collapsed_sync_promo";
 #else
+// Name of preference to count of times compose button was shown.
+inline const char kNtpComposeButtonShownCountPrefName[] =
+    "ntp.compose_button.shown_count";
 // Holds info for New Tab Page custom background
 // Use `kNtpCustomBackgroundDict` only.
 inline constexpr char kDeprecatedNtpCustomBackgroundDictDoNotUse[] =
@@ -3262,6 +3252,11 @@ inline constexpr char kDeviceWeeklyScheduledSuspend[] =
 // sessions.
 inline constexpr char kKioskChromeAppsForceAllowed[] =
     "kiosk_chrome_apps_force_allowed";
+
+// A boolean pref which determines whether kiosk application level logs would be
+// collected and stored.
+inline constexpr char kKioskApplicationLogCollectionEnabled[] =
+    "kiosk_application_log_collection_enabled";
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \

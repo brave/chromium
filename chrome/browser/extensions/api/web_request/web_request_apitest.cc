@@ -16,9 +16,11 @@
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
@@ -658,6 +660,14 @@ class ExtensionWebRequestApiTestWithContextType
       : ExtensionWebRequestApiTest(GetParam().first) {
     std::vector<base::test::FeatureRef> enabled_features;
     std::vector<base::test::FeatureRef> disabled_features;
+    // TODO(crbug.com/395895368): the right fix is to set
+    // network::switches::kIpAddressSpaceOverrides command line override, but
+    // this is complicated by the fact that the different tests start the
+    // embedded test server in different ways in the tests themselves, whereas
+    // this command line switch needs to be set after the embedded test server
+    // starts to obtain the correct port. Refactor tests to ensure the ones that
+    // need the command line switch override are within a specific test class.
+    disabled_features.push_back(network::features::kLocalNetworkAccessChecks);
     if (IsBackgroundResourceFetchEnabled()) {
       enabled_features.push_back(blink::features::kBackgroundResourceFetch);
     } else {
@@ -2433,7 +2443,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
 // TODO(crbug.com/40715657): Test is flaky on multiple platforms.
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, DISABLED_WebSocketRequest) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ASSERT_TRUE(StartWebSocketServer(net::GetWebSocketTestDataDirectory()));
+  ASSERT_TRUE(StartWebSocketServer());
   ASSERT_TRUE(
       RunExtensionTest("webrequest", {.extension_url = "test_websocket.html"}))
       << message_;
@@ -2445,7 +2455,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, DISABLED_WebSocketRequest) {
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
                        DISABLED_WebSocketRequestAuthRequired) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ASSERT_TRUE(StartWebSocketServer(net::GetWebSocketTestDataDirectory(), true));
+  ASSERT_TRUE(StartWebSocketServer(/*enable_basic_auth=*/true));
   ASSERT_TRUE(RunExtensionTest("webrequest",
                                {.extension_url = "test_websocket_auth.html"}))
       << message_;
@@ -2455,7 +2465,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
 // requests.
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, WebSocketRequestOnWorker) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ASSERT_TRUE(StartWebSocketServer(net::GetWebSocketTestDataDirectory()));
+  ASSERT_TRUE(StartWebSocketServer());
   ASSERT_TRUE(RunExtensionTest("webrequest",
                                {.extension_url = "test_websocket_worker.html"}))
       << message_;
@@ -2473,7 +2483,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, WebSocketRequestOnWorker) {
 #endif
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, MAYBE_WebSocketCleanClose) {
   ASSERT_TRUE(StartEmbeddedTestServer());
-  ASSERT_TRUE(StartWebSocketServer(net::GetWebSocketTestDataDirectory()));
+  ASSERT_TRUE(StartWebSocketServer());
   ASSERT_TRUE(RunExtensionTest(
       "webrequest", {.extension_url = "test_websocket_clean_close.html"}))
       << message_;
@@ -5753,7 +5763,9 @@ IN_PROC_BROWSER_TEST_P(RedirectInfoWebRequestApiTest,
           net::IsolationInfo::Create(
               net::IsolationInfo::RequestType::kSubFrame, top_level_origin,
               redirected_origin,
-              net::SiteForCookies::FromOrigin(top_level_origin))));
+              net::SiteForCookies::FromOrigin(top_level_origin),
+              /*nonce=*/std::nullopt, net::NetworkIsolationPartition::kGeneral,
+              net::IsolationInfo::FrameAncestorRelation::kSameOrigin)));
 }
 
 // Regression test for crbug.com/1510422 to validate that redirection to an

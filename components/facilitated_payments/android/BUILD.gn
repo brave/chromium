@@ -10,6 +10,8 @@ static_library("android") {
     "device_delegate_android.h",
     "facilitated_payments_api_client_android.cc",
     "facilitated_payments_api_client_android.h",
+    "facilitated_payments_app_info_list_android.cc",
+    "facilitated_payments_app_info_list_android.h",
     "secure_payload_android.cc",
     "secure_payload_android.h",
   ]
@@ -21,12 +23,14 @@ static_library("android") {
     "//components/facilitated_payments/core/utils",
     "//components/signin/public/identity_manager",
     "//content/public/browser",
+    "//ui/android",
   ]
 }
 
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "device_delegate_android_unittest.cc",
     "facilitated_payments_api_client_android_unittest.cc",
     "secure_payload_android_unittest.cc",
   ]

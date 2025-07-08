@@ -20,6 +20,7 @@
 #include "base/strings/strcat.h"
 #include "base/task/thread_pool.h"
 #include "base/types/expected.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/model_execution/model_execution_util.h"
@@ -34,7 +35,6 @@
 #include "components/optimization_guide/core/model_execution/safety_config.h"
 #include "components/optimization_guide/core/model_execution/safety_model_info.h"
 #include "components/optimization_guide/core/model_execution/session_impl.h"
-#include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
@@ -544,7 +544,7 @@ OnDeviceModelServiceController::BaseModelController::GetOrCreateRemote() {
           },
           weak_ptr_factory_.GetWeakPtr(),
           remote_.BindNewPipeAndPassReceiver()));
-  remote_.set_disconnect_handler(base::BindOnce(
+  remote_.set_disconnect_with_reason_handler(base::BindOnce(
       &BaseModelController::OnDisconnect, base::Unretained(this)));
   // By default the model will be reset immediately when idle. If a feature is
   // going using the base model, the idle handler will be set explicitly there.
@@ -592,9 +592,20 @@ void OnDeviceModelServiceController::BaseModelController::OnModelAssetsLoaded(
   controller_->service_client_.RemovePendingUsage();
 }
 
-void OnDeviceModelServiceController::BaseModelController::OnDisconnect() {
-  LOG(ERROR) << "Base model disconnected unexpectedly.";
+void OnDeviceModelServiceController::BaseModelController::OnDisconnect(
+    uint32_t reason,
+    const std::string& description) {
   remote_.reset();
+  const bool is_idle =
+      reason == static_cast<uint32_t>(
+                    on_device_model::ModelDisconnectReason::kIdleShutdown);
+  base::UmaHistogramBoolean(
+      "OptimizationGuide.ModelExecution.OnDeviceBaseModelIdleDisconnect",
+      is_idle);
+  if (is_idle) {
+    return;
+  }
+  LOG(ERROR) << "Base model disconnected unexpectedly.";
   base::TimeDelta delay =
       access_controller().OnDisconnectedFromRemote() - base::Time::Now();
   if (delay.is_positive()) {
@@ -777,13 +788,16 @@ void OnDeviceModelServiceController::EnsurePerformanceClassAvailable(
   }
 
   performance_class_state_ = PerformanceClassState::kComputing;
-  service_client_.Get()->GetEstimatedPerformanceClass(
-      base::BindOnce(&ConvertToOnDeviceModelPerformanceClass)
-          .Then(mojo::WrapCallbackWithDefaultInvokeIfNotRun(
-              base::BindOnce(
-                  &OnDeviceModelServiceController::PerformanceClassUpdated,
-                  base::RetainedRef(this)),
-              OnDeviceModelPerformanceClass::kServiceCrash)));
+  service_client_.Get()->GetDevicePerformanceInfo(
+      base::BindOnce([](on_device_model::mojom::DevicePerformanceInfoPtr info) {
+        return info->performance_class;
+      })
+          .Then(base::BindOnce(&ConvertToOnDeviceModelPerformanceClass)
+                    .Then(mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+                        base::BindOnce(&OnDeviceModelServiceController::
+                                           PerformanceClassUpdated,
+                                       base::RetainedRef(this)),
+                        OnDeviceModelPerformanceClass::kServiceCrash))));
 }
 
 void OnDeviceModelServiceController::PerformanceClassUpdated(

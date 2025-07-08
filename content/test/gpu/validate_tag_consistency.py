@@ -82,7 +82,6 @@ TAG_SPECIALIZATIONS = {
             'amd-0x7340',
             'amd-0x7480',
         ],
-        'amd64': [],
         'apple': [
             'apple-apple-m1',
             'apple-apple-m2',
@@ -190,9 +189,9 @@ TAG_HEADER = """\
 # OS
 {OS_TAGS}
 # Devices
-# tags: [ android-nexus-5x android-pixel-2 android-pixel-4
-#             android-pixel-6 android-shield-android-tv android-sm-a137f
-#             android-sm-a236b android-sm-s911u1
+# tags: [ android-pixel-2 android-pixel-4 android-pixel-6
+#             android-shield-android-tv android-sm-a137f android-sm-a236b
+#             android-sm-s911u1
 #         android-brya android-corsola
 #         chromeos-board-amd64-generic chromeos-board-eve chromeos-board-jacuzzi
 #             chromeos-board-octopus chromeos-board-volteer
@@ -206,7 +205,7 @@ TAG_HEADER = """\
 # GPU
 {GPU_TAGS}
 # Architecture
-# tags: [ mac-arm64 mac-x86_64 ]
+# tags: [ arch-arm64 arch-x86_64 ]
 # Decoder
 # tags: [ passthrough no-passthrough ]
 # Browser Target CPU

@@ -23,7 +23,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #if BUILDFLAG(IS_FUCHSIA)
 #include "base/fuchsia/fuchsia_logging.h"
@@ -53,7 +53,6 @@ gfx::GpuMemoryBufferHandle CreateGMBHandle(
     const gfx::BufferFormat& buffer_format,
     const gfx::Size& size,
     gfx::BufferUsage buffer_usage) {
-  static int last_handle_id = 0;
   size_t buffer_size = 0u;
   CHECK(
       gfx::BufferSizeForBufferFormatChecked(size, buffer_format, &buffer_size));
@@ -62,7 +61,6 @@ gfx::GpuMemoryBufferHandle CreateGMBHandle(
   CHECK(shared_memory_region.IsValid());
 
   gfx::GpuMemoryBufferHandle handle(std::move(shared_memory_region));
-  handle.id = gfx::GpuMemoryBufferId(last_handle_id++);
   handle.offset = 0;
   handle.stride = static_cast<uint32_t>(
       gfx::RowSizeForBufferFormat(size.width(), buffer_format, 0));
@@ -158,8 +156,8 @@ scoped_refptr<ClientSharedImage> TestSharedImageInterface::CreateSharedImage(
   auto gmb_handle_type = emulate_client_provided_native_buffer_
                              ? GetNativeBufferType()
                              : gfx::EMPTY_BUFFER;
-  return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token, holder_, gmb_handle_type);
+  return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info, sync_token,
+                                                 holder_, gmb_handle_type);
 }
 
 scoped_refptr<ClientSharedImage>
@@ -170,8 +168,8 @@ TestSharedImageInterface::CreateSharedImage(
   base::AutoLock locked(lock_);
   auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
-  return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token, holder_, gfx::EMPTY_BUFFER);
+  return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info, sync_token,
+                                                 holder_, gfx::EMPTY_BUFFER);
 }
 
 scoped_refptr<ClientSharedImage> TestSharedImageInterface::CreateSharedImage(
@@ -195,6 +193,10 @@ scoped_refptr<ClientSharedImage> TestSharedImageInterface::CreateSharedImage(
   auto buffer_format =
       viz::SharedImageFormatToBufferFormatRestrictedUtils::ToBufferFormat(
           si_info.meta.format);
+  // Copy which can be modified.
+  SharedImageInfo si_info_copy = si_info;
+  // Set CPU read/write usage based on buffer usage.
+  si_info_copy.meta.usage |= GetCpuSIUsage(buffer_usage);
   if (test_gmb_manager_) {
     auto gpu_memory_buffer = test_gmb_manager_->CreateGpuMemoryBuffer(
         si_info.meta.size, buffer_format, buffer_usage, surface_handle,
@@ -203,7 +205,6 @@ scoped_refptr<ClientSharedImage> TestSharedImageInterface::CreateSharedImage(
     // Since the |gpu_memory_buffer| here is always a shared memory, clear the
     // external sampler prefs if it is already set by client.
     // https://issues.chromium.org/339546249.
-    SharedImageInfo si_info_copy = si_info;
     if (si_info_copy.meta.format.PrefersExternalSampler()) {
       si_info_copy.meta.format.ClearPrefersExternalSampler();
     }
@@ -213,12 +214,12 @@ scoped_refptr<ClientSharedImage> TestSharedImageInterface::CreateSharedImage(
   }
 
   auto gmb_handle =
-      CreateGMBHandle(buffer_format, si_info.meta.size, buffer_usage);
+      CreateGMBHandle(buffer_format, si_info_copy.meta.size, buffer_usage);
 
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token,
-      GpuMemoryBufferHandleInfo(std::move(gmb_handle), si_info.meta.format,
-                                     si_info.meta.size, buffer_usage),
+      mailbox, si_info_copy, sync_token,
+      GpuMemoryBufferHandleInfo(std::move(gmb_handle), si_info_copy.meta.format,
+                                si_info_copy.meta.size, buffer_usage),
       holder_);
 }
 
@@ -237,6 +238,10 @@ TestSharedImageInterface::CreateSharedImage(
   auto buffer_format =
       viz::SharedImageFormatToBufferFormatRestrictedUtils::ToBufferFormat(
           si_info.meta.format);
+  // Copy which can be modified.
+  SharedImageInfo si_info_copy = si_info;
+  // Set CPU read/write usage based on buffer usage.
+  si_info_copy.meta.usage |= GetCpuSIUsage(buffer_usage);
   if (test_gmb_manager_) {
     auto gpu_memory_buffer = test_gmb_manager_->CreateGpuMemoryBuffer(
         si_info.meta.size, buffer_format, buffer_usage, surface_handle,
@@ -245,7 +250,6 @@ TestSharedImageInterface::CreateSharedImage(
     // Since the |gpu_memory_buffer| here is always a shared memory, clear the
     // external sampler prefs if it is already set by client.
     // https://issues.chromium.org/339546249.
-    SharedImageInfo si_info_copy = si_info;
     if (si_info_copy.meta.format.PrefersExternalSampler()) {
       si_info_copy.meta.format.ClearPrefersExternalSampler();
     }
@@ -255,10 +259,10 @@ TestSharedImageInterface::CreateSharedImage(
   }
 
   return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token,
+      mailbox, si_info_copy, sync_token,
       GpuMemoryBufferHandleInfo(std::move(buffer_handle),
-                                     si_info.meta.format, si_info.meta.size,
-                                     buffer_usage),
+                                si_info_copy.meta.format,
+                                si_info_copy.meta.size, buffer_usage),
       holder_);
 }
 
@@ -287,8 +291,8 @@ TestSharedImageInterface::CreateSharedImage(
   auto mailbox = Mailbox::Generate();
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
-  return base::MakeRefCounted<ClientSharedImage>(
-      mailbox, si_info.meta, sync_token, holder_, buffer_handle.type);
+  return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info, sync_token,
+                                                 holder_, buffer_handle.type);
 }
 
 scoped_refptr<ClientSharedImage>
@@ -302,9 +306,8 @@ TestSharedImageInterface::CreateSharedImageForSoftwareCompositor(
   shared_images_.insert(mailbox);
   most_recent_size_ = si_info.meta.size;
 
-  return base::MakeRefCounted<ClientSharedImage>(mailbox, si_info.meta,
-                                                 GenUnverifiedSyncToken(),
-                                                 holder_, std::move(mapping));
+  return base::MakeRefCounted<ClientSharedImage>(
+      mailbox, si_info, GenUnverifiedSyncToken(), holder_, std::move(mapping));
 }
 
 scoped_refptr<ClientSharedImage>
@@ -365,22 +368,20 @@ TestSharedImageInterface::CreateSwapChain(viz::SharedImageFormat format,
                                           const gfx::ColorSpace& color_space,
                                           GrSurfaceOrigin surface_origin,
                                           SkAlphaType alpha_type,
-                                          gpu::SharedImageUsageSet usage) {
+                                          gpu::SharedImageUsageSet usage,
+                                          std::string_view debug_label) {
   auto front_buffer = Mailbox::Generate();
   auto back_buffer = Mailbox::Generate();
   SyncToken sync_token = GenUnverifiedSyncToken();
   shared_images_.insert(front_buffer);
   shared_images_.insert(back_buffer);
+  SharedImageMetadata metadata(format, size, color_space, surface_origin,
+                               alpha_type, usage);
+  SharedImageInfo info(metadata, debug_label);
   return {base::MakeRefCounted<ClientSharedImage>(
-              front_buffer,
-              SharedImageMetadata(format, size, color_space,
-                                       surface_origin, alpha_type, usage),
-              sync_token, holder_, gfx::EMPTY_BUFFER),
-          base::MakeRefCounted<ClientSharedImage>(
-              back_buffer,
-              SharedImageMetadata(format, size, color_space,
-                                       surface_origin, alpha_type, usage),
-              sync_token, holder_, gfx::EMPTY_BUFFER)};
+              front_buffer, info, sync_token, holder_, gfx::EMPTY_BUFFER),
+          base::MakeRefCounted<ClientSharedImage>(back_buffer, info, sync_token,
+                                                  holder_, gfx::EMPTY_BUFFER)};
 }
 
 void TestSharedImageInterface::PresentSwapChain(
@@ -431,22 +432,12 @@ void TestSharedImageInterface::WaitSyncToken(const SyncToken& sync_token) {
 }
 
 scoped_refptr<ClientSharedImage>
-TestSharedImageInterface::CreateSharedImageWithMapCallbackController(
+TestSharedImageInterface::CreateSharedImageWithAsyncMapControl(
     const SharedImageInfo& si_info,
     gfx::BufferUsage buffer_usage,
     bool premapped,
-    FakeGpuMemoryBuffer::MapCallbackController* controller) {
-  CHECK(controller);
-
-  // Create a FakeGpuMemoryBuffer.
-  auto buffer_format =
-      viz::SharedImageFormatToBufferFormatRestrictedUtils::ToBufferFormat(
-          si_info.meta.format);
-  auto fake_gmb = std::make_unique<FakeGpuMemoryBuffer>(
-      si_info.meta.size, buffer_format, premapped, controller);
-
+    const ClientSharedImage::AsyncMapInvokedCallback& callback) {
   Mailbox mailbox;
-  // Create a ClientSharedImage with a FakeGpuMemoryBuffer.
   {
     base::AutoLock locked(lock_);
     mailbox = Mailbox::Generate();
@@ -454,7 +445,7 @@ TestSharedImageInterface::CreateSharedImageWithMapCallbackController(
   }
 
   auto image = ClientSharedImage::CreateForTesting(
-      mailbox, si_info.meta, GenUnverifiedSyncToken(), std::move(fake_gmb),
+      mailbox, si_info.meta, GenUnverifiedSyncToken(), premapped, callback,
       buffer_usage, holder_);
   return image;
 }

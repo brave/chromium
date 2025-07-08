@@ -170,8 +170,16 @@ void CollaborationGroupInfoBarDelegate::ClearCollaborationGroupInfobars(
   const auto& infobars = infobar_manager->infobars();
   for (int i = static_cast<int>(infobars.size()) - 1; i >= 0; --i) {
     infobars::InfoBar* infobar = infobars[i];
+
+    InfoBarIOS* infobar_ios = static_cast<InfoBarIOS*>(infobar);
+    if (infobar_ios->infobar_type() !=
+        InfobarType::kInfobarTypeCollaborationGroup) {
+      continue;
+    }
+
     CollaborationGroupInfoBarDelegate* delegate =
-        static_cast<CollaborationGroupInfoBarDelegate*>(infobar->delegate());
+        static_cast<CollaborationGroupInfoBarDelegate*>(
+            infobar_ios->delegate());
     if (!delegate) {
       continue;
     }
@@ -206,12 +214,18 @@ CollaborationGroupInfoBarDelegate::GetInstantMessageIdentifier() const {
   if (attributions.empty()) {
     return std::nullopt;
   }
-  return attributions.front().id;
+
+  const auto& message_id = attributions.at(0).id;
+  if (!message_id.has_value() || !message_id.value().is_valid()) {
+    return std::nullopt;
+  }
+
+  return message_id;
 }
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 CollaborationGroupInfoBarDelegate::GetIdentifier() const {
-  return TAB_SHARING_INFOBAR_DELEGATE;
+  return COLLABORATION_GROUP_UPDATE_INFOBAR_DELEGATE;
 }
 
 std::u16string CollaborationGroupInfoBarDelegate::GetMessageText() const {

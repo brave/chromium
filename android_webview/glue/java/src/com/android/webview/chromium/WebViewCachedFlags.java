@@ -11,7 +11,7 @@ import android.content.SharedPreferences;
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.android_webview.AwFeatureMap;
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
@@ -77,10 +77,13 @@ public class WebViewCachedFlags {
                             Map.of(
                                     // Add new CachedFlags here along with their default state.
                                     AwFeatures.WEBVIEW_SEPARATE_RESOURCE_CONTEXT,
-                                            DefaultState.DISABLED,
-                                    AwFeatures.WEBVIEW_DISABLE_CHIPS, DefaultState.DISABLED,
+                                    DefaultState.DISABLED,
+                                    AwFeatures.WEBVIEW_DISABLE_CHIPS,
+                                    DefaultState.DISABLED,
                                     AwFeatures.WEBVIEW_USE_STARTUP_TASKS_LOGIC,
-                                            DefaultState.DISABLED));
+                                    DefaultState.DISABLED,
+                                    AwFeatures.WEBVIEW_USE_STARTUP_TASKS_LOGIC_P2,
+                                    DefaultState.DISABLED));
         }
     }
 

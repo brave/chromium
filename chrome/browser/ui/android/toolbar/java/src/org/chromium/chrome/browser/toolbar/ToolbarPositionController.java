@@ -79,7 +79,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
     private static @Nullable Boolean sToolbarShouldShowOnTop;
 
     private final BrowserControlsSizer mBrowserControlsSizer;
-    private final ObservableSupplier<Boolean> mIsNtpShowingSupplier;
+    private final ObservableSupplier<Boolean> mIsNtpWithFakeboxShowingSupplier;
     private final ObservableSupplier<Boolean> mIsTabSwitcherFinishedShowingSupplier;
     private final ObservableSupplier<Boolean> mIsOmniboxFocusedSupplier;
     private final ObservableSupplier<Boolean> mIsFormFieldFocusedSupplier;
@@ -120,8 +120,8 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
      * @param browserControlsSizer {@link BrowserControlsSizer}, used to manipulate position of the
      *     browser controls and relative heights of the top and bottom controls.
      * @param sharedPreferences SharedPreferences instance used to monitor user preference state.
-     * @param isNtpShowingSupplier Supplier of the current state of the NTP. Must have a non-null
-     *     value immediately available.
+     * @param isNtpWithFakeboxShowingSupplier Supplier telling us if the NTP is showing with a
+     *     fakebox. Must have a non-null value immediately available.
      * @param isTabSwitcherFinishedShowingSupplier Supplier indicating whether the tab switcher has
      *     finished showing. It should only reflect `true` once the transition animation has fully
      *     completed.
@@ -142,7 +142,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
     public ToolbarPositionController(
             BrowserControlsSizer browserControlsSizer,
             SharedPreferences sharedPreferences,
-            ObservableSupplier<Boolean> isNtpShowingSupplier,
+            ObservableSupplier<Boolean> isNtpWithFakeboxShowingSupplier,
             ObservableSupplier<Boolean> isTabSwitcherFinishedShowingSupplier,
             ObservableSupplier<Boolean> isOmniboxFocusedSupplier,
             ObservableSupplier<Boolean> isFormFieldFocusedSupplier,
@@ -158,7 +158,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
             Handler handler,
             Context context) {
         mBrowserControlsSizer = browserControlsSizer;
-        mIsNtpShowingSupplier = isNtpShowingSupplier;
+        mIsNtpWithFakeboxShowingSupplier = isNtpWithFakeboxShowingSupplier;
         mIsTabSwitcherFinishedShowingSupplier = isTabSwitcherFinishedShowingSupplier;
         mIsOmniboxFocusedSupplier = isOmniboxFocusedSupplier;
         mIsFormFieldFocusedSupplier = isFormFieldFocusedSupplier;
@@ -186,7 +186,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
         mKeyboardVisibilityListener =
                 (showing) -> updateCurrentPosition(/* formFieldStateChanged= */ true, false);
 
-        mIsNtpShowingSupplier.addObserver(mIsNtpShowingObserver);
+        mIsNtpWithFakeboxShowingSupplier.addObserver(mIsNtpShowingObserver);
         mIsTabSwitcherFinishedShowingSupplier.addObserver(mIsTabSwitcherFinishedShowingObserver);
         mIsOmniboxFocusedSupplier.addObserver(mIsOmniboxFocusedObserver);
         mIsFormFieldFocusedSupplier.addObserver(mIsFormFieldFocusedObserver);
@@ -301,7 +301,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
     }
 
     public void destroy() {
-        mIsNtpShowingSupplier.removeObserver(mIsNtpShowingObserver);
+        mIsNtpWithFakeboxShowingSupplier.removeObserver(mIsNtpShowingObserver);
         mIsTabSwitcherFinishedShowingSupplier.removeObserver(mIsTabSwitcherFinishedShowingObserver);
         mIsOmniboxFocusedSupplier.removeObserver(mIsOmniboxFocusedObserver);
         mIsFormFieldFocusedSupplier.removeObserver(mIsFormFieldFocusedObserver);
@@ -315,6 +315,17 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
         mIsFormFieldFocusedSupplier.removeObserver(mFormFieldViewOffsetCallback);
         mControlContainerTranslationSupplier.removeObserver(mControlContainerTranslationCallback);
         mControlContainerHeightSupplier.removeObserver(mControlContainerHeightCallback);
+    }
+
+    /**
+     * Whether the current position matches the user-configured one, e.g. if the configured position
+     * is bottom but the omnibox is focused.
+     */
+    public boolean doesPrefMismatchPosition() {
+        @ControlsPosition
+        int positionForPref =
+                isToolbarConfiguredToShowOnTop() ? ControlsPosition.TOP : ControlsPosition.BOTTOM;
+        return mCurrentPosition != positionForPref;
     }
 
     /**
@@ -372,7 +383,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
     }
 
     private void updateCurrentPosition(boolean formFieldStateChanged, boolean prefStateChanged) {
-        boolean ntpShowing = mIsNtpShowingSupplier.get();
+        boolean ntpShowing = mIsNtpWithFakeboxShowingSupplier.get();
         boolean tabSwitcherShowing = mIsTabSwitcherFinishedShowingSupplier.get();
         boolean isOmniboxFocused = mIsOmniboxFocusedSupplier.get();
         boolean isFindInPageShowing = mIsFindInPageShowingSupplier.get();
@@ -423,7 +434,7 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
                                 (LayoutParams) mToolbarProgressBarContainer.getLayoutParams();
                         progressBarLayoutParams.setAnchorId(mControlContainer.getView().getId());
                         progressBarLayoutParams.anchorGravity = Gravity.BOTTOM;
-                        progressBarLayoutParams.gravity = Gravity.TOP;
+                        progressBarLayoutParams.gravity = Gravity.CENTER;
                         mToolbarProgressBarContainer.setLayoutParams(progressBarLayoutParams);
                     };
 
@@ -519,9 +530,8 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
         if (newControlsPosition == currentPosition) {
             // Don't do anything for non-transitions.
             return StateTransition.NONE;
-        } else if (formFieldStateChanged || prefStateChanged) {
-            // Animate when the pref changes (i.e. the long press menu is invoked) or the keyboard
-            // shows/hides.
+        } else if (prefStateChanged) {
+            // Animate when the pref changes (i.e. the long press menu is invoked).
             return switchingToBottom
                     ? StateTransition.ANIMATE_TO_BOTTOM
                     : StateTransition.ANIMATE_TO_TOP;
@@ -551,11 +561,18 @@ public class ToolbarPositionController implements OnSharedPreferenceChangeListen
             mControlContainerHeight = height;
         }
 
+        if (mCurrentPosition == ControlsPosition.BOTTOM) {
+            mControlContainer.mutateHairlineLayoutParams().bottomMargin = mControlContainerHeight;
+        } else {
+            mControlContainer.mutateHairlineLayoutParams().topMargin = mControlContainerHeight;
+        }
+
         mBottomControlsStacker.requestLayerUpdate(false);
     }
 
     /** Returns whether the toolbar will be shown on top for the supplied tab. */
     public static boolean shouldShowToolbarOnTop(Tab tab) {
+        // TODO(https://g-issues.chromium.org/issues/420271795): consider fakebox presence here.
         boolean isRegularNtp =
                 (tab != null)
                         && (tab.getUrl() != null)

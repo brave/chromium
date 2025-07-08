@@ -156,7 +156,7 @@ class CONTENT_EXPORT BucketContext
   ~BucketContext() override;
 
   // True if the backing store is SQLite, or would be SQLite if it existed.
-  bool ShouldUseSqlite();
+  bool ShouldUseSqlite() const;
 
   void QueueRunTasks();
 
@@ -203,6 +203,7 @@ class CONTENT_EXPORT BucketContext
 
   // Create external objects from |objects| and store the results in
   // |mojo_objects|. |mojo_objects| must be the same length as |objects|.
+  // Only used for LevelDB.
   void CreateAllExternalObjects(
       const std::vector<IndexedDBExternalObject>& objects,
       std::vector<blink::mojom::IDBExternalObjectPtr>* mojo_objects);
@@ -340,8 +341,7 @@ class CONTENT_EXPORT BucketContext
         client_state_checker_remote;
   };
 
-  Database* AddDatabase(const std::u16string& name,
-                        std::unique_ptr<Database> database);
+  Database* CreateAndAddDatabase(const std::u16string& name);
 
   void OnHandleCreated();
   void OnHandleDestruction();
@@ -415,6 +415,7 @@ class CONTENT_EXPORT BucketContext
   // Databases in the backing store which are already loaded/represented by
   // Database objects. The backing store may have other databases which
   // have not yet been loaded.
+  uint32_t next_database_id_for_locks_ = 0;
   DBMap databases_;
   // This is the refcount for the number of BucketContextHandle's given out for
   // this bucket context using OpenReference. This is used as closing criteria

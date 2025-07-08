@@ -27,7 +27,6 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.text.SpannableString;
 import android.text.style.ClickableSpan;
-import android.util.Pair;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -46,7 +45,10 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
+import org.chromium.components.payments.PaymentApp.PaymentEntityLogo;
+import org.chromium.components.payments.SPCTransactionMode;
 import org.chromium.components.payments.secure_payment_confirmation.SecurePaymentConfirmationController.SpcResponseStatus;
+import org.chromium.components.payments.secure_payment_confirmation.SecurePaymentConfirmationProperties.ItemProperties;
 import org.chromium.components.payments.ui.CurrencyFormatter;
 import org.chromium.components.payments.ui.CurrencyFormatterJni;
 import org.chromium.components.payments.ui.InputProtector;
@@ -57,6 +59,8 @@ import org.chromium.payments.mojom.PaymentCurrencyAmount;
 import org.chromium.payments.mojom.PaymentItem;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
+import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
@@ -65,6 +69,8 @@ import org.chromium.url.GURL;
 import org.chromium.url.Origin;
 
 import java.lang.ref.WeakReference;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 /** Unit tests for {@link SecurePaymentConfirmationController} */
@@ -77,6 +83,26 @@ import java.util.Locale;
 public class SecurePaymentConfirmationControllerTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
+    static class TestPaymentEntityLogo implements PaymentEntityLogo {
+        private final Bitmap mIcon;
+        private final String mLabel;
+
+        TestPaymentEntityLogo(Bitmap icon, String label) {
+            mIcon = icon;
+            mLabel = label;
+        }
+
+        @Override
+        public String getLabel() {
+            return mLabel;
+        }
+
+        @Override
+        public Bitmap getIcon() {
+            return mIcon;
+        }
+    }
+
     @Mock private WindowAndroid mWindow;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private Callback<Integer> mResponseCallback;
@@ -84,9 +110,11 @@ public class SecurePaymentConfirmationControllerTest {
 
     private final FakeClock mClock = new FakeClock();
 
+    private List<PaymentEntityLogo> mPaymentEntityLogos;
     private String mPayeeName;
     private Origin mPayeeOrigin;
-    private String mPaymentInstrumentLabel;
+    private String mPaymentInstrumentLabelPrimary;
+    private String mPaymentInstrumentLabelSecondary;
     private PaymentItem mTotal;
     private Drawable mPaymentIcon;
     private Drawable mIssuerIcon;
@@ -125,14 +153,28 @@ public class SecurePaymentConfirmationControllerTest {
         CurrencyFormatterJni.setInstanceForTesting(currencyFormatter);
         doReturn("$1.50")
                 .when(currencyFormatter)
-                .format(
-                        /* nativeCurrencyFormatterAndroid= */ anyLong(),
-                        any(CurrencyFormatter.class),
-                        eq("1.50"));
+                .format(/* nativeCurrencyFormatterAndroid= */ anyLong(), eq("1.50"));
 
+        mPaymentEntityLogos =
+                Arrays.asList(
+                        new TestPaymentEntityLogo(
+                                Bitmap.createBitmap(
+                                        new int[] {Color.GREEN},
+                                        /* width= */ 1,
+                                        /* height= */ 1,
+                                        Bitmap.Config.ARGB_8888),
+                                "first logo label"),
+                        new TestPaymentEntityLogo(
+                                Bitmap.createBitmap(
+                                        new int[] {Color.BLUE},
+                                        /* width= */ 1,
+                                        /* height= */ 1,
+                                        Bitmap.Config.ARGB_8888),
+                                "second logo label"));
         mPayeeName = "Payee Name";
         mPayeeOrigin = Origin.create(new GURL("https://test.payee"));
-        mPaymentInstrumentLabel = "Payment Instrument Label";
+        mPaymentInstrumentLabelPrimary = "Payment Instrument Label Primary";
+        mPaymentInstrumentLabelSecondary = "Payment Instrument Label Secondary";
         mTotal = new PaymentItem();
         mTotal.amount = new PaymentCurrencyAmount();
         mTotal.amount.currency = "CAD";
@@ -142,22 +184,6 @@ public class SecurePaymentConfirmationControllerTest {
                         RuntimeEnvironment.getApplication().getResources(),
                         Bitmap.createBitmap(
                                 new int[] {Color.RED},
-                                /* width= */ 1,
-                                /* height= */ 1,
-                                Bitmap.Config.ARGB_8888));
-        mIssuerIcon =
-                new BitmapDrawable(
-                        RuntimeEnvironment.getApplication().getResources(),
-                        Bitmap.createBitmap(
-                                new int[] {Color.GREEN},
-                                /* width= */ 1,
-                                /* height= */ 1,
-                                Bitmap.Config.ARGB_8888));
-        mNetworkIcon =
-                new BitmapDrawable(
-                        RuntimeEnvironment.getApplication().getResources(),
-                        Bitmap.createBitmap(
-                                new int[] {Color.BLUE},
                                 /* width= */ 1,
                                 /* height= */ 1,
                                 Bitmap.Config.ARGB_8888));
@@ -207,34 +233,47 @@ public class SecurePaymentConfirmationControllerTest {
         createController(/* showOptOut= */ false, /* informOnly= */ false);
         PropertyModel model = mController.getModelForTesting();
 
-        assertTrue(model.get(SecurePaymentConfirmationProperties.SHOWS_ISSUER_NETWORK_ICONS));
-        assertSame(mIssuerIcon, model.get(SecurePaymentConfirmationProperties.ISSUER_ICON));
-        assertSame(mNetworkIcon, model.get(SecurePaymentConfirmationProperties.NETWORK_ICON));
+        assertSame(
+                mPaymentEntityLogos, model.get(SecurePaymentConfirmationProperties.HEADER_LOGOS));
         assertEquals(
                 context.getString(
                         org.chromium.components.payments.R.string
-                                .secure_payment_confirmation_verify_purchase),
+                                .secure_payment_confirmation_title),
                 model.get(SecurePaymentConfirmationProperties.TITLE));
+        ModelList itemList =
+                model.get(SecurePaymentConfirmationProperties.ITEM_LIST_ADAPTER).getModelList();
+        assertEquals(3, itemList.size());
+        ListItem storeItem = itemList.get(0);
         assertEquals(
-                String.format(
-                        "%s (%s)",
-                        mPayeeName,
-                        UrlFormatter.formatOriginForSecurityDisplay(
-                                mPayeeOrigin, SchemeDisplay.OMIT_HTTP_AND_HTTPS)),
-                model.get(SecurePaymentConfirmationProperties.STORE_LABEL));
+                context.getString(
+                        org.chromium.components.payments.R.string
+                                .secure_payment_confirmation_store_label),
+                storeItem.model.get(ItemProperties.ICON_LABEL));
+        assertEquals(mPayeeName, storeItem.model.get(ItemProperties.PRIMARY_TEXT));
         assertEquals(
-                Pair.create(mPaymentIcon, false),
-                model.get(SecurePaymentConfirmationProperties.PAYMENT_ICON));
+                UrlFormatter.formatOriginForSecurityDisplay(
+                        mPayeeOrigin, SchemeDisplay.OMIT_HTTP_AND_HTTPS),
+                storeItem.model.get(ItemProperties.SECONDARY_TEXT));
+        ListItem paymentItem = itemList.get(1);
+        assertEquals(mPaymentIcon, paymentItem.model.get(ItemProperties.ICON));
         assertEquals(
-                mPaymentInstrumentLabel,
-                model.get(SecurePaymentConfirmationProperties.PAYMENT_INSTRUMENT_LABEL));
+                mPaymentInstrumentLabelPrimary, paymentItem.model.get(ItemProperties.PRIMARY_TEXT));
         assertEquals(
-                mTotal.amount.currency, model.get(SecurePaymentConfirmationProperties.CURRENCY));
+                mPaymentInstrumentLabelSecondary,
+                paymentItem.model.get(ItemProperties.SECONDARY_TEXT));
+        ListItem totalItem = itemList.get(2);
+        assertEquals(
+                context.getString(
+                        org.chromium.components.payments.R.string
+                                .secure_payment_confirmation_total_label),
+                totalItem.model.get(ItemProperties.ICON_LABEL));
         CurrencyFormatter formatter =
                 new CurrencyFormatter(mTotal.amount.currency, Locale.getDefault());
         String totalAmountValue = formatter.format(mTotal.amount.value);
         formatter.destroy();
-        assertEquals(totalAmountValue, model.get(SecurePaymentConfirmationProperties.TOTAL));
+        assertEquals(
+                String.format("%s %s", mTotal.amount.currency, totalAmountValue),
+                totalItem.model.get(ItemProperties.PRIMARY_TEXT));
         assertNull(model.get(SecurePaymentConfirmationProperties.OPT_OUT_TEXT));
         assertSpannableStringsEqual(
                 SpanApplier.applySpans(
@@ -245,7 +284,8 @@ public class SecurePaymentConfirmationControllerTest {
                 model.get(SecurePaymentConfirmationProperties.FOOTNOTE));
         assertEquals(
                 context.getString(
-                        org.chromium.components.payments.R.string.payments_continue_button),
+                        org.chromium.components.payments.R.string
+                                .secure_payment_confirmation_verify_button_label),
                 model.get(SecurePaymentConfirmationProperties.CONTINUE_BUTTON_LABEL));
     }
 
@@ -362,7 +402,7 @@ public class SecurePaymentConfirmationControllerTest {
     public void testOnCancel() {
         createController(/* showOptOut= */ false, /* informOnly= */ false);
         mClock.advanceCurrentTimeMillis(InputProtector.POTENTIALLY_UNINTENDED_INPUT_THRESHOLD);
-        mController.getViewForTesting().mCancelButton.performClick();
+        mController.onCancel();
 
         verify(mResponseCallback).onResult(eq(SpcResponseStatus.CANCEL));
         // Verify hide() was called.
@@ -373,7 +413,7 @@ public class SecurePaymentConfirmationControllerTest {
     @Test
     public void testOnCancel_whenInputThresholdNotReached() {
         createController(/* showOptOut= */ false, /* informOnly= */ false);
-        mController.getViewForTesting().mCancelButton.performClick();
+        mController.onCancel();
 
         verifyNoInteractions(mResponseCallback);
         verifyNoInteractions(mBottomSheetObserver);
@@ -436,21 +476,114 @@ public class SecurePaymentConfirmationControllerTest {
         verifyNoInteractions(mBottomSheetController);
     }
 
+    @Test
+    public void testTransactionMode_autoAccept() {
+        createController(
+                /* showOptOut= */ false, /* informOnly= */ false, SPCTransactionMode.AUTOACCEPT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and accept the prompt.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.ACCEPT));
+    }
+
+    @Test
+    public void testTransactionMode_autoAccept_withInformOnly() {
+        createController(
+                /* showOptOut= */ false, /* informOnly= */ true, SPCTransactionMode.AUTOACCEPT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and accept the prompt. For the
+        // inform prompt, this is equivalent to verify another way.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.ANOTHER_WAY));
+    }
+
+    @Test
+    public void testTransactionMode_autoVerifyAnotherWay() {
+        createController(
+                /* showOptOut= */ false,
+                /* informOnly= */ false,
+                SPCTransactionMode.AUTOAUTHANOTHERWAY);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and choose to verify another
+        // way.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.ANOTHER_WAY));
+    }
+
+    @Test
+    public void testTransactionMode_autoVerifyAnotherWay_withInformOnly() {
+        createController(
+                /* showOptOut= */ false,
+                /* informOnly= */ true,
+                SPCTransactionMode.AUTOAUTHANOTHERWAY);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and choose to verify another
+        // way.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.ANOTHER_WAY));
+    }
+
+    @Test
+    public void testTransactionMode_autoReject() {
+        createController(
+                /* showOptOut= */ false, /* informOnly= */ false, SPCTransactionMode.AUTOREJECT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and reject the prompt.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.CANCEL));
+    }
+
+    @Test
+    public void testTransactionMode_autoReject_withInformOnly() {
+        createController(
+                /* showOptOut= */ false, /* informOnly= */ true, SPCTransactionMode.AUTOREJECT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and reject the prompt.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.CANCEL));
+    }
+
+    @Test
+    public void testTransactionMode_autoOptOut() {
+        createController(
+                /* showOptOut= */ true, /* informOnly= */ false, SPCTransactionMode.AUTOOPTOUT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and opt out of the prompt.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.OPT_OUT));
+    }
+
+    @Test
+    public void testTransactionMode_autoOptOut_withInformOnly() {
+        createController(
+                /* showOptOut= */ true, /* informOnly= */ true, SPCTransactionMode.AUTOOPTOUT);
+        assertTrue(mController.show());
+
+        // The automation should run immediately when show is called, and opt out of the prompt.
+        verify(mResponseCallback).onResult(eq(SpcResponseStatus.OPT_OUT));
+    }
+
     private void createController(boolean showOptOut, boolean informOnly) {
+        createController(showOptOut, informOnly, SPCTransactionMode.NONE);
+    }
+
+    private void createController(
+            boolean showOptOut, boolean informOnly, @SPCTransactionMode int transactionMode) {
         mController =
                 new SecurePaymentConfirmationController(
                         mWindow,
+                        mPaymentEntityLogos,
                         mPayeeName,
                         mPayeeOrigin,
-                        mPaymentInstrumentLabel,
+                        mPaymentInstrumentLabelPrimary,
+                        mPaymentInstrumentLabelSecondary,
                         mTotal,
                         mPaymentIcon,
-                        mIssuerIcon,
-                        mNetworkIcon,
                         mRelyingPartyId,
                         showOptOut,
                         informOnly,
-                        mResponseCallback);
+                        mResponseCallback,
+                        transactionMode);
         InputProtector inputProtector = new InputProtector(mClock);
         inputProtector.markShowTime();
         mController.setInputProtectorForTesting(inputProtector);

@@ -8,6 +8,7 @@ import androidx.annotation.MainThread;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
@@ -15,8 +16,8 @@ import org.chromium.base.ObserverList;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.google_apis.gaia.CoreAccountId;
 
 import java.util.List;
 
@@ -205,7 +206,8 @@ public class IdentityManager {
         CoreAccountInfo[] getAccountsWithRefreshTokens(long nativeIdentityManager);
 
         // TODO(crbug.com/40284908): Remove the accountId parameter.
-        void refreshAccountInfoIfStale(long nativeIdentityManager, CoreAccountId accountId);
+        void refreshAccountInfoIfStale(
+                long nativeIdentityManager, @JniType("CoreAccountId") CoreAccountId accountId);
 
         boolean isClearPrimaryAccountAllowed(long nativeIdentityManager);
     }

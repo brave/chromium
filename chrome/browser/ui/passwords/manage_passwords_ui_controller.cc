@@ -16,7 +16,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
@@ -31,6 +31,8 @@
 #include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/promos/promos_types.h"
 #include "chrome/browser/signin/signin_promo_util.h"
+#include "chrome/browser/ui/actions/chrome_action_id.h"
+#include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -51,10 +53,12 @@
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tab_dialogs.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/passwords/password_change/password_change_credential_leak_bubble_view.h"
+#include "chrome/browser/ui/views/passwords/manage_passwords_page_action_controller.h"
+#include "chrome/browser/ui/views/passwords/password_bubble_view_base.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/branded_strings.h"
@@ -84,6 +88,7 @@
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/user_education/common/feature_promo/feature_promo_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
@@ -155,7 +160,7 @@ void MaybeShowPasswordManagerShortcutIPH(Browser* browser) {
   if (!web_app::AreWebAppsEnabled(browser->profile())) {
     return;
   }
-  browser->window()->MaybeShowFeaturePromo(
+  BrowserUserEducationInterface::From(browser)->MaybeShowFeaturePromo(
       feature_engagement::kIPHPasswordManagerShortcutFeature);
 }
 
@@ -433,7 +438,7 @@ void ManagePasswordsUIController::OnPasswordAutofilled(
   // Only one of these promos will be able to show. Try the more specific one
   // first.
   if (has_non_empty_note) {
-    browser->window()->MaybeShowFeaturePromo(
+    BrowserUserEducationInterface::From(browser)->MaybeShowFeaturePromo(
         feature_engagement::kIPHPasswordsManagementBubbleDuringSigninFeature);
   }
   MaybeShowPasswordManagerShortcutIPH(browser);
@@ -464,6 +469,7 @@ void ManagePasswordsUIController::OnCredentialLeak(
 
     password_change_service->OfferPasswordChangeUi(
         details.origin, details.username, details.password, web_contents());
+    UpdateBubbleAndIconVisibility();
     return;
   }
 
@@ -473,7 +479,7 @@ void ManagePasswordsUIController::OnCredentialLeak(
       password_manager::GetLeakDialogType(details.leak_type));
 
   auto* raw_controller = new CredentialLeakDialogControllerImpl(
-      this, std::move(details), std::move(metric_recorder));
+      this, details.leak_type, std::move(metric_recorder));
   dialog_controller_.reset(raw_controller);
   raw_controller->ShowCredentialLeakPrompt(
       CreateCredentialLeakPrompt(raw_controller));
@@ -716,8 +722,15 @@ ManagePasswordsUIController::GetPasswordFeatureManager() {
 }
 
 password_manager::ui::State ManagePasswordsUIController::GetState() const {
-  if (IsPasswordChangeOngoing()) {
-    return password_manager::ui::State::PASSWORD_CHANGE_STATE;
+  PasswordChangeDelegate* delegate = GetPasswordChangeDelegate();
+  if (delegate) {
+    if (delegate->GetCurrentState() ==
+        PasswordChangeDelegate::State::kPasswordSuccessfullyChanged) {
+      // Prevent any UI being displayed instead of the password change bubble.
+      return password_manager::ui::State::PASSWORD_CHANGE_STATE;
+    }
+    // Prevent any UI being displayed during ongoing password change flow.
+    return password_manager::ui::State::INACTIVE_STATE;
   }
   return passwords_data_.state();
 }
@@ -800,6 +813,16 @@ bool ManagePasswordsUIController::GpmPinCreatedDuringRecentPasskeyCreation()
 
 const std::string& ManagePasswordsUIController::PasskeyRpId() const {
   return passwords_data_.passkey_rp_id();
+}
+
+const std::u16string& ManagePasswordsUIController::PasswordChangeUsername()
+    const {
+  return passwords_data_.password_change_username();
+}
+
+const std::u16string& ManagePasswordsUIController::PasswordChangeNewPassword()
+    const {
+  return passwords_data_.password_change_new_password();
 }
 
 void ManagePasswordsUIController::OnBubbleShown() {
@@ -937,7 +960,7 @@ void ManagePasswordsUIController::SavePassword(const std::u16string& username,
   if (browser && !signin::ShouldShowPasswordSignInPromo(*browser->profile())) {
     // Only one of these promos will be able to show. Try the more specific one
     // first.
-    browser->window()->MaybeShowFeaturePromo(
+    BrowserUserEducationInterface::From(browser)->MaybeShowFeaturePromo(
         feature_engagement::kIPHPasswordsManagementBubbleAfterSaveFeature);
     MaybeShowPasswordManagerShortcutIPH(browser);
   }
@@ -1143,8 +1166,10 @@ void ManagePasswordsUIController::HidePasswordBubble() {
   }
 }
 
-void ManagePasswordsUIController::ShowChangePasswordBubble() {
-  CHECK_EQ(password_manager::ui::PASSWORD_CHANGE_STATE, GetState());
+void ManagePasswordsUIController::ShowChangePasswordBubble(
+    const std::u16string& username,
+    const std::u16string& new_password) {
+  passwords_data_.OpenPasswordChangedBubble(username, new_password);
   bubble_status_ = BubbleStatus::SHOULD_POP_UP;
   UpdateBubbleAndIconVisibility();
 }
@@ -1162,8 +1187,46 @@ void ManagePasswordsUIController::UpdateBubbleAndIconVisibility() {
   if (!browser) {
     return;
   }
-  browser->window()->UpdatePageActionIcon(PageActionIconType::kManagePasswords);
-  browser->window()->UpdatePageActionIcon(PageActionIconType::kChangePassword);
+  if (IsPageActionMigrated(PageActionIconType::kManagePasswords)) {
+    tabs::TabInterface* const tab_interface = browser->GetActiveTabInterface();
+    auto* const tab_features = tab_interface->GetTabFeatures();
+    CHECK(tab_features);
+    auto* const controller =
+        tab_features->manage_passwords_page_action_controller();
+
+    password_manager::ui::State state = GetState();
+    const bool is_blocklisted = IsExplicitlyBlocklisted();
+
+    if (dialog_controller_ &&
+        state == password_manager::ui::CREDENTIAL_REQUEST_STATE) {
+      state = password_manager::ui::INACTIVE_STATE;
+    }
+
+    if (state != last_page_action_state_ ||
+        is_blocklisted != last_page_action_is_blocklisted_) {
+      PasswordBubbleViewBase::CloseCurrentBubble();
+    }
+    last_page_action_state_ = state;
+    last_page_action_is_blocklisted_ = is_blocklisted;
+
+    if (IsAutomaticallyOpeningBubble() ||
+        bubble_status_ == BubbleStatus::SHOULD_POP_UP_WITH_FOCUS) {
+      // This will detach any existing bubble so OnBubbleHidden() isn't called.
+      weak_ptr_factory_.InvalidateWeakPtrs();
+      ShowBubbleWithoutUserInteraction();
+      // If the bubble appeared then the status is updated in OnBubbleShown().
+      ClearPopUpFlagForBubble();
+    }
+    actions::ActionItem* passwords_action_item =
+        actions::ActionManager::Get().FindAction(
+            kActionShowPasswordsBubbleOrPage,
+            browser->browser_actions()->root_action_item());
+    controller->UpdateVisibility(state, is_blocklisted, *this,
+                                 *passwords_action_item);
+  } else {
+    browser->window()->UpdatePageActionIcon(
+        PageActionIconType::kManagePasswords);
+  }
 }
 
 AccountChooserPrompt* ManagePasswordsUIController::CreateAccountChooser(

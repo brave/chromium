@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/callback_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/shell_integration.h"
 #include "components/infobars/core/infobar_manager.h"
@@ -23,6 +24,8 @@ namespace infobars {
 class ContentInfoBarManager;
 class InfoBar;
 }  // namespace infobars
+
+namespace pdf::infobar {
 
 // Toggles the PDF infobar if Chrome isn't the default PDF viewer. This infobar
 // offers to set Chrome as the default PDF viewer if it's not already.
@@ -92,5 +95,7 @@ class PdfInfoBarController : public infobars::InfoBarManager::Observer,
   // Must be the last member variable.
   base::WeakPtrFactory<PdfInfoBarController> weak_factory_{this};
 };
+
+}  // namespace pdf::infobar
 
 #endif  // CHROME_BROWSER_UI_PDF_INFOBAR_PDF_INFOBAR_CONTROLLER_H_

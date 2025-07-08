@@ -4,7 +4,9 @@
 
 #import "ios/chrome/browser/intelligence/features/features.h"
 
+#import "base/check.h"
 #import "base/metrics/field_trial_params.h"
+#import "base/time/time.h"
 
 BASE_FEATURE(kEnhancedCalendar,
              "EnhancedCalendar",
@@ -18,8 +20,24 @@ BASE_FEATURE(kPageActionMenu,
              "PageActionMenu",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+const char kPageActionMenuDirectEntryPointParam[] =
+    "PageActionMenuDirectEntryPoint";
+
 bool IsPageActionMenuEnabled() {
   return base::FeatureList::IsEnabled(kPageActionMenu);
+}
+
+bool IsDirectBWGEntryPoint() {
+  CHECK(IsPageActionMenuEnabled());
+  return base::GetFieldTrialParamByFeatureAsBool(
+      kPageActionMenu, kPageActionMenuDirectEntryPointParam, false);
+}
+
+const char kBWGSessionValidityDurationParam[] = "BWGSessionValidityDuration";
+
+const base::TimeDelta BWGSessionValidityDuration() {
+  return base::Minutes(base::GetFieldTrialParamByFeatureAsInt(
+      kPageActionMenu, kBWGSessionValidityDurationParam, 30));
 }
 
 const char kBWGPromoConsentParams[] = "BWGPromoConsentVariations";
@@ -38,6 +56,9 @@ BWGPromoConsentVariations BWGPromoConsentVariationsParam() {
   }
   if (param == 3) {
     return BWGPromoConsentVariations::kSkipConsent;
+  }
+  if (param == 4) {
+    return BWGPromoConsentVariations::kForceConsent;
   }
   return BWGPromoConsentVariations::kDisabled;
 }

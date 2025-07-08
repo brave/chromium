@@ -221,7 +221,6 @@ Generatieve AI is experimenteel, in vroege ontwikkeling en op dit moment beperkt
 <translation id="181434555916624618">Resultaten met mensen worden op dit moment niet getoond. Probeer een andere prompt.</translation>
 <translation id="1815850098929213707">De geselecteerde toets is <ph name="KEYS" />. Tik op de knop om het bedieningselement te bewerken.</translation>
 <translation id="1818174214124933000">Als je Sturen selecteert, worden je feedback en content (hieronder getoond) naar Google gestuurd, door mensen beoordeeld en gebruikt om onze producten en services te trainen of te verbeteren in overeenstemming met ons <ph name="LINK_POLICY_BEGIN" />Privacybeleid<ph name="LINK_POLICY_END" /> en de <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Servicevoorwaarden van Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Je docent heeft een niet-ondersteunde bron gestuurd. Vertel het hen.</translation>
 <translation id="1823120442877418684">Personages</translation>
 <translation id="1827738518074806965">Kunstgalerie</translation>
 <translation id="183287940576828840">Aanstootgevend/onveilig</translation>
@@ -328,6 +327,7 @@ Generatieve AI is experimenteel, in vroege ontwikkeling en op dit moment beperkt
 <translation id="2240366984605217732">Indelingsschakelaar</translation>
 <translation id="224421911978987610">lange belichting</translation>
 <translation id="2244834438220057800">groen</translation>
+<translation id="2248689665683494517">minimalistisch stilleven van een paar papaverbloemen in een glazen vaas op een zwarte achtergrond</translation>
 <translation id="225692081236532131">Activeringsstatus</translation>
 <translation id="2267285889943769271">Screenshot toevoegen</translation>
 <translation id="2268044343513325586">Verfijnen</translation>
@@ -758,6 +758,7 @@ Generatieve AI kan fouten maken, ook in informatie over mensen, dus dubbelcheck 
 <translation id="430786093962686457">chiffon</translation>
 <translation id="4310735698903592804">Recente achtergronden mogelijk gemaakt door AI van Google</translation>
 <translation id="4320904097188876154">neonroze</translation>
+<translation id="432961742358282111">Klik met de rechtermuisknop of houd je vinger op het scherm om definities, vertalingen of eenheidsconversies op te vragen. Gebruik de pijl-rechts of pijl-links om deze functie te beheren.</translation>
 <translation id="4333390807948134856">Er is op de toets <ph name="KEY_NAME" /> gedrukt</translation>
 <translation id="4334293042716981313">Je kunt ook <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />je eigen prompt schrijven<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">toets</translation>
@@ -1437,7 +1438,6 @@ Generatieve AI kan fouten maken, ook in informatie over mensen, dus dubbelcheck 
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Vraag het aan de experts op het Helpforum van Chromebook</translation>
-<translation id="7309823890857024809">minimalistisch stilleven van een paar papaverstelen in een glazen vaas op een zwarte achtergrond</translation>
 <translation id="7311368985037279727">toetsenbordkleur</translation>
 <translation id="7317831949569936035">Schoolinschrijving</translation>
 <translation id="7319430975418800333">A3</translation>

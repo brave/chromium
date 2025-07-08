@@ -26,6 +26,7 @@
 #import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/clear_browsing_data_coordinator.h"
 #import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/clear_browsing_data_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/features.h"
+#import "ios/chrome/browser/settings/ui_bundled/content_settings/content_settings_coordinator.h"
 #import "ios/chrome/browser/settings/ui_bundled/content_settings/content_settings_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/default_browser/default_browser_settings_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/google_services_settings_coordinator.h"
@@ -86,6 +87,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 @interface SettingsNavigationController () <
     AutofillProfileEditCoordinatorDelegate,
     ClearBrowsingDataCoordinatorDelegate,
+    ContentSettingsCoordinatorDelegate,
     GoogleServicesSettingsCoordinatorDelegate,
     ManageSyncSettingsCoordinatorDelegate,
     NotificationsCoordinatorDelegate,
@@ -94,8 +96,13 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
     PrivacyCoordinatorDelegate,
     PrivacySafeBrowsingCoordinatorDelegate,
     SafetyCheckCoordinatorDelegate,
+    SyncEncryptionPassphraseTableViewControllerPresentationDelegate,
     UIAdaptivePresentationControllerDelegate,
     UINavigationControllerDelegate>
+
+// Content settings coordinator.
+@property(nonatomic, strong)
+    ContentSettingsCoordinator* contentSettingsCoordinator;
 
 // Google services settings coordinator.
 @property(nonatomic, strong)
@@ -159,6 +166,10 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 
 // The Browser instance this controller is configured with.
 @property(nonatomic, assign) Browser* browser;
+
+// The Sync EncryptionPassphraseTableViewController if it’s displayed.
+@property(nonatomic, strong) SyncEncryptionPassphraseTableViewController*
+    syncEncryptionPassphraseTableViewController;
 
 @end
 
@@ -296,6 +307,8 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
           initWithRootViewController:controller
                              browser:browser
                             delegate:delegate];
+  controller.presentationDelegate = navigationController;
+  navigationController.syncEncryptionPassphraseTableViewController = controller;
   [controller navigationItem].leftBarButtonItem =
       [navigationController cancelButton];
   return navigationController;
@@ -560,19 +573,14 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
                                delegate:
                                    (id<SettingsNavigationControllerDelegate>)
                                        delegate {
-  ContentSettingsTableViewController* controller =
-      [[ContentSettingsTableViewController alloc] initWithBrowser:browser];
-
   SettingsNavigationController* navigationController =
       [[SettingsNavigationController alloc]
-          initWithRootViewController:controller
+          initWithRootViewController:nil
                              browser:browser
                             delegate:delegate];
 
-  // Make sure the cancel button is always present, as the Contents Settings
-  // screen isn't just shown from Settings.
-  [controller navigationItem].leftBarButtonItem =
-      [navigationController cancelButton];
+  [navigationController showContentSettings];
+
   return navigationController;
 }
 
@@ -684,6 +692,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
   [self.manageAccountsCoordinator stop];
   self.manageAccountsCoordinator = nil;
   [self stopSyncSettingsCoordinator];
+  [self stopContentSettingsCoordinator];
   [self stopGoogleServicesSettingsCoordinator];
   [self stopPasswordsCoordinator];
   [self stopSafetyCheckCoordinator];
@@ -726,6 +735,23 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 }
 
 #pragma mark - Private
+
+// Pushes a ContentSettingsCoordinator on this settings navigation
+// controller. Does nothing id the top view controller is already of type
+// `ContentSettingsCoordinator`.
+- (void)showContentSettings {
+  if ([self.topViewController
+          isKindOfClass:[ContentSettingsTableViewController class]]) {
+    // The top view controller is already the Contents Settings panel.
+    // No need to open it.
+    return;
+  }
+  self.contentSettingsCoordinator = [[ContentSettingsCoordinator alloc]
+      initWithBaseNavigationController:self
+                               browser:self.browser];
+  self.contentSettingsCoordinator.delegate = self;
+  [self.contentSettingsCoordinator start];
+}
 
 // Pushes a GoogleServicesSettingsViewController on this settings navigation
 // controller. Does nothing id the top view controller is already of type
@@ -802,6 +828,12 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
                                browser:self.browser];
   self.privacySafeBrowsingCoordinator.delegate = self;
   [self.privacySafeBrowsingCoordinator start];
+}
+
+// Stops the content settings coordiantor if it exists.
+- (void)stopContentSettingsCoordinator {
+  [self.contentSettingsCoordinator stop];
+  self.contentSettingsCoordinator = nil;
 }
 
 // Stops the underlying Google services settings coordinator if it exists.
@@ -911,6 +943,14 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
   [self.notificationsCoordinator stop];
   self.notificationsCoordinator.delegate = nil;
   self.notificationsCoordinator = nil;
+}
+
+#pragma mark - ContentSettingsCoordinatorDelegate
+
+- (void)contentSettingsCoordinatorViewControllerWasRemoved:
+    (ContentSettingsCoordinator*)coordinator {
+  DCHECK_EQ(self.contentSettingsCoordinator, coordinator);
+  [self stopContentSettingsCoordinator];
 }
 
 #pragma mark - GoogleServicesSettingsCoordinatorDelegate
@@ -1036,7 +1076,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
   }
 }
 
-#pragma mark - Accessibility
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityPerformEscape {
   UIViewController* poppedController = [self popViewControllerAnimated:YES];
@@ -1089,7 +1129,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 }
 
 - (void)keyCommand_close {
-  base::RecordAction(base::UserMetricsAction("MobileKeyCommandClose"));
+  base::RecordAction(base::UserMetricsAction(kMobileKeyCommandClose));
   [self closeSettings];
 }
 
@@ -1128,11 +1168,18 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 // dispatcher.
 - (void)showSyncPassphraseSettingsFromViewController:
     (UIViewController*)baseViewController {
-  SyncEncryptionPassphraseTableViewController* controller =
+  if (self.syncEncryptionPassphraseTableViewController) {
+    // Can occurs if the user double-tap on the "Enter passphrase" button.
+    return;
+  }
+  self.syncEncryptionPassphraseTableViewController =
       [[SyncEncryptionPassphraseTableViewController alloc]
           initWithBrowser:self.browser];
-  ConfigureHandlers(controller, _browser->GetCommandDispatcher());
-  [self pushViewController:controller animated:YES];
+  self.syncEncryptionPassphraseTableViewController.presentationDelegate = self;
+  ConfigureHandlers(self.syncEncryptionPassphraseTableViewController,
+                    _browser->GetCommandDispatcher());
+  [self pushViewController:self.syncEncryptionPassphraseTableViewController
+                  animated:YES];
 }
 
 // TODO(crbug.com/41352590) : Do not pass `baseViewController` through
@@ -1238,15 +1285,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 
 - (void)showContentsSettingsFromViewController:
     (UIViewController*)baseViewController {
-  if ([self.topViewController
-          isKindOfClass:[ContentSettingsTableViewController class]]) {
-    // The top view controller is already the Contents Settings panel.
-    // No need to open it.
-    return;
-  }
-  ContentSettingsTableViewController* controller =
-      [[ContentSettingsTableViewController alloc] initWithBrowser:self.browser];
-  [self pushViewController:controller animated:YES];
+  [self showContentSettings];
 }
 
 - (void)showNotificationsSettings {
@@ -1274,6 +1313,17 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
   self.notificationsCoordinator.delegate = self;
   [self.notificationsCoordinator start];
   [self.notificationsCoordinator showTrackingPrice];
+}
+
+#pragma mark - SyncEncryptionPassphraseTableViewControllerPresentationDelegate
+
+- (void)syncEncryptionPassphraseTableViewControllerDidDisappear:
+    (SyncEncryptionPassphraseTableViewController*)viewController {
+  CHECK_EQ(self.syncEncryptionPassphraseTableViewController, viewController,
+           base::NotFatalUntil::M142);
+  self.syncEncryptionPassphraseTableViewController.presentationDelegate = nil;
+  [self.syncEncryptionPassphraseTableViewController settingsWillBeDismissed];
+  self.syncEncryptionPassphraseTableViewController = nil;
 }
 
 @end

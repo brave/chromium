@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Am y tro, ni fydd canlyniadau gyda phobl yn cael eu dangos. Rhowch gynnig ar anogwr arall.</translation>
 <translation id="1815850098929213707">Y fysell a ddewiswyd yw <ph name="KEYS" />. Tapiwch ar y botwm i olygu'r rheolydd</translation>
 <translation id="1818174214124933000">Pan fyddwch yn dewis anfon, bydd eich adborth a'ch cynnwys (a ddangosir isod) yn cael eu hanfon at Google, eu hadolygu gan bobl, a'u defnyddio i hyfforddi neu wella ein cynnyrch a'n gwasanaethau yn amodol ar y <ph name="LINK_POLICY_BEGIN" />Polisi Preifatrwydd<ph name="LINK_POLICY_END" /> a <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Thelerau Gwasanaeth Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Mae eich athro wedi anfon adnodd nad yw'n cael ei gefnogi. Gadael iddynt wybod.</translation>
 <translation id="1823120442877418684">nodau</translation>
 <translation id="1827738518074806965">Oriel gelf</translation>
 <translation id="183287940576828840">Sarhaus/Anniogel</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Switsh cynllun</translation>
 <translation id="224421911978987610">amlygiad hir</translation>
 <translation id="2244834438220057800">gwyrdd</translation>
+<translation id="2248689665683494517">Saethiad llonydd minimalaidd o ychydig o flodau Papaver rhea mewn ffiol wydr ar gefndir du</translation>
 <translation id="225692081236532131">Statws gweithredu</translation>
 <translation id="2267285889943769271">Ychwanegu sgrinlun</translation>
 <translation id="2268044343513325586">Mireinio</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">shiffon</translation>
 <translation id="4310735698903592804">Papurau wal diweddar wedi'u pweru gan AI Google</translation>
 <translation id="4320904097188876154">pinc neon</translation>
+<translation id="432961742358282111">De-gliciwch neu pwyswch a daliwch i gael diffiniadau, cyfieithiadau, neu drosiadau uned. Defnyddiwch y bysellau saeth Chwith neu Dde i reoli'r nodwedd hon.</translation>
 <translation id="4333390807948134856">Mae'r fysell <ph name="KEY_NAME" /> wedi'i phwyso</translation>
 <translation id="4334293042716981313">Gallwch hefyd <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />ysgrifennu'ch neges annog eich hun<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">bysell</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Gofyn i'r arbenigwyr yn y fforwm cymorth Chromebook</translation>
-<translation id="7309823890857024809">Saethiad llonydd minimalaidd o ychydig o goesynnau Papaver rhea mewn ffiol wydr ar gefndir du</translation>
 <translation id="7311368985037279727">lliw bysellfwrdd</translation>
 <translation id="7317831949569936035">Cofrestru ysgol</translation>
 <translation id="7319430975418800333">A3</translation>

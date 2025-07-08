@@ -864,9 +864,9 @@ void Range::insertNode(Node* new_node, ExceptionState& exception_state) {
       start_node.getNodeType() == Node::kCommentNode) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kHierarchyRequestError,
-        WTF::StrCat({"Nodes of type '", new_node->nodeName(),
-                     "' may not be inserted inside nodes of type '",
-                     start_node.nodeName(), "'."}));
+        StrCat({"Nodes of type '", new_node->nodeName(),
+                "' may not be inserted inside nodes of type '",
+                start_node.nodeName(), "'."}));
     return;
   }
   const bool start_is_text = start_node.IsTextNode();
@@ -890,8 +890,8 @@ void Range::insertNode(Node* new_node, ExceptionState& exception_state) {
   if (start_node.IsAttributeNode()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kHierarchyRequestError,
-        WTF::StrCat({"Nodes of type '", new_node->nodeName(),
-                     "' may not be inserted inside nodes of type 'Attr'."}));
+        StrCat({"Nodes of type '", new_node->nodeName(),
+                "' may not be inserted inside nodes of type 'Attr'."}));
     return;
   }
 
@@ -992,16 +992,25 @@ String Range::GetText() const {
 }
 
 DocumentFragment* Range::createContextualFragment(
-    const String& markup,
+    const V8UnionStringOrTrustedHTML* markup,
     ExceptionState& exception_state) {
   // Algorithm:
-  // http://domparsing.spec.whatwg.org/#extensions-to-the-range-interface
+  // https://html.spec.whatwg.org/#the-createcontextualfragment()-method
 
-  DCHECK(!markup.IsNull());
+  // Step 1: Invoke Get Trusted Type compliant string.
+  String compliant_markup = TrustedTypesCheckForHTML(
+      markup, OwnerDocument().GetExecutionContext(), "Range",
+      "createContextualFragment", exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
 
+  DCHECK(!compliant_markup.IsNull());
+
+  // Step 2: This' start node.
   Node* node = &start_.Container();
 
-  // Step 1.
+  // Step 3, 4, 5: Determine element.
   Element* element;
   if (!start_.Offset() &&
       (node->IsDocumentNode() || node->IsDocumentFragment()))
@@ -1011,7 +1020,7 @@ DocumentFragment* Range::createContextualFragment(
   else
     element = node->parentElement();
 
-  // Step 2.
+  // Step 6: Handle null and <html> element.
   if (!element || IsA<HTMLHtmlElement>(element)) {
     Document& document = node->GetDocument();
 
@@ -1028,10 +1037,10 @@ DocumentFragment* Range::createContextualFragment(
     }
   }
 
-  // Steps 3, 4, 5.
+  // Steps 7, 8, 9: Invoke fragment parsing, etc.
   return blink::CreateContextualFragment(
-      markup, element, kAllowScriptingContentAndDoNotMarkAlreadyStarted,
-      exception_state);
+      compliant_markup, element,
+      kAllowScriptingContentAndDoNotMarkAlreadyStarted, exception_state);
 }
 
 void Range::detach() {
@@ -1045,7 +1054,7 @@ Node* Range::CheckNodeWOffset(Node* n,
     case Node::kDocumentTypeNode:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidNodeTypeError,
-          WTF::StrCat({"The node provided is of type '", n->nodeName(), "'."}));
+          StrCat({"The node provided is of type '", n->nodeName(), "'."}));
       return nullptr;
     case Node::kCdataSectionNode:
     case Node::kCommentNode:
@@ -1053,23 +1062,21 @@ Node* Range::CheckNodeWOffset(Node* n,
       if (offset > To<CharacterData>(n)->length()) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat({"The offset ", String::Number(offset),
-                         " is larger than the node's length (",
-                         String::Number(To<CharacterData>(n)->length()),
-                         ")."}));
+            StrCat({"The offset ", String::Number(offset),
+                    " is larger than the node's length (",
+                    String::Number(To<CharacterData>(n)->length()), ")."}));
       } else if (offset >
                  static_cast<unsigned>(std::numeric_limits<int>::max())) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat(
-                {"The offset ", String::Number(offset), " is invalid."}));
+            StrCat({"The offset ", String::Number(offset), " is invalid."}));
       }
       return nullptr;
     case Node::kProcessingInstructionNode:
       if (offset > To<ProcessingInstruction>(n)->data().length()) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat(
+            StrCat(
                 {"The offset ", String::Number(offset),
                  " is larger than the node's length (",
                  String::Number(To<ProcessingInstruction>(n)->data().length()),
@@ -1078,8 +1085,7 @@ Node* Range::CheckNodeWOffset(Node* n,
                  static_cast<unsigned>(std::numeric_limits<int>::max())) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat(
-                {"The offset ", String::Number(offset), " is invalid."}));
+            StrCat({"The offset ", String::Number(offset), " is invalid."}));
       }
       return nullptr;
     case Node::kAttributeNode:
@@ -1091,15 +1097,14 @@ Node* Range::CheckNodeWOffset(Node* n,
       if (offset > static_cast<unsigned>(std::numeric_limits<int>::max())) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat(
-                {"The offset ", String::Number(offset), " is invalid."}));
+            StrCat({"The offset ", String::Number(offset), " is invalid."}));
         return nullptr;
       }
       Node* child_before = NodeTraversal::ChildAt(*n, offset - 1);
       if (!child_before) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kIndexSizeError,
-            WTF::StrCat(
+            StrCat(
                 {"There is no child at offset ", String::Number(offset), "."}));
       }
       return child_before;
@@ -1133,7 +1138,7 @@ void Range::CheckNodeBA(Node* n, ExceptionState& exception_state) const {
     case Node::kDocumentNode:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidNodeTypeError,
-          WTF::StrCat({"The node provided is of type '", n->nodeName(), "'."}));
+          StrCat({"The node provided is of type '", n->nodeName(), "'."}));
       return;
     case Node::kCdataSectionNode:
     case Node::kCommentNode:
@@ -1161,7 +1166,7 @@ void Range::CheckNodeBA(Node* n, ExceptionState& exception_state) const {
     case Node::kTextNode:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidNodeTypeError,
-          WTF::StrCat({"The node provided is of type '", n->nodeName(), "'."}));
+          StrCat({"The node provided is of type '", n->nodeName(), "'."}));
       return;
   }
 }
@@ -1223,7 +1228,7 @@ void Range::selectNode(Node* ref_node, ExceptionState& exception_state) {
     case Node::kDocumentNode:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidNodeTypeError,
-          WTF::StrCat(
+          StrCat(
               {"The node provided is of type '", ref_node->nodeName(), "'."}));
       return;
   }
@@ -1259,8 +1264,8 @@ void Range::selectNodeContents(Node* ref_node,
       case Node::kDocumentTypeNode:
         exception_state.ThrowDOMException(
             DOMExceptionCode::kInvalidNodeTypeError,
-            WTF::StrCat({"The node provided is of type '", ref_node->nodeName(),
-                         "'."}));
+            StrCat({"The node provided is of type '", ref_node->nodeName(),
+                    "'."}));
         return;
     }
   }
@@ -1339,8 +1344,8 @@ void Range::surroundContents(Node* new_parent,
     case Node::kDocumentTypeNode:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidNodeTypeError,
-          WTF::StrCat({"The node provided is of type '", new_parent->nodeName(),
-                       "'."}));
+          StrCat({"The node provided is of type '", new_parent->nodeName(),
+                  "'."}));
       return;
     case Node::kCdataSectionNode:
     case Node::kCommentNode:

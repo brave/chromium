@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.tasks.tab_management;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 
 import static org.chromium.ui.base.DeviceFormFactor.PHONE;
-import static org.chromium.ui.base.DeviceFormFactor.TABLET;
 
 import androidx.test.filters.MediumTest;
 
@@ -24,6 +23,7 @@ import org.chromium.base.test.ActivityFinisher;
 import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Restriction;
@@ -42,6 +42,7 @@ import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.net.test.EmbeddedTestServer;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule.Component;
 
@@ -122,6 +123,7 @@ public class TabSwitcherSearchRenderTest {
     @MediumTest
     @Feature({"RenderTest"})
     @Restriction(PHONE)
+    @DisabledTest(message = "https://crbug.com/426664421")
     public void testHubSearchBox_Phone_Incognito() throws IOException {
         List<String> urlsToOpen = Arrays.asList("/chrome/test/data/android/navigate/one.html");
         IncognitoTabSwitcherStation tabSwitcher =
@@ -150,7 +152,7 @@ public class TabSwitcherSearchRenderTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @Restriction(TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
     public void testHubSearchLoupe_Tablet(boolean nightModeEnabled) throws IOException {
         RegularTabSwitcherStation tabSwitcher = mInitialPage.openRegularTabSwitcher();
@@ -161,7 +163,7 @@ public class TabSwitcherSearchRenderTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @Restriction(TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testHubSearchLoupe_Tablet_Incognito() throws IOException {
         List<String> urlsToOpen = Arrays.asList("/chrome/test/data/android/navigate/one.html");
         IncognitoTabSwitcherStation tabSwitcher =

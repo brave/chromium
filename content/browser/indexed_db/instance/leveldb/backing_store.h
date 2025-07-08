@@ -39,7 +39,6 @@
 #include "storage/common/file_system/file_system_mount_option.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
-#include "url/gurl.h"
 
 namespace base {
 class WaitableEvent;
@@ -96,7 +95,7 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
 
     // indexed_db::BackingStore::Database:
     const blink::IndexedDBDatabaseMetadata& GetMetadata() override;
-    PartitionedLockId GetLockId(int64_t object_store_id) const override;
+    std::string GetObjectStoreLockIdKey(int64_t object_store_id) const override;
     std::unique_ptr<Transaction> CreateTransaction(
         blink::mojom::IDBTransactionDurability durability,
         blink::mojom::IDBTransactionMode mode) override;
@@ -152,7 +151,6 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     // by the transaction and not referenced by running scripts.
     Status CommitPhaseTwo() override;
     void Rollback() override;
-    void Reset() override;
     Status SetDatabaseVersion(int64_t version) override;
     Status CreateObjectStore(int64_t object_store_id,
                              const std::u16string& name,
@@ -172,9 +170,8 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     Status RenameIndex(int64_t object_store_id,
                        int64_t index_id,
                        const std::u16string& new_name) override;
-    Status GetRecord(int64_t object_store_id,
-                     const blink::IndexedDBKey& key,
-                     IndexedDBValue* record) override;
+    StatusOr<IndexedDBValue> GetRecord(int64_t object_store_id,
+                                       const blink::IndexedDBKey& key) override;
     StatusOr<RecordIdentifier> PutRecord(int64_t object_store_id,
                                          const blink::IndexedDBKey& key,
                                          IndexedDBValue value) override;
@@ -193,16 +190,10 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
                                  int64_t index_id,
                                  const blink::IndexedDBKey& key,
                                  const RecordIdentifier& record) override;
-    StatusOr<blink::IndexedDBKey> GetPrimaryKeyViaIndex(
+    StatusOr<blink::IndexedDBKey> GetFirstPrimaryKeyForIndexKey(
         int64_t object_store_id,
         int64_t index_id,
         const blink::IndexedDBKey& key) override;
-    Status KeyExistsInIndex(
-        int64_t object_store_id,
-        int64_t index_id,
-        const blink::IndexedDBKey& key,
-        std::unique_ptr<blink::IndexedDBKey>* found_primary_key,
-        bool* exists) override;
     StatusOr<uint32_t> GetObjectStoreKeyCount(
         int64_t object_store_id,
         blink::IndexedDBKeyRange key_range) override;
@@ -228,6 +219,7 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
         int64_t index_id,
         const blink::IndexedDBKeyRange& key_range,
         blink::mojom::IDBCursorDirection) override;
+    blink::mojom::IDBValuePtr BuildMojoValue(IndexedDBValue value) override;
 
     Status PutExternalObjectsIfNeeded(const std::string& object_store_data_key,
                                       std::vector<IndexedDBExternalObject>*);
@@ -340,6 +332,8 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
   // avoid needless git churn.
   class Cursor : public indexed_db::BackingStore::Cursor {
    public:
+    enum IteratorState { READY = 0, SEEK };
+
     struct CursorOptions {
       CursorOptions();
       CursorOptions(const CursorOptions& other);
@@ -367,21 +361,22 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     const blink::IndexedDBKey& GetKey() const override;
     const blink::IndexedDBKey& GetPrimaryKey() const override;
     blink::IndexedDBKey TakeKey() && override;
-    bool Continue(const blink::IndexedDBKey& key,
-                  const blink::IndexedDBKey& primary_key,
-                  IteratorState state,
-                  Status*) override;
-    bool Advance(uint32_t count, Status*) override;
+    StatusOr<bool> Continue() override;
+    StatusOr<bool> Continue(const blink::IndexedDBKey& key,
+                            const blink::IndexedDBKey& primary_key) override;
+    StatusOr<bool> Advance(uint32_t count) override;
+    void SavePosition() override;
+    bool TryResetToLastSavedPosition() override;
 
-    bool FirstSeek(Status*);
+    StatusOr<bool> Continue(const blink::IndexedDBKey& key,
+                            const blink::IndexedDBKey& primary_key,
+                            IteratorState state);
+    StatusOr<bool> FirstSeek();
 
    protected:
     Cursor(base::WeakPtr<Transaction> transaction,
            int64_t database_id,
            const CursorOptions& cursor_options);
-
-    explicit Cursor(const Cursor* other,
-                    std::unique_ptr<TransactionalLevelDBIterator> iterator);
 
     // May return nullptr.
     static std::unique_ptr<TransactionalLevelDBIterator> CloneIterator(
@@ -409,25 +404,28 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     const CursorOptions cursor_options_;
     std::unique_ptr<TransactionalLevelDBIterator> iterator_;
     blink::IndexedDBKey current_key_;
-    RecordIdentifier record_identifier_;
 
    private:
-    enum class ContinueResult { LEVELDB_ERROR, DONE, OUT_OF_BOUNDS };
+    enum class ContinueResult { DONE, OUT_OF_BOUNDS };
 
     // For cursors with direction Next or NextNoDuplicate.
-    ContinueResult ContinueNext(const blink::IndexedDBKey& key,
-                                const blink::IndexedDBKey& primary_key,
-                                IteratorState state,
-                                Status*);
+    StatusOr<ContinueResult> ContinueNext(
+        const blink::IndexedDBKey& key,
+        const blink::IndexedDBKey& primary_key,
+        IteratorState state);
     // For cursors with direction Prev or PrevNoDuplicate. The PrevNoDuplicate
     // case has additional complexity of not being symmetric with
     // NextNoDuplicate.
-    ContinueResult ContinuePrevious(const blink::IndexedDBKey& key,
-                                    const blink::IndexedDBKey& primary_key,
-                                    IteratorState state,
-                                    Status*);
+    StatusOr<ContinueResult> ContinuePrevious(
+        const blink::IndexedDBKey& key,
+        const blink::IndexedDBKey& primary_key,
+        IteratorState state);
 
     int tombstones_count_ = 0;
+    // `iterator_` and `current_key_` are saved when `SavePosition()` is called.
+    std::optional<std::tuple<std::unique_ptr<TransactionalLevelDBIterator>,
+                             blink::IndexedDBKey>>
+        saved_members_;
     base::WeakPtrFactory<Cursor> weak_factory_{this};
   };
 

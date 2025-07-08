@@ -1164,8 +1164,7 @@ TEST_F(RegistrationTest, ContinueFalse) {
       callback.outcome();
   ASSERT_FALSE(out_params.has_value());
   const SessionError& error = out_params.error();
-  EXPECT_EQ(error.session_id, "session_id");
-  EXPECT_EQ(error.site, net::SchemefulSite(server_.base_url()));
+  EXPECT_EQ(error.type, SessionError::ErrorType::kServerRequestedTermination);
 }
 
 TEST_F(RegistrationTest, RetriesOnKeyFailure) {
@@ -1352,8 +1351,31 @@ TEST_F(RegistrationTest, TerminateSessionOnRepeatedChallenge) {
   ASSERT_FALSE(out_params.has_value());
   const SessionError& session_error = out_params.error();
   EXPECT_EQ(session_error.type, SessionError::ErrorType::kTooManyChallenges);
-  EXPECT_EQ(session_error.site, net::SchemefulSite(server_.base_url()));
-  EXPECT_EQ(session_error.session_id, kSessionIdentifier);
+}
+
+TEST_F(RegistrationTest, RefreshWithNewSessionIdFails) {
+  crypto::ScopedFakeUnexportableKeyProvider scoped_fake_key_provider;
+
+  server_.RegisterRequestHandler(
+      base::BindRepeating(&ReturnResponse, HTTP_OK, kBasicValidJson));
+  ASSERT_TRUE(server_.Start());
+
+  TestRegistrationCallback callback;
+  auto isolation_info = IsolationInfo::CreateTransient(/*nonce=*/std::nullopt);
+  auto request_param = RegistrationRequestParam::CreateForTesting(
+      server_.base_url(), "old_session_id", kChallenge);
+  CreateKeyAndRunCallback(base::BindOnce(
+      &RegistrationFetcher::StartFetchWithExistingKey, std::move(request_param),
+      std::ref(unexportable_key_service()), context_.get(),
+      std::ref(isolation_info), /*net_log_source=*/std::nullopt,
+      /*original_request_initiator=*/std::nullopt, callback.callback()));
+  callback.WaitForCall();
+
+  const base::expected<SessionParams, SessionError>& out_params =
+      callback.outcome();
+  ASSERT_FALSE(out_params.has_value());
+  const SessionError& session_error = out_params.error();
+  EXPECT_EQ(session_error.type, SessionError::ErrorType::kMismatchedSessionId);
 }
 
 class RegistrationTokenHelperTest : public testing::Test {
@@ -1384,7 +1406,8 @@ TEST_F(RegistrationTokenHelperTest, CreateSuccess) {
   RegistrationFetcher::CreateTokenAsyncForTesting(
       unexportable_key_service(), "test_challenge",
       GURL("https://accounts.example.test.com/Register"),
-      /*authorization=*/std::nullopt, future.GetCallback());
+      /*authorization=*/std::nullopt, /*session_identifier=*/std::nullopt,
+      future.GetCallback());
   RunBackgroundTasks();
   ASSERT_TRUE(future.Get().has_value());
 }
@@ -1397,7 +1420,8 @@ TEST_F(RegistrationTokenHelperTest, CreateFail) {
   RegistrationFetcher::CreateTokenAsyncForTesting(
       unexportable_key_service(), "test_challenge",
       GURL("https://https://accounts.example.test/Register"),
-      /*authorization=*/std::nullopt, future.GetCallback());
+      /*authorization=*/std::nullopt, /*session_identifier=*/std::nullopt,
+      future.GetCallback());
   RunBackgroundTasks();
   EXPECT_FALSE(future.Get().has_value());
 }

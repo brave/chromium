@@ -21,10 +21,10 @@ namespace extensions {
 class APIEventListeners;
 class ExceptionHandler;
 
-// A gin::Wrappable Event object. One is expected to be created per event, per
-// context. Note: this object *does not* clear any events, so it must be
-// destroyed with the context to avoid leaking.
-class EventEmitter final : public gin::Wrappable<EventEmitter> {
+// A gin::DeprecatedWrappable Event object. One is expected to be created per
+// event, per context. Note: this object *does not* clear any events, so it must
+// be destroyed with the context to avoid leaking.
+class EventEmitter final : public gin::DeprecatedWrappable<EventEmitter> {
  public:
   EventEmitter(bool supports_filters,
                std::unique_ptr<APIEventListeners> listeners,
@@ -35,9 +35,9 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
 
   ~EventEmitter() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
-  // gin::Wrappable:
+  // gin::DeprecatedWrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) final;
   const char* GetTypeName() final;
@@ -48,7 +48,7 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   void Fire(v8::Local<v8::Context> context,
             v8::LocalVector<v8::Value>* args,
             mojom::EventFilteringInfoPtr filter,
-            JSRunner::ResultCallback callback);
+            v8::Local<v8::Function> callback);
 
   // Fires the event to any listeners synchronously, and returns the result.
   // This should only be used if the caller is certain that JS is already
@@ -95,7 +95,7 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   void DispatchAsync(v8::Local<v8::Context> context,
                      v8::LocalVector<v8::Value>* args,
                      mojom::EventFilteringInfoPtr filter,
-                     JSRunner::ResultCallback callback);
+                     v8::Local<v8::Function> callback);
   static void DispatchAsyncHelper(
       const v8::FunctionCallbackInfo<v8::Value>& info);
 

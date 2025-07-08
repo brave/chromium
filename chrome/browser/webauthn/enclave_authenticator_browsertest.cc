@@ -14,18 +14,14 @@
 
 #include "base/base64.h"
 #include "base/base64url.h"
-#include "base/callback_list.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
-#include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
-#include "base/process/process.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_tokenizer.h"
@@ -33,8 +29,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "base/test/bind.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_logging_settings.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -46,21 +40,16 @@
 #include "chrome/browser/password_manager/account_password_store_factory.h"
 #include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
-#include "chrome/browser/sync/sync_service_factory.h"
-#include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
-#include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_controller.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
 #include "chrome/browser/webauthn/chrome_authenticator_request_delegate.h"
+#include "chrome/browser/webauthn/enclave_authenticator_browsertest_base.h"
 #include "chrome/browser/webauthn/enclave_manager.h"
 #include "chrome/browser/webauthn/enclave_manager_factory.h"
 #include "chrome/browser/webauthn/fake_magic_arch.h"
-#include "chrome/browser/webauthn/fake_recovery_key_store.h"
-#include "chrome/browser/webauthn/fake_security_domain_service.h"
 #include "chrome/browser/webauthn/gpm_enclave_controller.h"
 #include "chrome/browser/webauthn/passkey_model_factory.h"
 #include "chrome/browser/webauthn/proto/enclave_local_state.pb.h"
@@ -69,57 +58,40 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/network_session_configurator/common/network_switches.h"
-#include "components/os_crypt/sync/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
-#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
-#include "components/sync/service/sync_service.h"
-#include "components/sync/service/sync_service_impl.h"
-#include "components/sync/test/fake_server_network_resources.h"
 #include "components/trusted_vault/securebox.h"
 #include "components/trusted_vault/test/mock_trusted_vault_throttling_connection.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
 #include "components/trusted_vault/trusted_vault_server_constants.h"
-#include "components/webauthn/core/browser/passkey_model.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
-#include "crypto/scoped_fake_unexportable_key_provider.h"
-#include "crypto/scoped_fake_user_verifying_key_provider.h"
 #include "crypto/unexportable_key.h"
-#include "device/bluetooth/bluetooth_adapter_factory.h"
-#include "device/fido/enclave/constants.h"
 #include "device/fido/features.h"
 #include "device/fido/fido_parsing_utils.h"
 #include "device/fido/fido_request_handler_base.h"
 #include "device/fido/fido_transport_protocol.h"
 #include "device/fido/fido_types.h"
-#include "google_apis/gaia/gaia_id.h"
-#include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
-#include "net/test/embedded_test_server/embedded_test_server.h"
-#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
-#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "device/fido/win/fake_webauthn_api.h"
 #include "device/fido/win/util.h"
-#include "device/fido/win/webauthn_api.h"
 #endif
 
 #if BUILDFLAG(IS_MAC)
@@ -131,7 +103,6 @@
 #include "components/trusted_vault/proto_string_bytes_conversion.h"
 #include "crypto/scoped_fake_apple_keychain_v2.h"
 #include "device/fido/mac/fake_icloud_keychain.h"
-#include "device/fido/mac/util.h"
 #endif  // BUILDFLAG(IS_MAC)
 
 // These tests are disabled under MSAN. The enclave subprocess is written in
@@ -143,55 +114,25 @@ namespace {
 
 using trusted_vault::MockTrustedVaultThrottlingConnection;
 
-constexpr int32_t kSecretVersion = 417;
-constexpr uint8_t kSecurityDomainSecret[32] = {};
-constexpr char kEmail[] = "test@gmail.com";
-constexpr char kEmailLocalPartOnly[] = "test";
-// This value is derived by the Sync testing code from `kEmail` but is needed
-// directly in these tests in order to simulate the `StoreKeys` calls to the
-// `EnclaveManager`.
-constexpr GaiaId::Literal kGaiaId("gaia_id_for_test_gmail.com");
-
-// Protobuf generated by printing one generated by an enclave using
-// `kSecurityDomainSecret`.
-constexpr uint8_t kTestProtobuf[] = {
-    0x0A, 0x10, 0x8E, 0x48, 0x4B, 0x1C, 0x4F, 0xF9, 0x01, 0x14, 0xEF, 0xEA,
-    0xB3, 0x18, 0x40, 0x21, 0xEB, 0xF9, 0x12, 0x10, 0x48, 0x74, 0x02, 0x2C,
-    0xC5, 0x85, 0x38, 0xDA, 0x22, 0xD8, 0x8C, 0xAF, 0xD4, 0x05, 0x29, 0x84,
-    0x1A, 0x0F, 0x77, 0x77, 0x77, 0x2E, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C,
-    0x65, 0x2E, 0x63, 0x6F, 0x6D, 0x22, 0x01, 0x00, 0x30, 0xE4, 0xFA, 0x86,
-    0x8D, 0xAC, 0x86, 0xDD, 0x17, 0x3A, 0x03, 0x66, 0x6F, 0x6F, 0x42, 0x00,
-    0x62, 0xCB, 0x01, 0x30, 0x89, 0x28, 0x56, 0xC4, 0x9C, 0xC4, 0xAD, 0x19,
-    0x4D, 0x4B, 0x91, 0x12, 0xD4, 0xA0, 0x05, 0xF0, 0xA4, 0xCA, 0x87, 0x66,
-    0x4C, 0x9E, 0x49, 0x58, 0xED, 0x08, 0x92, 0xB9, 0x5C, 0x5C, 0xCD, 0x7D,
-    0xA7, 0xD4, 0xEA, 0x54, 0xE9, 0x7E, 0xF2, 0x93, 0xDA, 0x17, 0x43, 0x7F,
-    0x41, 0x15, 0x25, 0x94, 0xB8, 0x04, 0x08, 0xAD, 0xE7, 0x67, 0xFA, 0xE2,
-    0x38, 0xD3, 0x37, 0xCE, 0x68, 0x1C, 0x2C, 0x82, 0xCA, 0xED, 0x8D, 0x10,
-    0x32, 0x31, 0xD9, 0xED, 0x7F, 0x51, 0x74, 0x66, 0x63, 0x14, 0x12, 0xD3,
-    0xA1, 0xC0, 0xFE, 0x52, 0xA3, 0x07, 0x01, 0x58, 0xDD, 0x3F, 0xD4, 0x97,
-    0xD8, 0xFA, 0x7F, 0x9A, 0xB2, 0xC1, 0x65, 0x36, 0xE2, 0xBE, 0xDF, 0x00,
-    0xFB, 0xAC, 0x59, 0xFE, 0x93, 0x25, 0x18, 0xA3, 0x92, 0xBF, 0x06, 0x8E,
-    0x0F, 0x2E, 0xD6, 0xE8, 0xFE, 0xCD, 0xE5, 0x76, 0xB8, 0x92, 0x3D, 0xB1,
-    0x42, 0xE9, 0xBB, 0x54, 0x36, 0x99, 0x5C, 0x21, 0xB7, 0x63, 0x33, 0x20,
-    0x8E, 0x93, 0xAA, 0x00, 0x83, 0xC6, 0xCC, 0x23, 0xAD, 0x63, 0x2B, 0x34,
-    0xAA, 0x4F, 0x8E, 0x9B, 0xFA, 0x40, 0x0E, 0xDB, 0x30, 0x37, 0x58, 0xE4,
-    0x60, 0xA2, 0xDF, 0x99, 0x85, 0x4B, 0x5C, 0xDD, 0x44, 0x23, 0x12, 0x64,
-    0x4C, 0x50, 0x34, 0x9D, 0x24, 0x1B, 0x37, 0x40, 0xC5, 0xB5, 0xA1, 0x5A,
-    0x70, 0x33, 0xF7, 0x80, 0x75, 0x1D, 0x22, 0x13, 0x37, 0xCD, 0x1F, 0x24,
-    0x40, 0xDA, 0x70, 0xA1, 0x03};
-
-base::span<const uint8_t, 16> TestProtobufCredId() {
-  return base::span<const uint8_t>(kTestProtobuf).subspan<20, 16>();
-}
-
-base::span<const uint8_t, 1> TestProtobufUserId() {
-  return base::span<const uint8_t>(kTestProtobuf).subspan<55, 1>();
-}
-
-static constexpr char kIsUVPAA[] = R"((() => {
-  window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().
-    then(result => window.domAutomationController.send('IsUVPAA: ' + result),
-         error  => window.domAutomationController.send('error '    + error));
+static constexpr char kMakeCredentialLargeBlob[] = R"((() => {
+  return navigator.credentials.create({ publicKey: {
+    rp: { name: "www.example.com" },
+    user: { id: new Uint8Array([0]), name: "foo", displayName: "" },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+    challenge: new Uint8Array([0]),
+    timeout: 10000,
+    authenticatorSelection: {
+      userVerification: "discouraged",
+      requireResidentKey: true
+    },
+    // Ask for large-blob support at registration time.
+    extensions: { largeBlob: { support: "preferred" } },
+  }}).then(c => {
+    const lb = c.getClientExtensionResults().largeBlob;
+    // Pass back the value we care about.
+    window.domAutomationController.send(
+        "largeblob " + (lb ? lb.supported : lb));
+  }, e => window.domAutomationController.send("error " + e));
 })())";
 
 static constexpr char kMakeCredentialUvDiscouraged[] = R"((() => {
@@ -408,6 +349,19 @@ static constexpr char kGetAssertionUvDiscouraged[] = R"((() => {
            e => window.domAutomationController.send('error ' + e));
 })())";
 
+static constexpr char kGetAssertionSecurityKey[] = R"((() => {
+  const credId = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  return navigator.credentials.get({ publicKey: {
+    challenge: new Uint8Array([0]),
+    timeout: 10000,
+    userVerification: 'discouraged',
+    allowCredentials: [
+      {type: 'public-key', id: new Uint8Array(credId), transports: ["usb"]}
+    ],
+  }}).then(c => window.domAutomationController.send('webauthn: OK'),
+           e => window.domAutomationController.send('error ' + e));
+})())";
+
 static constexpr char kGetAssertionCredId1[] = R"((() => {
   const credId = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
   return navigator.credentials.get({ publicKey: {
@@ -514,7 +468,7 @@ static constexpr char kMakeCredentialConditionalCreate[] = R"((() => {
       rp: { name: "www.example.com" },
       user: {
         id: new Uint8Array([1]),
-        name: "test@gmail.com",
+        name: "user1@gmail.com",
         displayName: "Foo Bar"
       },
       pubKeyCredParams: [{type: "public-key", alg: -7}],
@@ -541,7 +495,7 @@ static constexpr char kMakeCredentialConditionalCreateWithExcludeList[] =
       rp: { name: "www.example.com" },
       user: {
         id: new Uint8Array([1]),
-        name: "test@gmail.com",
+        name: "user1@gmail.com",
         displayName: "Foo Bar"
       },
       pubKeyCredParams: [{type: "public-key", alg: -7}],
@@ -612,17 +566,9 @@ bool IsMechanismEnclaveCredential(
   return false;
 }
 
-struct TempDir {
- public:
-  TempDir() { CHECK(dir_.CreateUniqueTempDir()); }
-
-  base::FilePath GetPath() const { return dir_.GetPath(); }
-
- private:
-  base::ScopedTempDir dir_;
-};
-
-class EnclaveAuthenticatorBrowserTest : public SyncTest {
+// EnclaveAuthenticatorBrowserTest now inherits from
+// EnclaveAuthenticatorTestBase
+class EnclaveAuthenticatorBrowserTest : public EnclaveAuthenticatorTestBase {
  public:
   class DelegateObserver
       : public ChromeAuthenticatorRequestDelegate::TestObserver {
@@ -655,11 +601,6 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
       additional_transport_ = transport;
     }
 
-    void SetPendingTrustedVaultConnection(
-        std::unique_ptr<trusted_vault::TrustedVaultConnection> connection) {
-      pending_connection_ = std::move(connection);
-    }
-
     void SetUseSyncedDeviceCablePairing(bool use_pairing) {
       use_synced_device_cable_pairing_ = use_pairing;
     }
@@ -678,11 +619,8 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
     // ChromeAuthenticatorRequestDelegate::TestObserver:
     void Created(ChromeAuthenticatorRequestDelegate* delegate) override {
       test_instance_->UpdateRequestDelegate(delegate);
-      if (pending_connection_) {
-        delegate->SetTrustedVaultConnectionForTesting(
-            std::move(pending_connection_));
-      }
-      delegate->SetMockTimeForTesting(
+      GpmTickAndTaskRunnerProvider::SetOverrideForFrame(
+          delegate->GetRenderFrameHost(),
           test_instance_->timer_task_runner_->GetMockTickClock(),
           test_instance_->timer_task_runner_);
       transports_observed_ = std::nullopt;
@@ -697,17 +635,6 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
     void OnDestroy(ChromeAuthenticatorRequestDelegate* delegate) override {
       test_instance_->UpdateRequestDelegate(nullptr);
       destruction_run_loop_->QuitWhenIdle();
-    }
-
-    std::vector<std::unique_ptr<device::cablev2::Pairing>>
-    GetCablePairingsFromSyncedDevices() override {
-      std::vector<std::unique_ptr<device::cablev2::Pairing>> ret;
-      if (use_synced_device_cable_pairing_) {
-        ret.emplace_back(TestPhone("phone", /*public_key=*/0,
-                                   /*last_updated=*/base::Time::FromTimeT(1),
-                                   /*channel_priority=*/1));
-      }
-      return ret;
     }
 
     void OnTransportAvailabilityEnumerated(
@@ -744,7 +671,6 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
     std::optional<base::flat_set<device::FidoTransportProtocol>>
         transports_observed_;
     std::optional<device::FidoTransportProtocol> additional_transport_;
-    std::unique_ptr<trusted_vault::TrustedVaultConnection> pending_connection_;
     bool use_synced_device_cable_pairing_ = false;
     bool ui_shown_ = false;
     bool on_transport_availability_enumerated_called_ = false;
@@ -842,136 +768,16 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
     std::unique_ptr<base::RunLoop> run_loop_;
   };
 
-  EnclaveAuthenticatorBrowserTest()
-      : SyncTest(SINGLE_CLIENT),
-        process_and_port_(StartWebAuthnEnclave(temp_dir_.GetPath())),
-        enclave_override_(
-            TestWebAuthnEnclaveIdentity(process_and_port_.second)),
-        security_domain_service_(
-            FakeSecurityDomainService::New(kSecretVersion)),
-#if BUILDFLAG(IS_WIN)
-        webauthn_dll_override_(&fake_webauthn_dll_),
-#endif
-        recovery_key_store_(FakeRecoveryKeyStore::New()),
-        fake_hw_provider_(
-            std::make_unique<crypto::ScopedFakeUnexportableKeyProvider>()) {
-#if BUILDFLAG(IS_WIN)
-    // Make webauthn.dll unavailable to ensure a consistent test environment on
-    // Windows. Otherwise the version of webauthn.dll can differ between
-    // builders causing differences / failures.
-    fake_webauthn_dll_.set_available(false);
-    biometrics_override_ =
-        std::make_unique<device::fido::win::ScopedBiometricsOverride>(false);
-#elif BUILDFLAG(IS_MAC)
-    // By default, Touch ID is disabled in these tests. Specific tests can
-    // replace this if they need.
-    biometrics_override_ =
-        std::make_unique<device::fido::mac::ScopedBiometricsOverride>(false);
-    if (__builtin_available(macOS 13.5, *)) {
-      fake_icloud_keychain_ = device::fido::icloud_keychain::NewFake();
-    }
-    scoped_icloud_drive_override_ = OverrideICloudDriveEnabled(false);
-#endif
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{device::kWebAuthnNoAccountTimeout,
-                              device::kWebAuthnSignalApiHidePasskeys},
-        /*disabled_features=*/{});
-    OSCryptMocker::SetUp();
-    // Log call `FIDO_LOG` messages.
-    scoped_vmodule_.InitWithSwitches("device_event_log_impl=2");
-
-    auto security_domain_service_callback =
-        security_domain_service_->GetCallback();
-    auto recovery_key_store_callback = recovery_key_store_->GetCallback();
-    url_loader_factory_.SetInterceptor(base::BindLambdaForTesting(
-        [sds_callback = std::move(security_domain_service_callback),
-         rks_callback = std::move(recovery_key_store_callback),
-         this](const network::ResourceRequest& request) {
-          std::optional<std::pair<net::HttpStatusCode, std::string>> response =
-              sds_callback.Run(request);
-          if (!response) {
-            response = rks_callback.Run(request);
-          }
-          if (response) {
-            url_loader_factory_.AddResponse(request.url.spec(),
-                                            std::move(response->second),
-                                            response->first);
-          }
-        }));
-
-    fake_uv_provider_.emplace<crypto::ScopedNullUserVerifyingKeyProvider>();
-
-    // Disabling Bluetooth significantly speeds up tests on Linux.
-    bluetooth_values_for_testing_ =
-        device::BluetoothAdapterFactory::Get()->InitGlobalOverrideValues();
-    bluetooth_values_for_testing_->SetLESupported(false);
-  }
-
-  ~EnclaveAuthenticatorBrowserTest() override {
-    EnclaveManagerFactory::SetUrlLoaderFactoryForTesting(nullptr);
-    CHECK(process_and_port_.first.Terminate(/*exit_code=*/1, /*wait=*/true));
-    OSCryptMocker::TearDown();
-  }
+  EnclaveAuthenticatorBrowserTest() = default;
+  ~EnclaveAuthenticatorBrowserTest() override = default;
 
   EnclaveAuthenticatorBrowserTest(const EnclaveAuthenticatorBrowserTest&) =
       delete;
   EnclaveAuthenticatorBrowserTest& operator=(
       const EnclaveAuthenticatorBrowserTest&) = delete;
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    SyncTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
-  }
-
-  void SetUp() override {
-    ASSERT_TRUE(https_server_.InitializeAndListen());
-    EnclaveManagerFactory::SetUrlLoaderFactoryForTesting(
-        url_loader_factory_.GetSafeWeakWrapper().get());
-
-    SyncTest::SetUp();
-  }
-
-  void SetUpInProcessBrowserTestFixture() override {
-    subscription_ =
-        BrowserContextDependencyManager::GetInstance()
-            ->RegisterCreateServicesCallbackForTesting(
-                base::BindRepeating([](content::BrowserContext* context) {
-                  IdentityTestEnvironmentProfileAdaptor::
-                      SetIdentityTestEnvironmentFactoriesOnBrowserContext(
-                          context);
-                }));
-  }
-
   void SetUpOnMainThread() override {
-    SyncTest::SetUpOnMainThread();
-
-    identity_test_env_adaptor_ =
-        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(
-            browser()->profile());
-    identity_test_env()->SetAutomaticIssueOfAccessTokens(true);
-
-    syncer::SyncServiceImpl* sync_service =
-        SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(
-            browser()->profile());
-    sync_service->OverrideNetworkForTest(
-        fake_server::CreateFakeServerHttpPostProviderFactory(
-            GetFakeServer()->AsWeakPtr()));
-    sync_harness_ = SyncServiceImplHarness::Create(
-        browser()->profile(), kEmail, "password",
-        SyncServiceImplHarness::SigninType::FAKE_SIGNIN);
-    if (sync_feature_enabled_) {
-      ASSERT_TRUE(sync_harness_->SetupSync());
-    } else {
-      // Sign in without full sync consent, opt into using account passwords.
-      ASSERT_TRUE(sync_harness_->SignInPrimaryAccount());
-    }
-    sync_service->GetUserSettings()->SetSelectedTypes(
-        /*sync_everything=*/false,
-        /*types=*/{syncer::UserSelectableType::kPasswords});
-
-    https_server_.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
-    https_server_.StartAcceptingConnections();
-    host_resolver()->AddRule("*", "127.0.0.1");
+    EnclaveAuthenticatorTestBase::SetUpOnMainThread();
 
     delegate_observer_ = std::make_unique<DelegateObserver>(this);
     ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(
@@ -979,12 +785,6 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
 
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
         browser(), https_server_.GetURL("www.example.com", "/title1.html")));
-  }
-
-  void TearDownOnMainThread() override { identity_test_env_adaptor_.reset(); }
-
-  signin::IdentityTestEnvironment* identity_test_env() {
-    return identity_test_env_adaptor_->identity_test_env();
   }
 
   void UpdateRequestDelegate(ChromeAuthenticatorRequestDelegate* delegate) {
@@ -1006,61 +806,6 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
 
   ModelObserver* model_observer() { return model_observer_.get(); }
 
-  webauthn::PasskeyModel* passkey_model() {
-    return PasskeyModelFactory::GetInstance()->GetForProfile(
-        browser()->profile());
-  }
-
-  void SimulateEnclaveMechanismSelection() {
-    ASSERT_TRUE(request_delegate_);
-    for (const auto& mechanism :
-         request_delegate_->dialog_model()->mechanisms) {
-      if (mechanism.type ==
-          AuthenticatorRequestDialogModel::Mechanism::Type(
-              AuthenticatorRequestDialogModel::Mechanism::Enclave())) {
-        mechanism.callback.Run();
-        return;
-      }
-    }
-    EXPECT_TRUE(false) << "No Enclave mechanism found";
-  }
-
-  void AddTestPasskeyToModel() {
-    sync_pb::WebauthnCredentialSpecifics passkey;
-    CHECK(passkey.ParseFromArray(kTestProtobuf, sizeof(kTestProtobuf)));
-    passkey_model()->AddNewPasskeyForTesting(passkey);
-  }
-
-  void SetMockVaultConnectionOnRequestDelegate(
-      trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-          result) {
-    auto connection = std::make_unique<
-        testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
-    EXPECT_CALL(*connection, DownloadAuthenticationFactorsRegistrationState(
-                                 testing::_, testing::_, testing::_))
-        .WillOnce(
-            [result = std::move(result)](
-                const CoreAccountInfo&,
-                base::OnceCallback<void(
-                    trusted_vault::
-                        DownloadAuthenticationFactorsRegistrationStateResult)>
-                    callback,
-                base::RepeatingClosure _) mutable {
-              std::move(callback).Run(std::move(result));
-              return std::make_unique<
-                  trusted_vault::TrustedVaultConnection::Request>();
-            });
-    // If the delegate hasn't been created yet, the mock will be assigned upon
-    // creation.
-    if (request_delegate_) {
-      request_delegate_->SetTrustedVaultConnectionForTesting(
-          std::move(connection));
-    } else {
-      delegate_observer_->SetPendingTrustedVaultConnection(
-          std::move(connection));
-    }
-  }
-
   void SetVaultConnectionToTimeout() {
     auto connection = std::make_unique<
         testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
@@ -1068,23 +813,17 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
                                  testing::_, testing::_, testing::_))
         .WillOnce(
             [](const CoreAccountInfo&,
-               base::OnceCallback<void(
-                   trusted_vault::
-                       DownloadAuthenticationFactorsRegistrationStateResult)>
-                   callback,
+               base::OnceCallback<void(AuthenticationFactorsResult)> callback,
                base::RepeatingClosure _) mutable {
               return std::make_unique<
                   trusted_vault::TrustedVaultConnection::Request>();
             });
-    // If the delegate hasn't been created yet, the mock will be assigned upon
-    // creation.
-    if (request_delegate_) {
-      request_delegate_->SetTrustedVaultConnectionForTesting(
-          std::move(connection));
-    } else {
-      delegate_observer_->SetPendingTrustedVaultConnection(
-          std::move(connection));
-    }
+    GpmTrustedVaultConnectionProvider::SetOverrideForFrame(
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetPrimaryMainFrame(),
+        std::move(connection));
   }
 
   void CheckRegistrationStateNotRequested() {
@@ -1094,90 +833,25 @@ class EnclaveAuthenticatorBrowserTest : public SyncTest {
                                  testing::_, testing::_, testing::_))
         .WillRepeatedly(
             [](const CoreAccountInfo&,
-               base::OnceCallback<void(
-                   trusted_vault::
-                       DownloadAuthenticationFactorsRegistrationStateResult)>
-                   callback,
+               base::OnceCallback<void(AuthenticationFactorsResult)> callback,
                base::RepeatingClosure _)
                 -> std::unique_ptr<
                     trusted_vault::TrustedVaultConnection::Request> {
               NOTREACHED() << "account state unexpectedly requested";
             });
     CHECK(!request_delegate_);
-    delegate_observer_->SetPendingTrustedVaultConnection(std::move(connection));
-  }
-
-  void EnableUVKeySupport(bool fake_hardware_backing = false) {
-    fake_uv_provider_.emplace<crypto::ScopedFakeUserVerifyingKeyProvider>(
-        fake_hardware_backing);
-  }
-
-  bool IsUVPAA() {
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    content::DOMMessageQueue message_queue(web_contents);
-    content::ExecuteScriptAsync(web_contents, kIsUVPAA);
-
-    std::string script_result;
-    CHECK(message_queue.WaitForMessage(&script_result));
-    if (script_result == "\"IsUVPAA: true\"") {
-      return true;
-    } else if (script_result == "\"IsUVPAA: false\"") {
-      return false;
-    }
-    NOTREACHED() << "unexpected IsUVPAA result: " << script_result;
-  }
-
-  void SetBiometricsEnabled(bool enabled) {
-#if BUILDFLAG(IS_MAC)
-    biometrics_override_.reset();
-    biometrics_override_ =
-        std::make_unique<device::fido::mac::ScopedBiometricsOverride>(enabled);
-#elif BUILDFLAG(IS_WIN)
-    biometrics_override_.reset();
-    biometrics_override_ =
-        std::make_unique<device::fido::win::ScopedBiometricsOverride>(enabled);
-#endif
+    GpmTrustedVaultConnectionProvider::SetOverrideForFrame(
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetPrimaryMainFrame(),
+        std::move(connection));
   }
 
  protected:
-  scoped_refptr<base::TestMockTimeTaskRunner> timer_task_runner_ =
-      base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  net::EmbeddedTestServer https_server_{net::EmbeddedTestServer::TYPE_HTTPS};
-  const TempDir temp_dir_;
-  base::CallbackListSubscription subscription_;
-  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
-      identity_test_env_adaptor_;
-  std::unique_ptr<SyncServiceImplHarness> sync_harness_;
-  const std::pair<base::Process, uint16_t> process_and_port_;
-  const device::enclave::ScopedEnclaveOverride enclave_override_;
-  std::unique_ptr<FakeSecurityDomainService> security_domain_service_;
-#if BUILDFLAG(IS_WIN)
-  device::FakeWinWebAuthnApi fake_webauthn_dll_;
-  device::WinWebAuthnApi::ScopedOverride webauthn_dll_override_;
-  std::unique_ptr<device::fido::win::ScopedBiometricsOverride>
-      biometrics_override_;
-#elif BUILDFLAG(IS_MAC)
-  std::unique_ptr<device::fido::mac::ScopedBiometricsOverride>
-      biometrics_override_;
-  std::unique_ptr<device::fido::icloud_keychain::Fake> fake_icloud_keychain_;
-  std::unique_ptr<ScopedICloudDriveOverride> scoped_icloud_drive_override_;
-#endif
-  std::unique_ptr<FakeRecoveryKeyStore> recovery_key_store_;
-  std::unique_ptr<crypto::ScopedFakeUnexportableKeyProvider> fake_hw_provider_;
-  network::TestURLLoaderFactory url_loader_factory_;
   std::unique_ptr<DelegateObserver> delegate_observer_;
   std::unique_ptr<ModelObserver> model_observer_;
   raw_ptr<ChromeAuthenticatorRequestDelegate> request_delegate_;
-  std::unique_ptr<device::BluetoothAdapterFactory::GlobalOverrideValues>
-      bluetooth_values_for_testing_;
-  std::variant<crypto::ScopedNullUserVerifyingKeyProvider,
-               crypto::ScopedFakeUserVerifyingKeyProvider,
-               crypto::ScopedFailingUserVerifyingKeyProvider>
-      fake_uv_provider_;
-  logging::ScopedVmoduleSwitches scoped_vmodule_;
-  bool sync_feature_enabled_ = true;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 class EnclaveAuthenticatorWithTimeout : public EnclaveAuthenticatorBrowserTest {
@@ -1265,11 +939,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    * 5. Device registration with enclave succeeds
    * 6. MakeCredential succeeds
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1294,6 +964,12 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, NonWebauthnRequest) {
+  if (base::FeatureList::IsEnabled(
+          blink::features::kSecurePaymentConfirmationBrowserBoundKeys)) {
+    GTEST_SKIP() << "With kSecurePaymentConfirmationBrowserBoundKeys the "
+                    "SecurePaymentConfirmationService directs the request to "
+                    "the internal authenticator.";
+  }
   if (!base::FeatureList::IsEnabled(features::kSecurePaymentConfirmation)) {
     // SPC is not enabled in this configuration and so the `payment` extension
     // in the Javascript will be ignored.
@@ -1337,11 +1013,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, MakeCredentialWithPrf) {
    * 9. User confirms creation.
    * 10. MakeCredential succeeds and PRF reports enabled.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1408,13 +1080,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, GetAssertionWithPrf) {
    * 5. Device registration with enclave succeeds
    * 6. GetAssertion succeeds with PRF results.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   content::WebContents* web_contents =
@@ -1445,7 +1111,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, GetAssertionWithPrf) {
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1480,11 +1146,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    *
    * Notably, user verification is asserted without a second GPM PIN prompt.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1526,10 +1188,9 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    *
    * Notably, user verification is asserted without a second GPM PIN prompt.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
   registration_state_result.gpm_pin_metadata = trusted_vault::GpmPinMetadata(
       "public key", trusted_vault::UsableRecoveryPinMetadata(
@@ -1558,7 +1219,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1586,14 +1247,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    *
    * Notably, user verification is asserted without a second GPM PIN prompt.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1615,7 +1269,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1634,12 +1288,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        MakeCredential_RecoverWithLSKFAndUnusablePIN) {
   // First, register with a PIN.
   {
-    trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-        registration_state_result;
-    registration_state_result.state = trusted_vault::
-        DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-    SetMockVaultConnectionOnRequestDelegate(
-        std::move(registration_state_result));
+    SetTrustedVaultEmpty();
   }
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1667,10 +1316,9 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   security_domain_service_->MakePinMemberUnusable();
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
       ->ClearRegistrationForTesting();
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
   registration_state_result.gpm_pin_metadata = trusted_vault::GpmPinMetadata(
       security_domain_service_->GetPinMemberPublicKey(),
@@ -1693,7 +1341,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1707,14 +1355,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        CreatingDuplicateGivesInvalidStateError) {
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1736,7 +1377,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1786,13 +1427,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    * 5. Device registration with enclave succeeds
    * 6. GetAssertion succeeds
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   class PasskeyModelObserver : public webauthn::PasskeyModel::Observer {
@@ -1839,7 +1474,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -1886,11 +1521,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    *
    * Notably, user verification is asserted without a second GPM PIN prompt.
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1992,11 +1623,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
    * 8. Modal MakeCredential request invoked by RP
    * 9. Mechanism selection appears; test chooses enclave credential
    */
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2039,12 +1666,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, UserCancelsUV) {
   EnableUVKeySupport();
-
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2106,26 +1728,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        ConditionalMediationLoading) {
   // Set up a trusted vault connection that lets us control the time it
   // resolves.
-  base::OnceCallback<void(
-      trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult)>
-      connection_cb;
-  auto connection = std::make_unique<
-      testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
-  EXPECT_CALL(*connection, DownloadAuthenticationFactorsRegistrationState(
-                               testing::_, testing::_, testing::_))
-      .WillOnce(
-          [&connection_cb](
-              const CoreAccountInfo&,
-              base::OnceCallback<void(
-                  trusted_vault::
-                      DownloadAuthenticationFactorsRegistrationStateResult)>
-                  callback,
-              base::RepeatingClosure _) mutable {
-            connection_cb = std::move(callback);
-            return std::make_unique<
-                trusted_vault::TrustedVaultConnection::Request>();
-          });
-  delegate_observer_->SetPendingTrustedVaultConnection(std::move(connection));
+  SetTrustedVaultSlowAndCacheCallback();
 
   // Execute a conditional UI request.
   AddTestPasskeyToModel();
@@ -2146,12 +1749,11 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   // Resolve the connection and wait for the next step.
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kTrustThisComputerAssertion);
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
-  std::move(connection_cb).Run(std::move(registration_state_result));
+  std::move(cached_connection_cb()).Run(std::move(registration_state_result));
   model_observer()->WaitForStep();
 
   model_observer()->SetStepToObserve(
@@ -2165,13 +1767,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   // This test reproduces crbug.com/374366241. It performs a conditional request
   // to generate an assertion and then triggers another conditional UI request.
   // At one point this crashed.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   content::WebContents* web_contents =
@@ -2194,7 +1790,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -2322,32 +1918,42 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, GpmEnclaveNeedsReauth) {
   EXPECT_EQ(browser()->tab_strip_model()->GetTabCount(), 2);
 }
 
+IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
+                       NoReauthButtonForSecurityKeyRequests) {
+  // Set the account state to a recoverable signin error.
+  auto* const identity_manager =
+      IdentityManagerFactory::GetForProfile(browser()->profile());
+  CoreAccountId account =
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
+  signin::UpdatePersistentErrorOfRefreshTokenForAccount(
+      identity_manager, account,
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+
+  // Add a passkey to make sure it's not shown.
+  AddTestPasskeyToModel();
+
+  // Make a get assertion request that has a USB-only list of transports.
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::DOMMessageQueue message_queue(web_contents);
+  content::ExecuteScriptAsync(web_contents, kGetAssertionSecurityKey);
+  delegate_observer()->WaitForUI();
+
+  // The reauth button should not be displayed.
+  EXPECT_FALSE(
+      std::ranges::any_of(dialog_model()->mechanisms, [](const auto& m) {
+        return std::holds_alternative<
+            AuthenticatorRequestDialogModel::Mechanism::SignInAgain>(m.type);
+      }));
+}
+
 // Tests that if the enclave is the default, but loading takes too long, the
 // user is sent to the mechanism selection screen instead.
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        EnclaveIsDefaultButTakesTooLong) {
   // Set up a trusted vault connection that lets us control the time it
   // resolves.
-  base::OnceCallback<void(
-      trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult)>
-      connection_cb;
-  auto connection = std::make_unique<
-      testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
-  EXPECT_CALL(*connection, DownloadAuthenticationFactorsRegistrationState(
-                               testing::_, testing::_, testing::_))
-      .WillOnce(
-          [&connection_cb](
-              const CoreAccountInfo&,
-              base::OnceCallback<void(
-                  trusted_vault::
-                      DownloadAuthenticationFactorsRegistrationStateResult)>
-                  callback,
-              base::RepeatingClosure _) mutable {
-            connection_cb = std::move(callback);
-            return std::make_unique<
-                trusted_vault::TrustedVaultConnection::Request>();
-          });
-  delegate_observer_->SetPendingTrustedVaultConnection(std::move(connection));
+  SetTrustedVaultSlowAndCacheCallback();
 
   // Execute a make credential request.
   content::WebContents* web_contents =
@@ -2376,12 +1982,11 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   // Resolve the connection.
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kTrustThisComputerCreation);
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
-  std::move(connection_cb).Run(std::move(registration_state_result));
+  std::move(cached_connection_cb()).Run(std::move(registration_state_result));
   model_observer()->WaitForStep();
 }
 
@@ -2422,13 +2027,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        UserResetsSecurityDomain) {
   EnableUVKeySupport();
-
-  // Setup the EnclaveManager with a security domain secret.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2456,8 +2055,8 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   // Instead it should notice the reset and try to set up the security domain
   // again.
 
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state = AuthenticationFactorsResult::State::kEmpty;
   registration_state_result.key_version = kSecretVersion + 1;
   SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
 
@@ -2474,13 +2073,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
                        SecurityDomainCheckTimesOut) {
   EnableUVKeySupport();
-
-  // Setup the EnclaveManager with a security domain secret.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2507,6 +2100,10 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
   // normally.
   SetVaultConnectionToTimeout();
 
+  // Ensure the enclave state is loaded before proceeding. Otherwise the
+  // timer could be advanced before the timeout is set.
+  WaitForEnclaveLoaded();
+
   // Wait for the transport availability to be enumerated. The UI won't be shown
   // yet because the enclave is not ready.
   content::ExecuteScriptAsync(web_contents, kMakeCredentialUvDiscouraged);
@@ -2529,9 +2126,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
                        SecurityDomainKeepAlive) {
   // Set up a trusted vault connection that lets us control the time it
   // resolves.
-  base::OnceCallback<void(
-      trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult)>
-      connection_cb;
+  base::OnceCallback<void(AuthenticationFactorsResult)> connection_cb;
   base::RepeatingClosure keep_alive_cb;
   auto connection = std::make_unique<
       testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
@@ -2540,23 +2135,29 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
       .WillOnce(
           [&connection_cb, &keep_alive_cb](
               const CoreAccountInfo&,
-              base::OnceCallback<void(
-                  trusted_vault::
-                      DownloadAuthenticationFactorsRegistrationStateResult)>
-                  callback,
+              base::OnceCallback<void(AuthenticationFactorsResult)> callback,
               base::RepeatingClosure keep_alive) mutable {
             connection_cb = std::move(callback);
             keep_alive_cb = std::move(keep_alive);
             return std::make_unique<
                 trusted_vault::TrustedVaultConnection::Request>();
           });
-  delegate_observer_->SetPendingTrustedVaultConnection(std::move(connection));
+  GpmTrustedVaultConnectionProvider::SetOverrideForFrame(
+      browser()
+          ->tab_strip_model()
+          ->GetActiveWebContents()
+          ->GetPrimaryMainFrame(),
+      std::move(connection));
 
   // Execute a make credential request.
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   content::DOMMessageQueue message_queue(web_contents);
   content::ExecuteScriptAsync(web_contents, kMakeCredentialUvDiscouraged);
+
+  // Ensure the enclave state is loaded before proceeding. Otherwise the
+  // timer could be advanced before the timeout is set.
+  WaitForEnclaveLoaded();
 
   // Wait for the transport availability to be enumerated. The UI won't be shown
   // yet because the enclave is not ready.
@@ -2577,10 +2178,9 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
   ASSERT_FALSE(delegate_observer()->ui_shown());
 
   // Resolve the connection.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
   std::move(connection_cb).Run(std::move(registration_state_result));
   delegate_observer()->WaitForUI();
@@ -2594,26 +2194,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
                        DelayedEnclaveActivation) {
   // Set up a trusted vault connection that lets us control the time it
   // resolves, so enclave manager initialization can be delayed.
-  base::OnceCallback<void(
-      trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult)>
-      connection_cb;
-  auto connection = std::make_unique<
-      testing::NiceMock<MockTrustedVaultThrottlingConnection>>();
-  EXPECT_CALL(*connection, DownloadAuthenticationFactorsRegistrationState(
-                               testing::_, testing::_, testing::_))
-      .WillOnce(
-          [&connection_cb](
-              const CoreAccountInfo&,
-              base::OnceCallback<void(
-                  trusted_vault::
-                      DownloadAuthenticationFactorsRegistrationStateResult)>
-                  callback,
-              base::RepeatingClosure _) mutable {
-            connection_cb = std::move(callback);
-            return std::make_unique<
-                trusted_vault::TrustedVaultConnection::Request>();
-          });
-  delegate_observer_->SetPendingTrustedVaultConnection(std::move(connection));
+  SetTrustedVaultSlowAndCacheCallback();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2627,12 +2208,11 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
   EXPECT_FALSE(
       delegate_observer()->on_transport_availability_enumerated_called());
   EXPECT_FALSE(delegate_observer()->ui_shown());
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
+  AuthenticationFactorsResult registration_state_result;
+  registration_state_result.state =
+      AuthenticationFactorsResult::State::kRecoverable;
   registration_state_result.key_version = kSecretVersion;
-  std::move(connection_cb).Run(std::move(registration_state_result));
+  std::move(cached_connection_cb()).Run(std::move(registration_state_result));
 
   delegate_observer()->WaitForUI();
 }
@@ -2640,17 +2220,6 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorWithTimeout,
 #if BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, BiometricsInPWA) {
   // When requesting biometrics in a PWA, Touch ID should never be used.
-
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
-  AddTestPasskeyToModel();
-  EnableUVKeySupport();
-  SetBiometricsEnabled(true);
-
   // Create a Browser of type `TYPE_APP`, like a PWA.
   Browser* app_browser = Browser::Create(Browser::CreateParams::CreateForApp(
       "appname", /*trusted_source=*/true, gfx::Rect(0, 0, 500, 500),
@@ -2666,9 +2235,14 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, BiometricsInPWA) {
   content::WebContents* web_contents =
       app_browser->tab_strip_model()->GetActiveWebContents();
 
+  SetTrustedVaultRecoverable(kSecretVersion,
+                             web_contents->GetPrimaryMainFrame());
+  AddTestPasskeyToModel();
+  EnableUVKeySupport();
+  SetBiometricsEnabled(true);
+
   // Trigger a get() call to initialize the enclave. UV will be satisfied by
   // entering the PIN.
-
   content::DOMMessageQueue message_queue(web_contents);
   content::ExecuteScriptAsync(web_contents, kGetAssertionUvRequired);
   delegate_observer()->WaitForUI();
@@ -2682,7 +2256,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, BiometricsInPWA) {
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -2712,13 +2286,6 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, BiometricsInPWA) {
 #endif
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        MAYBE_NoGpmForCrossPlatformAttachment) {
-  EnableUVKeySupport();
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   content::DOMMessageQueue message_queue(web_contents);
@@ -2730,8 +2297,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
         return std::holds_alternative<
             AuthenticatorRequestDialogModel::Mechanism::Enclave>(m.type);
       }));
-  EXPECT_TRUE(
-      request_delegate()->enclave_controller_for_testing()->is_active());
+  EXPECT_FALSE(request_delegate()->enclave_controller_for_testing());
 }
 
 #if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
@@ -2794,13 +2360,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, EnrollAndCreate) {
   EnableUVKeySupport();
-  security_domain_service_->pretend_there_are_members();
-
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultRecoverable();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2818,7 +2378,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, EnrollAndCreate) {
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -2830,12 +2390,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, EnrollAndCreate) {
 
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        GetAssertionWithPlatformUV) {
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
   EnableUVKeySupport();
 
@@ -2861,7 +2416,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -2940,7 +2495,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
     content::DOMMessageQueue message_queue(web_contents);
     content::ExecuteScriptAsync(
         web_contents,
-        base::ReplaceStringPlaceholders(kMakeCredentialGoogle, {kEmail},
+        base::ReplaceStringPlaceholders(kMakeCredentialGoogle, {kSyncEmail},
                                         /*offsets=*/nullptr));
     delegate_observer()->WaitForUI();
     EXPECT_TRUE(
@@ -2964,7 +2519,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
     content::DOMMessageQueue message_queue(web_contents);
     content::ExecuteScriptAsync(
         web_contents, base::ReplaceStringPlaceholders(kMakeCredentialGoogle,
-                                                      {kEmailLocalPartOnly},
+                                                      {kSyncEmailLocalPartOnly},
                                                       /*offsets=*/nullptr));
     delegate_observer()->WaitForUI();
     EXPECT_TRUE(
@@ -2980,22 +2535,16 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 
   // But trying to create a passkey for a different account is fine.
   {
-    trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-        registration_state_result;
-    registration_state_result.state =
-        trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult::
-            State::kRecoverable;
-    SetMockVaultConnectionOnRequestDelegate(
-        std::move(registration_state_result));
+    SetTrustedVaultRecoverable();
 
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     content::DOMMessageQueue message_queue(web_contents);
     content::ExecuteScriptAsync(
         web_contents,
-        base::ReplaceStringPlaceholders(kMakeCredentialGoogle,
-                                        {std::string(kEmail) + "_different"},
-                                        /*offsets=*/nullptr));
+        base::ReplaceStringPlaceholders(
+            kMakeCredentialGoogle, {std::string(kSyncEmail) + "_different"},
+            /*offsets=*/nullptr));
     delegate_observer()->WaitForUI();
     EXPECT_FALSE(
         std::ranges::none_of(dialog_model()->mechanisms, [](const auto& m) {
@@ -3019,12 +2568,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                                          8,  7,  6,  5,  4,  3,  2,  1};
   constexpr char kUserName2[] = "yang";
 
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
 
   sync_pb::WebauthnCredentialSpecifics passkey1;
   CHECK(passkey1.ParseFromArray(kTestProtobuf, sizeof(kTestProtobuf)));
@@ -3074,14 +2618,9 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   Browser* otr_browser = OpenURLOffTheRecord(
       browser()->profile(),
       https_server_.GetURL("www.example.com", "/title1.html"));
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable(kSecretVersion, otr_browser->tab_strip_model()
+                                                 ->GetActiveWebContents()
+                                                 ->GetPrimaryMainFrame());
 
   // Initially bootstrap from LSKF, ensuring the incognito warning is shown.
   content::WebContents* web_contents =
@@ -3110,7 +2649,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -3151,13 +2690,9 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   Browser* otr_browser = OpenURLOffTheRecord(
       browser()->profile(),
       https_server_.GetURL("www.example.com", "/title1.html"));
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable(kSecretVersion, otr_browser->tab_strip_model()
+                                                 ->GetActiveWebContents()
+                                                 ->GetPrimaryMainFrame());
   AddTestPasskeyToModel();
 
   content::WebContents* web_contents =
@@ -3184,7 +2719,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -3205,12 +2740,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   // shouldn't also change. I.e. if we started with the expectation of doing
   // UV=true, the UI expects that to continue, even if we need macOS to prompt
   // for the system password.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
   EnableUVKeySupport();
 
@@ -3231,7 +2761,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -3251,7 +2781,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   request_delegate()->dialog_model()->OnTouchIDComplete(false);
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -3272,12 +2802,7 @@ class EnclaveICloudRecoveryKeyTest : public EnclaveAuthenticatorBrowserTest {
 // Tests enrolling an iCloud recovery key when there are no keys already
 // enrolled with the recovery service or present in iCloud keychain.
 IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest, Enroll) {
-  // Do a make credential request and enroll a PIN.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -3347,11 +2872,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest,
   ASSERT_TRUE(existing_icloud_key);
 
   // Do a make credential request and enroll a PIN.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -3407,12 +2928,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest,
 IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest, DISABLED_Recovery) {
   {
     // Do a make credential request and enroll a PIN.
-    trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-        registration_state_result;
-    registration_state_result.state = trusted_vault::
-        DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-    SetMockVaultConnectionOnRequestDelegate(
-        std::move(registration_state_result));
+    SetTrustedVaultEmpty();
 
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
@@ -3458,8 +2974,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest, DISABLED_Recovery) {
   {
     // Set up the mock trusted vault connection to download the iCloud recovery
     // factor that should have been added.
-    trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-        registration_state_result;
+    AuthenticationFactorsResult registration_state_result;
     const auto pin_member = std::ranges::find_if(
         security_domain_service_->members(),
         [](const trusted_vault_pb::SecurityDomainMember& member) {
@@ -3476,8 +2991,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest, DISABLED_Recovery) {
             base::Time::FromSecondsSinceUnixEpoch(
                 pin_metadata.expiration_time().seconds())));
     registration_state_result.state =
-        trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult::
-            State::kRecoverable;
+        AuthenticationFactorsResult::State::kRecoverable;
     registration_state_result.key_version = kSecretVersion;
     const auto icloud_member = std::ranges::find_if(
         security_domain_service_->members(),
@@ -3554,11 +3068,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveICloudRecoveryKeyTest, DISABLED_Recovery) {
 // TODO(crbug.com/345308672): Failing on various Mac bots.
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        MAYBE_MakeCredentialDeclineGPM) {
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
   delegate_observer()->AddAdditionalTransport(
       device::FidoTransportProtocol::kInternal);
 
@@ -3637,14 +3147,11 @@ IN_PROC_BROWSER_TEST_P(EnclaveAuthenticatorIncognitoBrowserTest,
   } else {
     web_contents = browser()->tab_strip_model()->GetActiveWebContents();
   }
+  content::RenderFrameHost* rfh = web_contents->GetPrimaryMainFrame();
   EnableUVKeySupport();
   delegate_observer()->SetUseSyncedDeviceCablePairing(/*use_pairing=*/true);
 
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultRecoverable(kSecretVersion, rfh);
   AddTestPasskeyToModel();
 
   content::ExecuteScriptAsync(web_contents, kGetAssertionUvRequired);
@@ -3665,9 +3172,7 @@ IN_PROC_BROWSER_TEST_P(EnclaveAuthenticatorIncognitoBrowserTest,
   // Now cancel the request...
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kMechanismSelection);
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultRecoverable(kSecretVersion, rfh);
   dialog_model()->StartOver();
   model_observer()->WaitForStep();
 
@@ -3696,9 +3201,7 @@ IN_PROC_BROWSER_TEST_P(EnclaveAuthenticatorIncognitoBrowserTest,
   dialog_model()->CancelAuthenticatorRequest();
   delegate_observer()->WaitForDelegateDestruction();
 
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultRecoverable(kSecretVersion, rfh);
   content::ExecuteScriptAsync(web_contents, kGetAssertionUvRequired);
   delegate_observer()->WaitForUI();
 
@@ -3728,9 +3231,7 @@ IN_PROC_BROWSER_TEST_P(EnclaveAuthenticatorIncognitoBrowserTest,
   dialog_model()->CancelAuthenticatorRequest();
   delegate_observer()->WaitForDelegateDestruction();
 
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultRecoverable(kSecretVersion, rfh);
   content::ExecuteScriptAsync(web_contents, kGetAssertionUvRequired);
   delegate_observer()->WaitForUI();
   EXPECT_EQ(dialog_model()->step(),
@@ -3791,7 +3292,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   {
     Profile* const profile = browser()->profile();
     EnclaveManager second_manager(
-        temp_dir_.GetPath(),
+        GetTempDirPath(),
         IdentityManagerFactory::GetForProfile(browser()->profile()),
         base::BindRepeating(
             [](base::WeakPtr<Profile> profile)
@@ -3804,7 +3305,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
             profile->GetWeakPtr()),
         url_loader_factory_.GetSafeWeakWrapper());
 
-    second_manager.StoreKeys(kGaiaId, {*security_domain_secret},
+    second_manager.StoreKeys(kSyncGaiaId, {*security_domain_secret},
                              /*last_key_version=*/kSecretVersion);
 
     base::test::TestFuture<bool> add_future;
@@ -3867,13 +3368,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
 // biometrics are available.
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        UserVerificationPolicy) {
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
   EnableUVKeySupport();
 
@@ -3900,7 +3395,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
   model_observer()->WaitForStep();
 
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -3944,13 +3439,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, Bug_354083161) {
   // Reproduces the crash from b/354083161
 
   // Do an assertion to set up the enclave.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   content::WebContents* web_contents =
@@ -3977,7 +3466,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, Bug_354083161) {
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -4009,13 +3498,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, NoSilentOperations) {
   // Check that the enclave doesn't allow silent operations.
 
   // Do an assertion to set up the enclave.
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   content::WebContents* web_contents =
@@ -4042,7 +3525,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, NoSilentOperations) {
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -4182,13 +3665,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, CancelRacesTPMCheck) {
 
 // Regression test for crbug.com/399937685.
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, SelectDeletedPasskey) {
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
 
   // Set up a conditional UI request.
@@ -4217,7 +3694,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, SelectDeletedPasskey) {
   model_observer()->SetStepToObserve(
       AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -4235,12 +3712,7 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest, SelectDeletedPasskey) {
 IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
                        SimultaneousRequestsWithDeferredUVKey) {
   EnableUVKeySupport(true);
-
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
+  SetTrustedVaultEmpty();
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -4351,12 +3823,7 @@ class EnclaveAuthenticatorConditionalCreateBrowserTest
   // Creates a credential to ensure the enclave authenticator is in a usable
   // state prior to making a conditional create request.
   void BootstrapEnclave() {
-    trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-        registration_state_result;
-    registration_state_result.state = trusted_vault::
-        DownloadAuthenticationFactorsRegistrationStateResult::State::kEmpty;
-    SetMockVaultConnectionOnRequestDelegate(
-        std::move(registration_state_result));
+    SetTrustedVaultEmpty();
 
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
@@ -4385,7 +3852,7 @@ class EnclaveAuthenticatorConditionalCreateBrowserTest
     saved_form.signon_realm = https_server_.GetURL("example.com", "/").spec();
     saved_form.url = https_server_.GetURL("example.com",
                                           "/password/prefilled_username.html");
-    saved_form.username_value = base::UTF8ToUTF16(std::string(kEmail));
+    saved_form.username_value = base::UTF8ToUTF16(std::string(kSyncEmail));
     saved_form.password_value = u"hunter1";
     saved_form.date_last_used = last_used;
     password_store()->AddLogin(saved_form);
@@ -4398,8 +3865,8 @@ class EnclaveAuthenticatorConditionalCreateBrowserTest
     passkey.set_sync_id(base::RandBytesAsString(16));
     passkey.set_credential_id(base::RandBytesAsString(16));
     passkey.set_user_id(base::RandBytesAsString(16));
-    passkey.set_user_name(kEmail);
-    passkey.set_user_display_name(kEmail);
+    passkey.set_user_name(kSyncEmail);
+    passkey.set_user_display_name(kSyncEmail);
     passkey_model()->AddNewPasskeyForTesting(passkey);
     return passkey;
   }
@@ -4591,13 +4058,7 @@ IN_PROC_BROWSER_TEST_F(
   content::DOMMessageQueue message_queue(web_contents);
 
   // GPM setup with one passkey
-  trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult
-      registration_state_result;
-  registration_state_result.state = trusted_vault::
-      DownloadAuthenticationFactorsRegistrationStateResult::State::kRecoverable;
-  registration_state_result.key_version = kSecretVersion;
-  SetMockVaultConnectionOnRequestDelegate(std::move(registration_state_result));
-  security_domain_service_->pretend_there_are_members();
+  SetTrustedVaultRecoverable();
   AddTestPasskeyToModel();
   EnableUVKeySupport();
   SetBiometricsEnabled(true);
@@ -4613,7 +4074,7 @@ IN_PROC_BROWSER_TEST_F(
   dialog_model()->OnTrustThisComputer();
   model_observer()->WaitForStep();
   EnclaveManagerFactory::GetAsEnclaveManagerForProfile(browser()->profile())
-      ->StoreKeys(kGaiaId,
+      ->StoreKeys(kSyncGaiaId,
                   {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
                                         std::end(kSecurityDomainSecret))},
                   kSecretVersion);
@@ -4679,6 +4140,32 @@ IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorImmediateMediationBrowserTest,
       "WebAuthentication.GetAssertion.Immediate.EnclaveReady",
       /*sample=*/false,
       /*expected_bucket_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(EnclaveAuthenticatorBrowserTest,
+                       MakeCredential_LargeBlobSupported) {
+  // New empty vault.
+  SetTrustedVaultEmpty();
+
+  content::WebContents* const web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Start JS create() call.
+  content::DOMMessageQueue queue(web_contents);
+  content::ExecuteScriptAsync(web_contents, kMakeCredentialLargeBlob);
+
+  delegate_observer()->WaitForUI();
+  EXPECT_EQ(dialog_model()->step(),
+            AuthenticatorRequestDialogModel::Step::kGPMCreatePasskey);
+  dialog_model()->OnGPMCreatePasskey();
+  EXPECT_EQ(dialog_model()->step(),
+            AuthenticatorRequestDialogModel::Step::kGPMCreatePin);
+  dialog_model()->OnGPMPinEntered(u"123456");
+
+  // Collect the JS result and verify the extension bit.
+  std::string script_result;
+  ASSERT_TRUE(queue.WaitForMessage(&script_result));
+  EXPECT_EQ(script_result, "\"largeblob true\"");
 }
 
 }  // namespace

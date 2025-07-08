@@ -12,6 +12,7 @@
 #import "components/saved_tab_groups/test_support/saved_tab_group_test_utils.h"
 #import "ios/chrome/browser/infobars/model/infobar_ios.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
+#import "ios/chrome/browser/infobars/ui_bundled/test_infobar_delegate.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
@@ -24,6 +25,7 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/url_loading/model/fake_url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
@@ -95,7 +97,6 @@ class CollaborationGroupInfoBarDelegateTest : public PlatformTest {
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
         {
-            kTabGroupSync,
             data_sharing::features::kDataSharingFeature,
             collaboration::features::kCollaborationMessaging,
         },
@@ -174,6 +175,7 @@ class CollaborationGroupInfoBarDelegateTest : public PlatformTest {
   raw_ptr<const TabGroup> tab_group_;
   base::test::ScopedFeatureList scoped_feature_list_;
   web::WebTaskEnvironment task_environment_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   std::unique_ptr<TestProfileIOS> profile_;
   id mock_handler_;
   std::unique_ptr<Browser> browser_;
@@ -297,15 +299,22 @@ TEST_F(CollaborationGroupInfoBarDelegateTest, ClearCollaborationGroupInfobars) {
   CollaborationGroupInfoBarDelegate::Create(profile_.get(), message_1);
   CollaborationGroupInfoBarDelegate::Create(profile_.get(), message_2);
   CollaborationGroupInfoBarDelegate::Create(profile_.get(), message_3);
-  EXPECT_EQ(3U, infobar_manager()->infobars().size());
+
+  // Add another infobar to the infobar_manager with a different infobar type.
+  TestInfoBarDelegate* test_infobar_delegate =
+      new TestInfoBarDelegate(@"testInfobar");
+  test_infobar_delegate->Create(infobar_manager());
+
+  EXPECT_EQ(4U, infobar_manager()->infobars().size());
 
   // Try to clear `message_1` and `message_3`.
   CollaborationGroupInfoBarDelegate::ClearCollaborationGroupInfobars(
       profile_.get(), {message_1.attributions.front().id.value(),
                        message_3.attributions.front().id.value()});
-  EXPECT_EQ(1U, infobar_manager()->infobars().size());
+  EXPECT_EQ(2U, infobar_manager()->infobars().size());
 
-  // Check that the remaining infobar matches `message_2` identifier.
+  // Check that the remaining collaboration infobar matches `message_2`
+  // identifier.
   EXPECT_EQ(infobar_delegate()->GetInstantMessageIdentifier(),
             message_2.attributions.front().id.value());
 }

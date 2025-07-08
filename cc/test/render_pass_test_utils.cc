@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include "cc/test/render_pass_test_utils.h"
 
 #include <stdint.h>
@@ -27,6 +26,7 @@
 #include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/service/display/display_resource_provider.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
@@ -39,15 +39,12 @@ namespace {
 
 viz::ResourceId CreateAndImportResource(
     viz::ClientResourceProvider* resource_provider,
-    const gpu::SyncToken& sync_token,
-    gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB()) {
-  constexpr gfx::Size size(64, 64);
-  auto transfer_resource = viz::TransferableResource::MakeGpu(
-      gpu::Mailbox::Generate(), GL_TEXTURE_2D, sync_token, size,
-      viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
-  transfer_resource.color_space = std::move(color_space);
-  return resource_provider->ImportResource(transfer_resource,
-                                           base::DoNothing());
+    const gpu::SyncToken& sync_token) {
+  auto resource = viz::TransferableResource::Make(
+      gpu::ClientSharedImage::CreateForTesting(),
+      viz::TransferableResource::ResourceSource::kTest, sync_token);
+
+  return resource_provider->ImportResource(resource, base::DoNothing());
 }
 
 }  // anonymous namespace
@@ -261,8 +258,7 @@ std::vector<viz::ResourceId> AddOneOfEveryQuadType(
   auto* scaled_tile_quad =
       to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
   scaled_tile_quad->SetNew(shared_state, rect, visible_rect, needs_blending,
-                           resource2, gfx::RectF(0, 0, 50, 50),
-                           gfx::Size(50, 50), false, false);
+                           resource2, gfx::RectF(0, 0, 50, 50), false, false);
 
   viz::SharedQuadState* transformed_state =
       to_pass->CreateAndAppendSharedQuadState();
@@ -273,9 +269,9 @@ std::vector<viz::ResourceId> AddOneOfEveryQuadType(
       transformed_state->quad_to_target_transform * rotation;
   auto* transformed_tile_quad =
       to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
-  transformed_tile_quad->SetNew(
-      transformed_state, rect, visible_rect, needs_blending, resource3,
-      gfx::RectF(0, 0, 100, 100), gfx::Size(100, 100), false, false);
+  transformed_tile_quad->SetNew(transformed_state, rect, visible_rect,
+                                needs_blending, resource3,
+                                gfx::RectF(0, 0, 100, 100), false, false);
 
   viz::SharedQuadState* shared_state2 =
       to_pass->CreateAndAppendSharedQuadState();
@@ -287,8 +283,7 @@ std::vector<viz::ResourceId> AddOneOfEveryQuadType(
 
   auto* tile_quad = to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
   tile_quad->SetNew(shared_state2, rect, visible_rect, needs_blending,
-                    resource4, gfx::RectF(0, 0, 100, 100), gfx::Size(100, 100),
-                    false, false);
+                    resource4, gfx::RectF(0, 0, 100, 100), false, false);
 
   return {resource1, resource2, resource3, resource4,
           resource5, resource6, resource8};
@@ -408,8 +403,8 @@ void AddOneOfEveryQuadTypeInDisplayResourceProvider(
   viz::TileDrawQuad* scaled_tile_quad =
       to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
   scaled_tile_quad->SetNew(shared_state, rect, visible_rect, needs_blending,
-                           mapped_resource2, gfx::RectF(0, 0, 50, 50),
-                           gfx::Size(50, 50), false, false);
+                           mapped_resource2, gfx::RectF(0, 0, 50, 50), false,
+                           false);
 
   viz::SharedQuadState* transformed_state =
       to_pass->CreateAndAppendSharedQuadState();
@@ -420,9 +415,9 @@ void AddOneOfEveryQuadTypeInDisplayResourceProvider(
       transformed_state->quad_to_target_transform * rotation;
   viz::TileDrawQuad* transformed_tile_quad =
       to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
-  transformed_tile_quad->SetNew(
-      transformed_state, rect, visible_rect, needs_blending, mapped_resource3,
-      gfx::RectF(0, 0, 100, 100), gfx::Size(100, 100), false, false);
+  transformed_tile_quad->SetNew(transformed_state, rect, visible_rect,
+                                needs_blending, mapped_resource3,
+                                gfx::RectF(0, 0, 100, 100), false, false);
 
   viz::SharedQuadState* shared_state2 =
       to_pass->CreateAndAppendSharedQuadState();
@@ -435,8 +430,7 @@ void AddOneOfEveryQuadTypeInDisplayResourceProvider(
   viz::TileDrawQuad* tile_quad =
       to_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
   tile_quad->SetNew(shared_state2, rect, visible_rect, needs_blending,
-                    mapped_resource4, gfx::RectF(0, 0, 100, 100),
-                    gfx::Size(100, 100), false, false);
+                    mapped_resource4, gfx::RectF(0, 0, 100, 100), false, false);
 }
 
 std::unique_ptr<viz::AggregatedRenderPass> CopyToAggregatedRenderPass(
@@ -464,6 +458,12 @@ std::unique_ptr<viz::AggregatedRenderPass> CopyToAggregatedRenderPass(
 
   copy_pass->shared_quad_state_list =
       std::move(from_pass->shared_quad_state_list);
+  for (auto* sqs : copy_pass->shared_quad_state_list) {
+    // Assign a non-zero layer namespace ID, mimicking SurfaceAggregator
+    // assigning a namespace based on the frame sink client.
+    sqs->layer_namespace_id = {1, 1};
+  }
+
   for (const viz::DrawQuad* src_quad : from_pass->quad_list) {
     viz::DrawQuad* quad = nullptr;
     if (src_quad->material == viz::DrawQuad::Material::kCompositorRenderPass) {

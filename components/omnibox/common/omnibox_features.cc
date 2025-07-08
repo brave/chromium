@@ -138,20 +138,10 @@ BASE_FEATURE(kOnDeviceHeadProviderIncognito,
 BASE_FEATURE(kOnDeviceHeadProviderNonIncognito,
              "OmniboxOnDeviceHeadProviderNonIncognito",
              ENABLED);
-BASE_FEATURE(kOnDeviceHeadProviderKorean,
-             "OmniboxOnDeviceHeadProviderKorean",
-             DISABLED);
 BASE_FEATURE(kOnDeviceTailModel, "OmniboxOnDeviceTailModel", DISABLED);
 BASE_FEATURE(kOnDeviceTailEnableEnglishModel,
              "OmniboxOnDeviceTailEnableEnglishModel",
              ENABLED);
-
-// If enabled, the relevant AutocompleteProviders will store "title" data in
-// AutocompleteMatch::contents and "URL" data in AutocompleteMatch::description
-// for URL-based omnibox suggestions (see crbug.com/1202964 for more details).
-BASE_FEATURE(kStoreTitleInContentsAndUrlInDescription,
-             "OmniboxStoreTitleInContentsAndUrlInDescription",
-             DISABLED);
 
 // Feature used to fetch document suggestions.
 BASE_FEATURE(kDocumentProvider,
@@ -164,13 +154,13 @@ BASE_FEATURE(kDocumentProvider,
 // cookie jar.
 BASE_FEATURE(kDocumentProviderPrimaryAccountRequirement,
              "OmniboxDocumentProviderPrimaryAccountRequirement",
-             DISABLED);
+             ENABLED);
 
 // If enabled, the primary account must be subject to enterprise policies in
 // order to receive Drive suggestions.
 BASE_FEATURE(kDocumentProviderEnterpriseEligibility,
              "OmniboxDocumentProviderEnterpriseEligibility",
-             DISABLED);
+             ENABLED);
 
 // If enabled, the enterprise eligibility requirement for Drive suggestions
 // is considered met even when the account capability is unknown. Has no effect
@@ -184,12 +174,7 @@ BASE_FEATURE(kDocumentProviderEnterpriseEligibilityWhenUnknown,
 // requirements.
 BASE_FEATURE(kDocumentProviderNoSyncRequirement,
              "OmniboxDocumentProviderNoSyncRequirement",
-             DISABLED);
-
-// Feature to determine if the HQP should double as a domain provider by
-// suggesting up to the provider limit for each of the user's highly visited
-// domains.
-BASE_FEATURE(kDomainSuggestions, "OmniboxDomainSuggestions", DISABLED);
+             ENABLED);
 
 // If enabled, the omnibox popup is not presented until the mouse button is
 // released.
@@ -295,13 +280,6 @@ BASE_FEATURE(kOmniboxAnswerActions, "OmniboxAnswerActions", DISABLED);
 // `omnibox::TYPE_CATEGORICAL_QUERY` to the server.
 BASE_FEATURE(kCategoricalSuggestions, "CategoricalSuggestions", ENABLED);
 
-// If enabled, merges the suggestion subtypes for the remote suggestions and the
-// local verbatim and history suggestion duplicates at the provider level. This
-// is needed for omnibox::kCategoricalSuggestions to function correctly but is
-// being controlled by a separate feature in case there are unintended side
-// effects beyond the categorical suggestions.
-BASE_FEATURE(kMergeSubtypes, "MergeSubtypes", ENABLED);
-
 // If enabled, sends a signal when a user touches down on a search suggestion to
 // |SearchPrefetchService|. |SearchPrefetchService| will then prefetch
 // suggestion iff the SearchNavigationPrefetch feature and "touch_down" param
@@ -338,14 +316,15 @@ BASE_FEATURE(kUseFusedLocationProvider, "UseFusedLocationProvider", ENABLED);
 // Enables storing successful query/match in the shortcut database On Android.
 BASE_FEATURE(kOmniboxShortcutsAndroid, "OmniboxShortcutsAndroid", ENABLED);
 
-// When enabled, it increases ipad's zps matches limit on web,srp and ntp.
-BASE_FEATURE(kIpadZeroSuggestMatches,
-             "IpadZeroSuggestMatches",
-             enable_if(IS_IOS));
-
 // Updates various NTP/Omnibox assets and descriptions for visual alignment on
 // Android and iOS.
 BASE_FEATURE(kOmniboxMobileParityUpdate, "OmniboxMobileParityUpdate", DISABLED);
+
+// Updates various NTP/Omnibox assets and descriptions for visual alignment on
+// Android and iOS, V2.
+BASE_FEATURE(kOmniboxMobileParityUpdateV2,
+             "OmniboxMobileParityUpdateV2",
+             DISABLED);
 
 // The features below allow tuning number of suggestions offered to users in
 // specific contexts. These features are default enabled and are used to control
@@ -423,7 +402,8 @@ static jlong JNI_OmniboxFeatureMap_GetNativeMap(JNIEnv* env) {
       &kJumpStartOmnibox,
       &kAndroidHubSearchTabGroups,
       &kPostDelayedTaskFocusTab,
-      &kOmniboxMobileParityUpdate};
+      &kOmniboxMobileParityUpdate,
+      &kOmniboxMobileParityUpdateV2};
   static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
       kFeaturesExposedToJava);
   return reinterpret_cast<jlong>(kFeatureMap.get());
@@ -445,6 +425,17 @@ BASE_FEATURE(kEnableSearchAggregatorPolicy,
 // determines if the engine can be overridden on the Settings page.
 BASE_FEATURE(kEnableSiteSearchAllowUserOverridePolicy,
              "EnableSiteSearchAllowUserOverridePolicy",
+             ENABLED);
+
+// Enables preconnecting to omnibox suggestions that are not only Search types.
+BASE_FEATURE(kPreconnectNonSearchOmniboxSuggestions,
+             "PreconnectNonSearchOmniboxSuggestions",
+             DISABLED);
+
+// Enables restricting omnibox focus restoration to only situations that involve
+// "invisible focus".
+BASE_FEATURE(kOmniboxRestoreInvisibleFocusOnly,
+             "OmniboxRestoreInvisibleFocusOnly",
              DISABLED);
 
 }  // namespace omnibox

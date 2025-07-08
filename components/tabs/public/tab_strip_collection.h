@@ -7,12 +7,16 @@
 
 #include <memory>
 #include <optional>
+#include <set>
 #include <unordered_map>
 
+#include "base/types/pass_key.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tabs/public/split_tab_data.h"
 #include "components/tabs/public/split_tab_id.h"
 #include "components/tabs/public/tab_collection.h"
+
+class TabStripModel;
 
 namespace tabs {
 
@@ -50,10 +54,12 @@ class TabStripCollection : public TabCollection {
                         size_t final_index,
                         std::optional<tab_groups::TabGroupId> new_group_id,
                         bool new_pinned_state);
-  void MoveTabsRecursive(const std::vector<int>& tab_indices,
-                         size_t destination_index,
-                         std::optional<tab_groups::TabGroupId> new_group_id,
-                         bool new_pinned_state);
+  void MoveTabsRecursive(
+      const std::vector<int>& tab_indices,
+      size_t destination_index,
+      std::optional<tab_groups::TabGroupId> new_group_id,
+      bool new_pinned_state,
+      const std::set<TabCollection::Type>& retain_collection_types);
 
   // Removes the tab present at a recursive index in the collection and
   // returns the unique_ptr to the tab model. If there is no tab present
@@ -96,7 +102,8 @@ class TabStripCollection : public TabCollection {
   void InsertTabGroupAt(std::unique_ptr<TabGroupTabCollection> group_collection,
                         int index);
 
-  // Clears all detached groups present in `detached_group_collections_`.
+  // Clears the detached group with `group_id` in `detached_group_collections_`.
+  // Crashes if the group is not found in the detached tab groups list.
   void CloseDetachedTabGroup(const tab_groups::TabGroupId& group_id);
 
   // Split tab operations.
@@ -111,6 +118,10 @@ class TabStripCollection : public TabCollection {
                         std::optional<tab_groups::TabGroupId> group);
   std::unique_ptr<TabCollection> RemoveSplit(SplitTabCollection* split);
   void ValidateData() const;
+
+  std::optional<const tab_groups::TabGroupId> FindGroupIdFor(
+      const tabs::TabCollection::Handle& collection_handle,
+      base::PassKey<TabStripModel>) const;
 
  private:
   // If the group specified by new_group is detached, pop it from the detached
@@ -128,10 +139,12 @@ class TabStripCollection : public TabCollection {
       const tab_groups::TabGroupId& group_id);
 
   // Returns the list of tabs and collection to remove for `MoveTabsRecursive`.
-  // Collections might be present instead of tabs to retain certain collections
-  // during drag.
+  // `retain_collection_types` adds the fully selected collections based on the
+  // types passed in and adds the collection to be moved instead of the tabs
+  // in the collection.
   ChildrenPtrs GetTabsAndCollectionsForMove(
-      const std::vector<int>& tab_indices);
+      const std::vector<int>& tab_indices,
+      const std::set<TabCollection::Type>& retain_collection_types);
 
   // Helper to centralize updates to `group_mapping_` and `split_mapping_`. If
   // `root_collection` is a group, the appropriate splits need to group need to

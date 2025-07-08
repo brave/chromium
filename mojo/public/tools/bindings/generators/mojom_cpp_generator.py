@@ -478,6 +478,7 @@ class Generator(generator.Generator):
         "ipc_hash": _IpcHash,
         "is_array_kind": mojom.IsArrayKind,
         "is_bool_kind": mojom.IsBoolKind,
+        "is_double_kind": mojom.IsDoubleKind,
         "is_default_constructible": self._IsDefaultConstructible,
         "is_enum_kind": mojom.IsEnumKind,
         "is_feature_on_by_default": self._IsFeatureOnByDefault,
@@ -746,11 +747,10 @@ class Generator(generator.Generator):
   def _FormatConstantDeclaration(self, constant, nested=False):
     if mojom.IsStringKind(constant.kind):
       if nested:
-        return "const char %s[%s]" % (constant.name,
-                                      self._ConstantLength(constant))
-      return "%sextern const char %s[%s]" % \
-          ((self.export_attribute + " ") if self.export_attribute else "",
-           constant.name, self._ConstantLength(constant))
+        return "constexpr char %s[] = %s" % (constant.name,
+                                             self._ConstantValue(constant))
+      return "inline constexpr char %s[] = %s" % \
+          (constant.name, self._ConstantValue(constant))
     return "constexpr %s %s = %s" % (GetCppPodType(
         constant.kind), constant.name, self._ConstantValue(constant))
 

@@ -16,8 +16,10 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/customize_chrome/side_panel_controller.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/views/event_utils.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_action_callback.h"
 #include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button_menu_model.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
@@ -25,6 +27,7 @@
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_button_status_indicator.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/actions/action_id.h"
@@ -40,6 +43,15 @@
 #include "ui/views/controls/button/button_controller.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
+
+namespace {
+// Width of the status indicator shown across the button.
+constexpr int kStatusIndicatorWidth = 14;
+// Height of the status indicator shown across the button.
+constexpr int kStatusIndicatorHeight = 2;
+// Spacing between the button's icon and the status indicator.
+constexpr int kStatusIndicatorSpacing = 1;
+}  // namespace
 
 DEFINE_UI_CLASS_PROPERTY_TYPE(PinnedToolbarActionFlexPriority)
 DEFINE_UI_CLASS_PROPERTY_KEY(
@@ -91,6 +103,8 @@ PinnedActionToolbarButton::PinnedActionToolbarButton(
 
   status_indicator_ =
       PinnedToolbarButtonStatusIndicator::Install(image_container_view());
+  status_indicator_->SetColorId(kColorToolbarActionItemEngaged,
+                                kColorToolbarButtonIconInactive);
 
   // TODO(shibalik): Revisit since all pinned actions should not be toggle
   // buttons.
@@ -183,14 +197,12 @@ gfx::Size PinnedActionToolbarButton::CalculatePreferredSize(
 
 void PinnedActionToolbarButton::Layout(PassKey) {
   LayoutSuperclass<ToolbarButton>(this);
-  gfx::Rect status_rect(14, 2);
-  status_indicator_->SetColorId(kColorToolbarActionItemEngaged,
-                                kColorToolbarButtonIconInactive);
-
-  gfx::Rect image_container_bounds = image_container_view()->GetLocalBounds();
-  int new_x = image_container_bounds.x() +
-              (image_container_bounds.width() - status_rect.width()) / 2;
-  int new_y = image_container_bounds.bottom() + 1;
+  gfx::Rect status_rect(kStatusIndicatorWidth, kStatusIndicatorHeight);
+  const gfx::Rect image_container_bounds =
+      image_container_view()->GetLocalBounds();
+  const int new_x = image_container_bounds.x() +
+                    (image_container_bounds.width() - status_rect.width()) / 2;
+  const int new_y = image_container_bounds.bottom() + kStatusIndicatorSpacing;
   // Set the new origin for status_rect
   status_rect.set_origin(gfx::Point(new_x, new_y));
   status_indicator_->SetBoundsRect(status_rect);

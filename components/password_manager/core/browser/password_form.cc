@@ -5,6 +5,7 @@
 #include "components/password_manager/core/browser/password_form.h"
 
 #include <algorithm>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -179,6 +180,8 @@ void PasswordFormToJSON(const PasswordForm& form, base::Value::Dict& target) {
   target.Set("affiliated_web_realm", form.affiliated_web_realm);
   target.Set("app_display_name", form.app_display_name);
   target.Set("app_icon_url", form.app_icon_url.possibly_invalid_spec());
+  target.Set("change_password_url",
+             form.change_password_url.possibly_invalid_spec());
   target.Set("submission_event", ToString(form.submission_event));
   target.Set("only_for_fallback", form.only_for_fallback);
   target.Set("is_gaia_with_skip_save_password_form",
@@ -426,8 +429,10 @@ void PasswordForm::SetNoteWithEmptyUniqueDisplayName(
   SetNote(notes, std::u16string(), new_note_value);
 }
 
-std::u16string PasswordForm::GetPasswordBackupNote() const {
-  return GetNote(notes, PasswordNote::kPasswordChangeBackupNoteName);
+std::optional<std::u16string> PasswordForm::GetPasswordBackup() const {
+  std::u16string note =
+      GetNote(notes, PasswordNote::kPasswordChangeBackupNoteName);
+  return note.empty() ? std::nullopt : std::make_optional(note);
 }
 
 void PasswordForm::SetPasswordBackupNote(const std::u16string& new_note_value) {

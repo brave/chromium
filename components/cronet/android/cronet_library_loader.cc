@@ -13,7 +13,7 @@
 #include <utility>
 
 #include "base/android/android_info.h"
-#include "base/android/base_jni_onload.h"
+#include "base/android/base_jni_init.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_registrar.h"
@@ -232,6 +232,7 @@ void JNI_CronetLibraryLoader_CronetInitOnInitThread(
           // TraceNetLogObserver per CronetEngine so that each engine has its
           // own root track, if that's possible?
           .root_track_name = "Cronet NetLog",
+          .verbose = true,
       });
   CHECK(!g_trace_net_log_capture_mode.has_value());
   g_trace_net_log_capture_mode = trace_net_log_capture_mode;

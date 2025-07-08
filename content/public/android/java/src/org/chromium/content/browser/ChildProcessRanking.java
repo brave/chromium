@@ -6,6 +6,7 @@ package org.chromium.content.browser;
 
 import android.os.Handler;
 
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.NullMarked;
@@ -68,8 +69,9 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         // important or that it only has waived binding.
         public boolean shouldBeInLowRankGroup() {
             boolean inViewport = visible && (frameDepth == 0 || intersectsViewport);
-            return (isSpareRenderer && ChildProcessRanking.isSpareRendererOfLowestRanking())
-                    || (importance == ChildProcessImportance.NORMAL && !inViewport);
+            return !inViewport
+                    && ((isSpareRenderer && ChildProcessRanking.isSpareRendererOfLowestRanking())
+                            || (importance <= ChildProcessImportance.PERCEPTIBLE));
         }
     }
 
@@ -93,9 +95,11 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
             // Ranking order:
             // * (visible and main frame) or ChildProcessImportance.IMPORTANT
             // * (visible and subframe and intersect viewport) or ChildProcessImportance.MODERATE
-            // * ChildProcessImportance.PERCEPTIBLE
             // ---- cutoff for shouldBeInLowRankGroup ----
             // * visible subframe and not intersect viewport
+            //   * These processes are bound with NotPerceptibleBinding by BindingManager in
+            //   * practice.
+            // * ChildProcessImportance.PERCEPTIBLE
             // * invisible main and sub frames (not ranked by frame depth)
             // * spare renderer (if lowest-ranking parameter is set).
             // Within each group, ties are broken by intersect viewport and then frame depth where
@@ -131,6 +135,14 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
                 return 1;
             }
 
+            if (o1.visible && o2.visible) {
+                return compareByIntersectsViewportAndDepth(o1, o2);
+            } else if (o1.visible && !o2.visible) {
+                return -1;
+            } else if (!o1.visible && o2.visible) {
+                return 1;
+            }
+
             boolean o1Perceptible = o1.importance == ChildProcessImportance.PERCEPTIBLE;
             boolean o2Perceptible = o2.importance == ChildProcessImportance.PERCEPTIBLE;
             if (o1Perceptible && o2Perceptible) {
@@ -138,14 +150,6 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
             } else if (o1Perceptible && !o2Perceptible) {
                 return -1;
             } else if (!o1Perceptible && o2Perceptible) {
-                return 1;
-            }
-
-            if (o1.visible && o2.visible) {
-                return compareByIntersectsViewportAndDepth(o1, o2);
-            } else if (o1.visible && !o2.visible) {
-                return -1;
-            } else if (!o1.visible && o2.visible) {
                 return 1;
             }
 
@@ -295,6 +299,23 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
     public @Nullable ChildProcessConnection getLowestRankedConnection() {
         if (mRankings.isEmpty()) return null;
         return mRankings.get(mRankings.size() - 1).connection;
+    }
+
+    public void recordProcessRanking() {
+        int lowRankCount = 0;
+        int highRankCount = 0;
+        for (int i = 0; i < mRankings.size(); ++i) {
+            ConnectionWithRank connection = mRankings.get(i);
+            if (connection.shouldBeInLowRankGroup()) {
+                lowRankCount++;
+            } else {
+                highRankCount++;
+            }
+        }
+        RecordHistogram.recordCount1000Histogram(
+                "Android.ChildProcessRanking.LowRank.Count", lowRankCount);
+        RecordHistogram.recordCount1000Histogram(
+                "Android.ChildProcessRanking.HighRank.Count", highRankCount);
     }
 
     private int indexOf(ChildProcessConnection connection) {

@@ -15,7 +15,6 @@ import org.chromium.base.test.transit.Element;
 import org.chromium.base.test.transit.SimpleConditions;
 import org.chromium.base.test.transit.ViewElement;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.omnibox.UrlBar;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
@@ -27,7 +26,6 @@ import org.chromium.chrome.test.transit.page.PageStation;
 import org.chromium.components.embedder_support.util.UrlConstants;
 
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -73,8 +71,7 @@ public class RegularNewTabPageStation extends PageStation {
 
     /** Opens the app menu by pressing the toolbar "..." button */
     public RegularNewTabPageAppMenuFacility openAppMenu() {
-        return enterFacilitySync(
-                new RegularNewTabPageAppMenuFacility(), menuButtonElement.getClickTrigger());
+        return menuButtonElement.clickTo().enterFacility(new RegularNewTabPageAppMenuFacility());
     }
 
     /**
@@ -88,15 +85,7 @@ public class RegularNewTabPageStation extends PageStation {
     public MvtsFacility focusOnMvts(
             List<SiteSuggestion> siteSuggestions, Set<Integer> separatorIndices) {
         // Assume MVTs are on the screen; if this assumption changes, make sure to scroll to them.
-        Set<Integer> nonTileIndices = new HashSet<>(separatorIndices);
-
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION)) {
-            // Populate with the "Add new" button at the end.
-            nonTileIndices.add(siteSuggestions.size() + separatorIndices.size());
-        }
-
-        return enterFacilitySync(
-                new MvtsFacility(siteSuggestions, nonTileIndices), /* trigger= */ null);
+        return noopTo().enterFacility(new MvtsFacility(siteSuggestions, separatorIndices));
     }
 
     /** Same as {@link #focusOnMvts(List, Set)} expecting no separatorIndices. */
@@ -110,8 +99,7 @@ public class RegularNewTabPageStation extends PageStation {
         OmniboxFacility omniboxFacility =
                 new OmniboxFacility(/* incognito= */ false, fakeSuggestions);
         SoftKeyboardFacility softKeyboard = new SoftKeyboardFacility();
-        enterFacilitiesSync(
-                List.of(omniboxFacility, softKeyboard), searchBoxElement.getClickTrigger());
+        searchBoxElement.clickTo().enterFacilities(omniboxFacility, softKeyboard);
         return Pair.create(omniboxFacility, softKeyboard);
     }
 }

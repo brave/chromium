@@ -101,7 +101,7 @@ struct IsTraceable<blink::WeakMember<T>> {
 // directly with any of those types.
 template <typename T>
 class ValuePeeker final {
-  DISALLOW_NEW();
+  STACK_ALLOCATED();
 
  public:
   // NOLINTNEXTLINE
@@ -137,6 +137,10 @@ class ValuePeeker final {
   T* ptr_;
 };
 
+}  // namespace WTF
+
+namespace blink {
+
 // Default hash for hash tables with Member<>-derived elements.
 template <typename T, typename MemberType>
 struct BaseMemberHashTraits : SimpleClassHashTraits<MemberType> {
@@ -154,17 +158,17 @@ struct BaseMemberHashTraits : SimpleClassHashTraits<MemberType> {
 #else
     cppgc::internal::RawPointer st(key);
 #endif
-    return WTF::GetHash(st.GetAsInteger());
+    return blink::GetHash(st.GetAsInteger());
   }
   template <typename Member>
     requires(WTF::IsAnyMemberType<Member>::value)
   static unsigned GetHash(const Member& m) {
-    return WTF::GetHash(m.GetRawStorage().GetAsInteger());
+    return blink::GetHash(m.GetRawStorage().GetAsInteger());
   }
 
   static constexpr bool kEmptyValueIsZero = true;
 
-  using PeekInType = ValuePeeker<T>;
+  using PeekInType = WTF::ValuePeeker<T>;
   using PeekOutType = T*;
   using IteratorGetType = MemberType*;
   using IteratorConstGetType = const MemberType*;
@@ -207,6 +211,10 @@ struct UntracedMemberHashTraits
 template <typename T>
 struct HashTraits<blink::UntracedMember<T>> : UntracedMemberHashTraits<T> {};
 
+}  // namespace blink
+
+namespace WTF {
+
 template <typename T>
 class MemberConstructTraits {
   STATIC_ONLY(MemberConstructTraits);
@@ -216,7 +224,8 @@ class MemberConstructTraits {
   static T* Construct(void* location, Args&&... args) {
     // `Construct()` creates a new Member which must not be visible to the
     // concurrent marker yet, similar to regular ctors in Member.
-    return new (NotNullTag::kNotNull, location) T(std::forward<Args>(args)...);
+    return new (base::NotNullTag::kNotNull, location)
+        T(std::forward<Args>(args)...);
   }
 
   template <typename... Args>
@@ -224,7 +233,7 @@ class MemberConstructTraits {
     // `ConstructAndNotifyElement()` updates an existing Member which might
     // also be concurrently traced while we update it. The regular ctors
     // for Member don't use an atomic write which can lead to data races.
-    T* object = new (NotNullTag::kNotNull, location)
+    T* object = new (base::NotNullTag::kNotNull, location)
         T(std::forward<Args>(args)..., typename T::AtomicInitializerTag());
     NotifyNewElement(object);
     return object;

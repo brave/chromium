@@ -317,7 +317,7 @@ class TestPermissionService : public PermissionService {
       PermissionDescriptorPtr permission,
       MojoPermissionStatus last_known_status,
       mojo::PendingRemote<PermissionObserver> observer) override {}
-  void AddPageEmbeddedPermissionObserver(
+  void AddCombinedPermissionObserver(
       PermissionDescriptorPtr permission,
       MojoPermissionStatus last_known_status,
       mojo::PendingRemote<PermissionObserver> observer) override {
@@ -1122,7 +1122,7 @@ TEST_F(HTMLPermissionElementSimTest, InvalidDisplayStyleElement) {
   DeferredChecker checker(permission_element);
   permission_element->setAttribute(
       html_names::kStyleAttr,
-      AtomicString("display: block; position: absolute;"));
+      AtomicString("display: contents; position: absolute;"));
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   checker.CheckClickingEnabled(/*enabled=*/false);
   checker.CheckClickingEnabledAfterDelay(kDefaultTimeout,
@@ -1131,8 +1131,9 @@ TEST_F(HTMLPermissionElementSimTest, InvalidDisplayStyleElement) {
                   GetDocument().QuerySelector(AtomicString("permission")))
                   ->matches(AtomicString(":invalid-style")));
 
-  permission_element->setAttribute(html_names::kStyleAttr,
-                                   AtomicString("display: inline-block;"));
+  permission_element->setAttribute(
+      html_names::kStyleAttr,
+      AtomicString("display: block; position: absolute;"));
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   checker.CheckClickingEnabled(/*enabled=*/false);
   checker.CheckClickingEnabledAfterDelay(kDefaultTimeout,

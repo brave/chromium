@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_CHANGE_MODEL_QUALITY_LOGS_UPLOADER_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_CHANGE_MODEL_QUALITY_LOGS_UPLOADER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 #include "components/optimization_guide/core/model_quality/model_quality_logs_uploader_service.h"
 
@@ -33,7 +34,8 @@ class ModelQualityLogsUploader {
 
   // Sets quality data for Step=OPEN_FORM_STEP.
   void SetOpenFormQuality(
-      const optimization_guide::proto::PasswordChangeResponse& response,
+      const std::optional<optimization_guide::proto::PasswordChangeResponse>&
+          response,
       std::unique_ptr<LoggingData> logging_data,
       base::Time server_request_start_time);
 
@@ -41,13 +43,22 @@ class ModelQualityLogsUploader {
   // Step=OPEN_FORM_STEP.
   void FormNotDetectedAfterOpening();
 
+  // To be called if there is an expected failure
+  // in Step=OPEN_FORM_STEP (e.g. Page Content is unavailable).
+  void SetOpenFormUnexpectedFailure();
+
   // To be called if element to click was not found
   // in Step=OPEN_FORM_STEP.
   void OpenFormTargetElementNotFound();
 
+  // To be called if element to click was not found
+  // in Step=OPEN_FORM_STEP.
+  void SubmitFormTargetElementNotFound();
+
   // Sets quality data for Step=SUBMIT_FORM_STEP.
   void SetSubmitFormQuality(
-      const optimization_guide::proto::PasswordChangeResponse& response,
+      const std::optional<optimization_guide::proto::PasswordChangeResponse>&
+          response,
       std::unique_ptr<LoggingData> logging_data,
       base::Time server_request_start_time);
 

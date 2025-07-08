@@ -4,14 +4,13 @@
 
 package org.chromium.chrome.browser.tab;
 
-import android.util.Pair;
-
 import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.embedder_support.contextmenu.ChipDelegate;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuPopulator;
+import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 
 import java.util.List;
@@ -39,8 +38,8 @@ public class TabContextMenuPopulator implements ContextMenuPopulator {
     }
 
     @Override
-    public List<Pair<Integer, ModelList>> buildContextMenu() {
-        List<Pair<Integer, ModelList>> itemGroups = mPopulator.buildContextMenu();
+    public List<ModelList> buildContextMenu() {
+        List<ModelList> itemGroups = mPopulator.buildContextMenu();
         if (!mTab.isDestroyed()) {
             TabContextMenuData.getOrCreateForTab(mTab)
                     .setLastTriggeringTouchPositionDp(
@@ -54,8 +53,8 @@ public class TabContextMenuPopulator implements ContextMenuPopulator {
     }
 
     @Override
-    public boolean onItemSelected(int itemId) {
-        return mPopulator.onItemSelected(itemId);
+    public boolean onItemSelected(int itemId, @Nullable ListItem menuItem) {
+        return mPopulator.onItemSelected(itemId, menuItem);
     }
 
     @Override

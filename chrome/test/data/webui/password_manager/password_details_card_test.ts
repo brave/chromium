@@ -25,6 +25,9 @@ async function createCardElement(
 
   const card = document.createElement('password-details-card');
   card.password = password;
+  if (password.backupPassword) {
+    card.isBackup = true;
+  }
   card.prefs = makePasswordManagerPrefs();
   document.body.appendChild(card);
   await flushTasks();
@@ -79,6 +82,22 @@ suite('PasswordDetailsCardTest', function() {
     assertFalse(isVisible(card.$.showPasswordButton));
     assertFalse(isVisible(card.$.copyPasswordButton));
     assertFalse(isVisible(card.$.editButton));
+    assertTrue(isVisible(card.$.deleteButton));
+  });
+
+  test('Content displayed properly for backup credential', async function() {
+    const password = createPasswordEntry(
+        {url: 'test.com', username: 'vik', backupPassword: 'backup'});
+
+    const card = await createCardElement(password);
+
+    assertEquals(password.username, card.$.usernameValue.value);
+    assertEquals(password.backupPassword, card.$.passwordValue.value);
+    assertEquals('password', card.$.passwordValue.type);
+    assertTrue(isVisible(card.$.noteValue));
+    assertTrue(isVisible(card.$.showPasswordButton));
+    assertTrue(isVisible(card.$.copyPasswordButton));
+    assertTrue(isVisible(card.$.editButton));
     assertTrue(isVisible(card.$.deleteButton));
   });
 
@@ -352,7 +371,6 @@ suite('PasswordDetailsCardTest', function() {
   // <if expr="_google_chrome">
   test('share button available when sync enabled', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -374,7 +392,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('share button available for account store users', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
@@ -390,7 +407,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('sharing disabled by policy', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -409,7 +425,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('sharing unavailable for federated credentials', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -425,7 +440,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('share button unavailable when sync disabled', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: false,
     };
 
@@ -444,7 +458,6 @@ suite('PasswordDetailsCardTest', function() {
       async function() {
         passwordManager.data.isAccountStorageEnabled = true;
         syncProxy.syncInfo = {
-          isEligibleForAccountStorage: true,
           isSyncingPasswords: false,
         };
 

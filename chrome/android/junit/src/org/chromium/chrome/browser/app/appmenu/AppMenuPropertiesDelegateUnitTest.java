@@ -9,7 +9,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -35,13 +34,11 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.app.appmenu.AppMenuPropertiesDelegateImpl.MenuGroup;
@@ -69,7 +66,6 @@ import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.browser.toolbar.menu_button.MenuUiState;
 import org.chromium.chrome.browser.translate.TranslateBridge;
 import org.chromium.chrome.browser.translate.TranslateBridgeJni;
-import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuItemProperties;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.components.bookmarks.BookmarkId;
@@ -212,18 +208,14 @@ public class AppMenuPropertiesDelegateUnitTest {
                                 mBookmarkModelSupplier,
                                 mReadAloudControllerSupplier) {
                             @Override
-                            public MVCListAdapter.ModelList buildMenuModelList(
-                                    AppMenuHandler handler) {
-                                fail("Building the menu list is unsupported.");
-                                return null;
+                            public MVCListAdapter.ModelList buildMenuModelList() {
+                                return new MVCListAdapter.ModelList();
                             }
                         });
 
         CommerceFeatureUtilsJni.setInstanceForTesting(mCommerceFeatureUtilsJniMock);
         ShoppingServiceFactoryJni.setInstanceForTesting(mShoppingServiceFactoryJniMock);
         doReturn(mShoppingService).when(mShoppingServiceFactoryJniMock).getForProfile(any());
-        BuildConfig.IS_DESKTOP_ANDROID = false;
-        ResettersForTesting.register(() -> BuildConfig.IS_DESKTOP_ANDROID = false);
     }
 
     private void setupFeatureDefaults() {
@@ -443,7 +435,7 @@ public class AppMenuPropertiesDelegateUnitTest {
 
         BookmarkId bookmarkId = mock(BookmarkId.class);
         doReturn(bookmarkId).when(mBookmarkModel).getUserBookmarkIdForTab(any());
-        doReturn(new ArrayList<BookmarkId>())
+        doReturn(new ArrayList<>())
                 .when(mBookmarkModel)
                 .getBookmarksOfType(eq(PowerBookmarkType.SHOPPING));
 
@@ -462,6 +454,25 @@ public class AppMenuPropertiesDelegateUnitTest {
     public void shouldCheckBookmarkStar_NullBookmarkModel() {
         mBookmarkModelSupplier.set(null);
         Assert.assertFalse(mAppMenuPropertiesDelegate.shouldCheckBookmarkStar(mTab));
+    }
+
+    @Test
+    public void readAloud_CanBeAddedOnMultipleCreatedMenus() {
+        when(mReadAloudController.isReadable(any(Tab.class))).thenReturn(true);
+
+        MVCListAdapter.ModelList modelList = mAppMenuPropertiesDelegate.getMenuItems();
+        mAppMenuPropertiesDelegate.observeAndMaybeAddReadAloud(modelList, mTab);
+        Assert.assertEquals(1, modelList.size());
+        Assert.assertEquals(
+                R.id.readaloud_menu_id,
+                modelList.get(0).model.get(AppMenuItemProperties.MENU_ITEM_ID));
+
+        MVCListAdapter.ModelList modelList2 = mAppMenuPropertiesDelegate.getMenuItems();
+        mAppMenuPropertiesDelegate.observeAndMaybeAddReadAloud(modelList2, mTab);
+        Assert.assertEquals(1, modelList2.size());
+        Assert.assertEquals(
+                R.id.readaloud_menu_id,
+                modelList2.get(0).model.get(AppMenuItemProperties.MENU_ITEM_ID));
     }
 
     private void setUpMocksForPageMenu() {

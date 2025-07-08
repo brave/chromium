@@ -18,11 +18,11 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "mac_toolchain"
+                  "mb"
                 ],
                 "build_config": "Release",
                 "config": "chromium_tvos",
+                "host_platform": "mac",
                 "target_bits": 64,
                 "target_platform": "ios"
               },
@@ -39,7 +39,8 @@
           "builder": "tvos-rel-fyi",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/tvos-rel-fyi/targets"
     }
   },
   "$build/siso": {
@@ -62,5 +63,5 @@
   },
   "builder_group": "tryserver.chromium.mac",
   "recipe": "chromium_trybot",
-  "xcode_build_version": "16c5032a"
+  "xcode_build_version": "16f6"
 }

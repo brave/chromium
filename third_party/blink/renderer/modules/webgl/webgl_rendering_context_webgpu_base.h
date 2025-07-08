@@ -5,12 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_RENDERING_CONTEXT_WEBGPU_BASE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_RENDERING_CONTEXT_WEBGPU_BASE_H_
 
+#include <array>
 #include <memory>
 
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_predefined_color_space.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_element_hit_test_region.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_webgl_context_attributes.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_context_object_support.h"
@@ -1275,10 +1276,12 @@ class MODULES_EXPORT WebGLRenderingContextWebGPUBase
   void SetHdrMetadata(const gfx::HDRMetadata& hdr_metadata) override;
 
   bool IsComposited() const override;
+  bool IsAccelerated() const override;
   bool IsPaintable() const override;
   void PageVisibilityChanged() override;
-  CanvasResourceProvider* PaintRenderingResultsToCanvas(
-      SourceDrawingBuffer) override;
+  scoped_refptr<StaticBitmapImage> PaintRenderingResultsToSnapshot(
+      SourceDrawingBuffer source_buffer,
+      FlushReason reason) override;
   bool CopyRenderingResultsToVideoFrame(
       WebGraphicsContext3DVideoFramePool*,
       SourceDrawingBuffer,
@@ -1418,6 +1421,8 @@ class MODULES_EXPORT WebGLRenderingContextWebGPUBase
   wgpu::Texture current_swap_buffer_;
   EGLImage default_framebuffer_color_image_ = EGL_NO_IMAGE;
   GLuint default_framebuffer_color_texture_ = 0;
+  GLuint default_framebuffer_depth_stencil_renderbuffer_ = 0;
+  gfx::Size default_framebuffer_size_;
   GLuint default_framebuffer_ = 0;
 
   int num_gl_errors_to_console_allowed_ = 255;

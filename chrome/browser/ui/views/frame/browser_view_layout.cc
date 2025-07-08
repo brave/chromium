@@ -29,6 +29,7 @@
 #include "chrome/browser/ui/views/frame/browser_view_layout_delegate.h"
 #include "chrome/browser/ui/views/frame/contents_layout_manager.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/frame/multi_contents_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/ui/views/infobars/infobar_container_view.h"
@@ -159,6 +160,10 @@ class BrowserViewLayout::WebContentsModalDialogHostViews
            browser_view_layout_->browser_view_->browser();
   }
 
+  bool ShouldDialogBoundsConstrainedByHost() override {
+    return !base::FeatureList::IsEnabled(features::kTabModalUsesDesktopWidget);
+  }
+
   gfx::Size GetMaximumDialogSize() override {
     // Modals use NativeWidget and cannot be rendered beyond the browser
     // window boundaries. Restricting them to the browser window bottom
@@ -229,11 +234,11 @@ BrowserViewLayout::BrowserViewLayout(
     views::View* toolbar,
     InfoBarContainerView* infobar_container,
     views::View* contents_container,
+    MultiContentsView* multi_contents_view,
     views::View* left_aligned_side_panel_separator,
     views::View* unified_side_panel,
     views::View* right_aligned_side_panel_separator,
     views::View* side_panel_rounded_corner,
-    ImmersiveModeController* immersive_mode_controller,
     views::View* contents_separator)
     : delegate_(std::move(delegate)),
       browser_view_(browser_view),
@@ -245,11 +250,11 @@ BrowserViewLayout::BrowserViewLayout(
       toolbar_(toolbar),
       infobar_container_(infobar_container),
       contents_container_(contents_container),
+      multi_contents_view_(multi_contents_view),
       left_aligned_side_panel_separator_(left_aligned_side_panel_separator),
       unified_side_panel_(unified_side_panel),
       right_aligned_side_panel_separator_(right_aligned_side_panel_separator),
       side_panel_rounded_corner_(side_panel_rounded_corner),
-      immersive_mode_controller_(immersive_mode_controller),
       contents_separator_(contents_separator),
       tab_strip_(tab_strip),
       dialog_host_(std::make_unique<WebContentsModalDialogHostViews>(this)) {}
@@ -491,8 +496,8 @@ int BrowserViewLayout::LayoutTitleBarForWebApp(int top) {
     if (delegate_->ShouldDrawTabStrip()) {
       web_app_window_title_->SetVisible(false);
     } else {
-      delegate_->LayoutWebAppWindowTitle(window_title_bounds,
-                                         *web_app_window_title_);
+      browser_view_->frame()->LayoutWebAppWindowTitle(window_title_bounds,
+                                                      *web_app_window_title_);
     }
   }
 
@@ -620,12 +625,14 @@ int BrowserViewLayout::LayoutInfoBar(int top) {
   // In immersive fullscreen or when top-chrome is fully hidden due to the page
   // gesture scroll slide behavior, the infobar always starts near the top of
   // the screen.
-  if (immersive_mode_controller_->IsEnabled() ||
+  const ImmersiveModeController* immersive_mode_controller =
+      delegate_->GetImmersiveModeController();
+  if (immersive_mode_controller->IsEnabled() ||
       (delegate_->IsTopControlsSlideBehaviorEnabled() &&
        delegate_->GetTopControlsSlideBehaviorShownRatio() == 0.f)) {
     // Can be null in tests.
     top = (browser_view_ ? browser_view_->y() : 0) +
-          immersive_mode_controller_->GetMinimumContentOffset();
+          immersive_mode_controller->GetMinimumContentOffset();
   }
   // The content usually starts at the bottom of the infobar. When there is an
   // extra infobar offset the infobar is shifted down while the content stays.
@@ -763,7 +770,7 @@ void BrowserViewLayout::LayoutContentsContainerView(int top, int bottom) {
   const bool is_in_split = delegate_->IsActiveTabSplit();
 
   if (is_in_split) {
-    delegate_->UpdateSplitViewInsets();
+    UpdateSplitViewInsets();
   }
   contents_container_->SetBoundsRect(layout_result.contents_container_bounds);
 
@@ -848,7 +855,7 @@ void BrowserViewLayout::UpdateTopContainerBounds() {
     // If the immersive mode controller is animating the top container, it may
     // be partly offscreen.
     top_container_bounds.set_y(
-        immersive_mode_controller_->GetTopContainerVerticalOffset(
+        delegate_->GetImmersiveModeController()->GetTopContainerVerticalOffset(
             top_container_bounds.size()));
   }
   top_container_->SetBoundsRect(top_container_bounds);
@@ -898,7 +905,7 @@ void BrowserViewLayout::LayoutContentBorder() {
   // Immersive top container might overlap with the blue border in fullscreen
   // mode - see crbug.com/1392733. By insetting the bounds rectangle we ensure
   // that the blue border is always placed below the top container.
-  if (immersive_mode_controller_->IsRevealed()) {
+  if (delegate_->GetImmersiveModeController()->IsRevealed()) {
     int delta = top_container_->bounds().bottom() - rect.y();
     if (delta > 0) {
       rect.Inset(gfx::Insets().set_top(delta));
@@ -930,4 +937,35 @@ bool BrowserViewLayout::IsInfobarVisible() const {
   return !infobar_container_->IsEmpty() &&
          (!browser_view_->IsFullscreen() ||
           !infobar_container_->ShouldHideInFullscreen());
+}
+
+// When in split view, the outline at the top should replace the content
+// separator. This represents the visual separation between top container and
+// the contents area. The exception to this is immersive full screen with
+// no toolbar or presence of infobar. Similarly the insets for the left and
+// right of the split view is determined by the side panel.
+void BrowserViewLayout::UpdateSplitViewInsets() {
+  SidePanel* side_panel = views::AsViewClass<SidePanel>(unified_side_panel_);
+  bool has_side_panel = side_panel->GetVisible();
+  bool is_right_aligned = side_panel->IsRightAligned();
+  bool is_in_immersive_mode = !delegate_->ShouldLayoutTabStrip();
+  bool has_infobar = infobar_container_->GetVisible();
+
+  CHECK(multi_contents_view_);
+
+  multi_contents_view_->start_contents_view_inset()
+      .set_left(has_side_panel && !is_right_aligned
+                    ? 0
+                    : MultiContentsView::kSplitViewContentInset)
+      .set_top(!is_in_immersive_mode && !has_infobar
+                   ? 0
+                   : MultiContentsView::kSplitViewContentInset);
+
+  multi_contents_view_->end_contents_view_inset()
+      .set_right(has_side_panel && is_right_aligned
+                     ? 0
+                     : MultiContentsView::kSplitViewContentInset)
+      .set_top(!is_in_immersive_mode && !has_infobar
+                   ? 0
+                   : MultiContentsView::kSplitViewContentInset);
 }

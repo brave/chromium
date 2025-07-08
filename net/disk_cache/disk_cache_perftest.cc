@@ -474,7 +474,7 @@ void DiskCachePerfTest::ResetAndEvictSystemDiskCache() {
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   // And, cache directories, on platforms where the eviction utility supports
   // this (currently Linux and Android only).
-  if (simple_cache_mode_) {
+  if (backend_to_test() == BackendToTest::kSimple) {
     ASSERT_TRUE(
         base::EvictFileFromSystemCache(cache_path_.AppendASCII("index-dir")));
   }
@@ -534,7 +534,7 @@ TEST_F(DiskCachePerfTest, MAYBE_CacheBackendPerformance) {
 #define MAYBE_SimpleCacheBackendPerformance SimpleCacheBackendPerformance
 #endif
 TEST_F(DiskCachePerfTest, MAYBE_SimpleCacheBackendPerformance) {
-  SetSimpleCacheMode();
+  SetBackendToTest(BackendToTest::kSimple);
   CacheBackendPerformance("simple_cache");
 }
 
@@ -591,15 +591,12 @@ TEST_F(DiskCachePerfTest, SimpleCacheInitialReadPortion) {
   // overhead.
   const int kBatchSize = 100;
 
-  SetSimpleCacheMode();
+  SetBackendToTest(BackendToTest::kSimple);
 
   InitCache();
   // Write out the entries, and keep their objects around.
-  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kHeadersSize);
-  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kBodySize);
-
-  CacheTestFillBuffer(buffer1->span(), false);
-  CacheTestFillBuffer(buffer2->span(), false);
+  auto buffer1 = CacheTestCreateAndFillBuffer(kHeadersSize, false);
+  auto buffer2 = CacheTestCreateAndFillBuffer(kBodySize, false);
 
   std::array<disk_cache::Entry*, kBatchSize> cache_entry;
   for (int i = 0; i < kBatchSize; ++i) {

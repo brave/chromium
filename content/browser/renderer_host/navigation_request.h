@@ -32,7 +32,7 @@
 #include "content/browser/renderer_host/cookie_access_observers.h"
 #include "content/browser/renderer_host/navigation_controller_impl.h"
 #include "content/browser/renderer_host/navigation_policy_container_builder.h"
-#include "content/browser/renderer_host/navigation_throttle_runner.h"
+#include "content/browser/renderer_host/navigation_throttle_registry_impl.h"
 #include "content/browser/renderer_host/navigation_type.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/scoped_view_transition_resources.h"
@@ -75,7 +75,9 @@
 #include "third_party/blink/public/mojom/navigation/navigation_initiator_activation_and_ad_status.mojom.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
 #include "url/gurl.h"
+#include "url/gurl_debug.h"
 #include "url/origin.h"
+#include "url/origin_debug.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
@@ -111,7 +113,6 @@ class SubframeHistoryNavigationThrottle;
 class CONTENT_EXPORT NavigationRequest
     : public NavigationHandle,
       public NavigationURLLoaderDelegate,
-      public NavigationThrottleRunner::Delegate,
       public CommitDeferringConditionRunner::Delegate,
       public FencedFrameURLMapping::MappingResultObserver,
       public mojom::NavigationRendererCancellationListener,
@@ -420,7 +421,7 @@ class CONTENT_EXPORT NavigationRequest
   SiteInstanceImpl* GetSourceSiteInstance() override;
   bool IsInMainFrame() const override;
   bool IsInPrimaryMainFrame() const override;
-  bool IsInOutermostMainFrame() override;
+  bool IsInOutermostMainFrame() const override;
   bool IsInPrerenderedMainFrame() const override;
   bool IsPrerenderedPageActivation() const override;
   bool IsInFencedFrameTree() const override;
@@ -751,9 +752,9 @@ class CONTENT_EXPORT NavigationRequest
   void CancelDeferredNavigation(NavigationThrottle* cancelling_throttle,
                                 NavigationThrottle::ThrottleCheckResult result);
 
-  // Returns the underlying NavigationThrottleRunner for tests to manipulate.
-  NavigationThrottleRunner* GetNavigationThrottleRunnerForTesting() {
-    return throttle_runner_.get();
+  // Returns the underlying NavigationThrottleRegistry for tests to manipulate.
+  NavigationThrottleRegistryImpl* GetNavigationThrottleRegistryForTesting() {
+    return throttle_registry_.get();
   }
 
   // Simulates renderer cancelling the navigation.
@@ -761,10 +762,6 @@ class CONTENT_EXPORT NavigationRequest
 
   typedef base::OnceCallback<bool(NavigationThrottle::ThrottleCheckResult)>
       ThrottleChecksFinishedCallback;
-
-  NavigationThrottle* GetDeferringThrottleForTesting() const {
-    return throttle_runner_->GetDeferringThrottle();
-  }
 
   // Called when the navigation was committed.
   // This will update the |state_|.
@@ -1250,11 +1247,7 @@ class CONTENT_EXPORT NavigationRequest
   }
 
   void set_keep_alive_url_loader_factory_context(
-      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
-          factory_context) {
-    DCHECK(!keep_alive_url_loader_factory_context_);
-    keep_alive_url_loader_factory_context_ = factory_context;
-  }
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
 
   base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
   fetch_later_loader_factory_context() {
@@ -1262,11 +1255,12 @@ class CONTENT_EXPORT NavigationRequest
   }
 
   void set_fetch_later_loader_factory_context(
-      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
-          factory_context) {
-    DCHECK(!fetch_later_loader_factory_context_);
-    fetch_later_loader_factory_context_ = factory_context;
-  }
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
+
+  void SetKeepAliveURLLoaderFactoryContextForTesting(
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
+  void SetFetchLaterLoaderFactoryContextForTesting(
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
 
   // Helper for logging crash keys related to a NavigationRequest (e.g.
   // "navigation_request_url", "navigation_request_initiator", and
@@ -1531,6 +1525,15 @@ class CONTENT_EXPORT NavigationRequest
     return was_reset_for_cross_document_restart_;
   }
 
+  // Returns the document sequence number from the associated
+  // FrameNavigationEntry, if this NavigationRequest corresponds to a session
+  // history navigation. The value is cleared if the navigation performs a
+  // redirect or results in an origin change, in which case the
+  // NavigationRequest is no longer tied to the original entry.
+  int64_t frame_entry_document_sequence_number() const {
+    return frame_entry_document_sequence_number_;
+  }
+
   // Called when the browser process is about to process beforeunload handlers
   // for this navigation, including sending an IPC to the renderer process to
   // run beforeunload handlers when necessary.
@@ -1720,8 +1723,16 @@ class CONTENT_EXPORT NavigationRequest
   std::optional<ukm::builders::NavigationTimeline>
   GetNavigationTimelineUkmBuilder();
 
+  // Called when the NavigationThrottleRunner is done processing the navigation
+  // event of type `event`. `result` is the final
+  // NavigationThrottle::ThrottleCheckResult for this event.
+  void OnNavigationEventProcessed(
+      NavigationThrottleEvent event,
+      NavigationThrottle::ThrottleCheckResult result);
+
  private:
   friend class NavigationRequestTest;
+  FRIEND_TEST_ALL_PREFIXES(NavigationRequestTest, SanitizeRedirectsForCommit);
 
   struct ConsoleMessage {
     blink::mojom::ConsoleMessageLevel level;
@@ -2006,6 +2017,11 @@ class CONTENT_EXPORT NavigationRequest
   // renderer process.
   void UpdateHistoryParamsInCommitNavigationParams();
 
+  // Helper method to sanitize URLs for redirects before the commit IPC is sent
+  // to the renderer process. Must be called right before sending the IPC.
+  void SanitizeRedirectsForCommit(
+      blink::mojom::CommitNavigationParamsPtr& commit_params);
+
   // The disconnect handler for the NavigationClient Mojo interface; used as a
   // signal to potentially cancel navigations, e.g. when the renderer replaces
   // an existing NavigationClient connection with a new one or when the renderer
@@ -2046,11 +2062,6 @@ class CONTENT_EXPORT NavigationRequest
   // Record download related UseCounters when navigation is a download after
   // filtered by download_policy.
   void RecordDownloadUseCountersPostPolicyCheck();
-
-  // NavigationThrottleRunner::Delegate:
-  void OnNavigationEventProcessed(
-      NavigationThrottleRunner::Event event,
-      NavigationThrottle::ThrottleCheckResult result) override;
 
   void OnWillStartRequestProcessed(
       NavigationThrottle::ThrottleCheckResult result);
@@ -2194,8 +2205,8 @@ class CONTENT_EXPORT NavigationRequest
 
   // Check the COOP value of the page is compatible with the COEP value of each
   // of its documents. COOP:kSameOriginPlusCoep is incompatible with COEP:kNone.
-  // If they aren't, this returns false and emits a crash report.
-  bool CoopCoepSanityCheck();
+  // If they aren't, this emits a crash report.
+  void CoopCoepSanityCheck();
 
   // Checks that, given an origin to be committed, all of the permissions
   // policies that a fenced frame requires to be enabled are enabled. If not, it
@@ -2440,6 +2451,19 @@ class CONTENT_EXPORT NavigationRequest
   // would also create ServiceWorkerClient and cause conflict.
   void InheritServiceWorkerControllerFromParentIfNeeded();
 
+  // If this navigation has a FrameNavigationEntry with a committed origin,
+  // ensure that it matches the origin_to_commit when origin-sensitive state
+  // (such as page_state) is being sent to the renderer.
+  //
+  // This invariant guards against scenarios where session history has been
+  // unintentionally or maliciously corrupted, causing a document to commit
+  // in a renderer under the wrong origin. This would violate site isolation
+  // guarantees and could lead to security vulnerabilities.
+  //
+  // See https://crbug.com/41487933 for more background on the types of bugs
+  // this protects against.
+  void ValidateCommitOrigin(const url::Origin& origin_to_commit);
+
   // Never null. The pointee node owns this navigation request instance.
   // This field is not a raw_ptr because of incompatibilities with tracing
   // (TRACE_EVENT*), perfetto::TracedDictionary::Add and gmock/EXPECT_THAT.
@@ -2634,9 +2658,8 @@ class CONTENT_EXPORT NavigationRequest
   // The offset of the new document in the history.
   const int navigation_entry_offset_ = 0;
 
-  // Owns the NavigationThrottles associated with this navigation, and is
-  // responsible for notifying them about the various navigation events.
-  std::unique_ptr<NavigationThrottleRunner> throttle_runner_;
+  // Owns the NavigationThrottleRegistry associated with this navigation.
+  std::unique_ptr<NavigationThrottleRegistryImpl> throttle_registry_;
 
   // Once the navigation has passed all throttle checks the navigation will
   // commit. However, we may need to defer the commit until certain conditions
@@ -3148,6 +3171,11 @@ class CONTENT_EXPORT NavigationRequest
   // See also `keep_alive_url_loader_factory_context_` for the timing to update.
   base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
       fetch_later_loader_factory_context_;
+
+  // Set to true when the loaders above are set by unittests that want to avoid
+  // setting a real connection to the renderer.
+  bool did_set_keep_alive_url_loader_factory_context_for_testing_ = false;
+  bool did_set_fetch_later_url_loader_factory_context_for_testing_ = false;
 
   scoped_refptr<NavigationOrDocumentHandle> navigation_or_document_handle_;
 

@@ -83,18 +83,11 @@ public interface TabGroupModelFilter extends SupportsTabModelObserver {
      * @param tabGroupId The tab group ID to look for.
      * @return The root ID of the tab group or {@link Tab.INVALID_TAB_ID} if the group isn't found
      *     in the tab model.
+     * @deprecated Use a {@link Token} tab group ID instead.
      */
+    @Deprecated
     @TabId
     int getRootIdFromTabGroupId(@Nullable Token tabGroupId);
-
-    /**
-     * Given a tab group's root ID, finds out the tab group ID, or null if the tab group doesn't
-     * exist in the model.
-     *
-     * @param rootId The root ID of the tab group.
-     * @return The tab group ID of the tab group or null if the group isn't found in the tab model.
-     */
-    @Nullable Token getTabGroupIdFromRootId(@TabId int rootId);
 
     /**
      * Returns the list of {@link Tab}s that are grouped with the given {@code tabId}.
@@ -244,18 +237,34 @@ public interface TabGroupModelFilter extends SupportsTabModelObserver {
     LazyOneshotSupplier<Set<Token>> getLazyAllTabGroupIds(
             List<Tab> tabsToExclude, boolean includePendingClosures);
 
-    // TODO(crbug.com/399354986): Migrate these methods to use tabGroupIds instead of rootIds.
-
     /**
      * Returns the current title of the tab group or null if a title is not set. Prefer {@link
      * TabGroupTitleUtils#getDisplayableTitle} in most cases.
      */
+    @Nullable String getTabGroupTitle(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #getTabGroupTitle(Token)} instead.
+     */
+    @Deprecated
     @Nullable String getTabGroupTitle(@TabId int rootId);
 
     /** Stores the given title for the tab group. */
+    void setTabGroupTitle(Token tabGroupId, @Nullable String title);
+
+    /**
+     * @deprecated Use {@link #setTabGroupTitle(Token, String)} instead.
+     */
+    @Deprecated
     void setTabGroupTitle(@TabId int rootId, @Nullable String title);
 
     /** Deletes the stored title for the tab group, defaulting it back to "N tabs." */
+    void deleteTabGroupTitle(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #deleteTabGroupTitle(Token)} instead.
+     */
+    @Deprecated
     void deleteTabGroupTitle(@TabId int rootId);
 
     /**
@@ -263,6 +272,12 @@ public interface TabGroupModelFilter extends SupportsTabModelObserver {
      * TabGroupColorId} if found, otherwise a {@link TabGroupColorUtils.INVALID_COLOR_ID} if there
      * is no color entry for the group.
      */
+    int getTabGroupColor(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #getTabGroupColor(Token)} instead.
+     */
+    @Deprecated
     int getTabGroupColor(@TabId int rootId);
 
     /**
@@ -270,32 +285,83 @@ public interface TabGroupModelFilter extends SupportsTabModelObserver {
      * exist, then GREY will be returned. This method is intended to be used by UI surfaces that
      * want to show a color, and they need the color returned to be valid.
      *
-     * @param rootId The tab root ID whose related tab group color will be fetched if found.
+     * @param tabGroupId The tab group ID whose related tab group color will be fetched if found.
      * @return The color that should be used for this group.
      */
+    @TabGroupColorId
+    int getTabGroupColorWithFallback(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #getTabGroupColorWithFallback(Token)} instead.
+     */
+    @Deprecated
     @TabGroupColorId
     int getTabGroupColorWithFallback(@TabId int rootId);
 
     /** Stores the given color for the tab group. */
+    void setTabGroupColor(Token tabGroupId, @TabGroupColorId int color);
+
+    /**
+     * @deprecated Use {@link #setTabGroupColor(Token, int)} instead.
+     */
+    @Deprecated
     void setTabGroupColor(@TabId int rootId, @TabGroupColorId int color);
 
     /** Deletes the color that was recorded for the group. */
+    void deleteTabGroupColor(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #deleteTabGroupColor(Token)} instead.
+     */
+    @Deprecated
     void deleteTabGroupColor(@TabId int rootId);
 
     /** Returns whether the tab group is expanded or collapsed. */
+    boolean getTabGroupCollapsed(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #getTabGroupCollapsed(Token)} instead.
+     */
+    @Deprecated
     boolean getTabGroupCollapsed(@TabId int rootId);
 
     /** Sets whether the tab group is expanded or collapsed. */
+    default void setTabGroupCollapsed(Token tabGroupId, boolean isCollapsed) {
+        setTabGroupCollapsed(tabGroupId, isCollapsed, /* animate= */ false);
+    }
+
+    /** Sets whether the tab group is expanded or collapsed, with optional animation. */
+    void setTabGroupCollapsed(Token tabGroupId, boolean isCollapsed, boolean animate);
+
+    /**
+     * @deprecated Use {@link #setTabGroupCollapsed(Token, boolean)} instead.
+     */
+    @Deprecated
     default void setTabGroupCollapsed(@TabId int rootId, boolean isCollapsed) {
         setTabGroupCollapsed(rootId, isCollapsed, /* animate= */ false);
     }
 
-    /** Sets whether the tab group is expanded or collapsed, with optional animation. */
+    /**
+     * @deprecated Use {@link #setTabGroupCollapsed(Token, boolean, boolean)} instead.
+     */
+    @Deprecated
     void setTabGroupCollapsed(@TabId int rootId, boolean isCollapsed, boolean animate);
 
     /** Deletes the record that the group is collapsed, setting it to expanded. */
+    void deleteTabGroupCollapsed(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #deleteTabGroupCollapsed(Token)} instead.
+     */
+    @Deprecated
     void deleteTabGroupCollapsed(@TabId int rootId);
 
     /** Delete the title, color and collapsed state of a tab group. */
+    void deleteTabGroupVisualData(Token tabGroupId);
+
+    /**
+     * @deprecated Use {@link #deleteTabGroupVisualData(Token)} instead.
+     */
+    @Deprecated
     void deleteTabGroupVisualData(@TabId int rootId);
 }

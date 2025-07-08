@@ -35,7 +35,7 @@ bool MediaQueryParser::MediaQueryFeatureSet::IsAllowed(
       feature == media_feature_names::kStuckMediaFeature ||
       feature == media_feature_names::kSnappedMediaFeature ||
       feature == media_feature_names::kScrollableMediaFeature ||
-      (feature == media_feature_names::kScrollDirectionMediaFeature &&
+      (feature == media_feature_names::kDirectionMediaFeature &&
        RuntimeEnabledFeatures::CSSScrollDirectionContainerQueriesEnabled()) ||
       CSSVariableParser::IsValidVariableName(feature)) {
     return false;
@@ -234,7 +234,7 @@ std::optional<MediaQueryExpValue> ConsumeUnparsed(
   CSSVariableData* data =
       CSSVariableData::Create(value_string, /* is_animation_tainted= */ false,
                               /* is_attr_tainted= */ false,
-                              /*needs_variable_resolution=*/false);
+                              /*needs_variable_resolution=*/true);
   const CSSValue* value =
       MakeGarbageCollected<CSSUnparsedDeclarationValue>(data, &context);
   return MediaQueryExpValue(*value);

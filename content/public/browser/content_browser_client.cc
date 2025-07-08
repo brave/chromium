@@ -14,6 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/supports_user_data.h"
 #include "base/task/sequenced_task_runner.h"
@@ -50,7 +51,6 @@
 #include "content/public/browser/speculation_host_delegate.h"
 #include "content/public/browser/tracing_delegate.h"
 #include "content/public/browser/url_loader_request_interceptor.h"
-#include "content/public/browser/vpn_service_proxy.h"
 #include "content/public/browser/web_authentication_delegate.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view_delegate.h"
@@ -743,6 +743,10 @@ bool ContentBrowserClient::AreThirdPartyCookiesGenerallyAllowed(
   return true;
 }
 
+void ContentBrowserClient::PrewarmServiceWorkerRegistrationForDSE(
+    BrowserContext* browser_context,
+    ServiceWorkerContext& service_worker_context) {}
+
 bool ContentBrowserClient::CanSendSCTAuditingReport(
     BrowserContext* browser_context) {
   return false;
@@ -914,33 +918,6 @@ std::optional<base::FilePath> ContentBrowserClient::GetLocalTracesDirectory() {
   return std::nullopt;
 }
 
-BrowserPpapiHost* ContentBrowserClient::GetExternalBrowserPpapiHost(
-    int plugin_process_id) {
-  return nullptr;
-}
-
-bool ContentBrowserClient::AllowPepperSocketAPI(
-    BrowserContext* browser_context,
-    const GURL& url,
-    bool private_api,
-    const SocketPermissionRequest* params) {
-  DCHECK(browser_context);
-  return false;
-}
-
-bool ContentBrowserClient::IsPepperVpnProviderAPIAllowed(
-    BrowserContext* browser_context,
-    const GURL& url) {
-  DCHECK(browser_context);
-  return false;
-}
-
-std::unique_ptr<VpnServiceProxy> ContentBrowserClient::GetVpnServiceProxy(
-    BrowserContext* browser_context) {
-  DCHECK(browser_context);
-  return nullptr;
-}
-
 std::unique_ptr<ui::SelectFilePolicy>
 ContentBrowserClient::CreateSelectFilePolicy(WebContents* web_contents) {
   return nullptr;
@@ -963,26 +940,10 @@ ContentBrowserClient::GetDevToolsBackgroundServiceExpirations(
 }
 
 std::unique_ptr<TracingDelegate> ContentBrowserClient::CreateTracingDelegate() {
-  return nullptr;
+  return std::make_unique<TracingDelegate>();
 }
 
 bool ContentBrowserClient::IsSystemWideTracingEnabled() {
-  return false;
-}
-
-bool ContentBrowserClient::IsPluginAllowedToCallRequestOSFileHandle(
-    BrowserContext* browser_context,
-    const GURL& url) {
-  DCHECK(browser_context);
-  return false;
-}
-
-bool ContentBrowserClient::IsPluginAllowedToUseDevChannelAPIs(
-    BrowserContext* browser_context,
-    const GURL& url) {
-  // |browser_context| may be null (e.g. when called from
-  // PpapiPluginProcessHost::PpapiPluginProcessHost).
-
   return false;
 }
 
@@ -1886,6 +1847,7 @@ void ContentBrowserClient::BindAIManager(
 }
 
 void ContentBrowserClient::BindTranslationManager(
+    RenderProcessHost* process_host,
     BrowserContext* browser_context,
     base::SupportsUserData* context_user_data,
     const url::Origin& origin,
@@ -1996,6 +1958,12 @@ ContentBrowserClient::MaybeCreateKeepAliveRequestTracker(
     KeepAliveRequestTracker::IsContextDetachedCallback
         is_context_detached_callback) {
   return nullptr;
+}
+
+std::optional<std::vector<std::u16string>>
+ContentBrowserClient::GetClipboardTypesIfPolicyApplied(
+    const ui::ClipboardSequenceNumberToken& seqno) {
+  return std::nullopt;
 }
 
 }  // namespace content

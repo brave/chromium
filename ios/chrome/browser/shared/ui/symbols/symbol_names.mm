@@ -7,6 +7,7 @@
 // Branded symbol names.
 #if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
 // TODO(crbug.com/1489185): Move PNG images out of this file.
+NSString* const kChromeAIHubHeaderImage = @"chrome_ai_hub_header";
 NSString* const kChromeDefaultBrowserIllustrationImage =
     @"chrome_default_browser_illustration";
 NSString* const kChromeDefaultBrowserScreenBannerImage =
@@ -20,6 +21,7 @@ NSString* const kChromeSearchEngineChoiceIcon =
     @"chrome_search_engine_choice_icon";
 NSString* const kChromeSigninBannerImage = @"chrome_signin_banner";
 NSString* const kChromeSigninPromoLogoImage = @"chrome_signin_promo_logo";
+NSString* const kGeminiBrandedLogoImage = @"gemini_logo";
 NSString* const kGoogleDriveSymbol = @"google_drive";
 NSString* const kGoogleFullSymbol = @"google_full";
 NSString* const kGoogleIconSymbol = @"google_icon";
@@ -40,6 +42,7 @@ NSString* const kFedexCarrierImage = @"parcel_tracking_carrier_fedex";
 NSString* const kUPSCarrierImage = @"parcel_tracking_carrier_ups";
 NSString* const kUSPSCarrierImage = @"parcel_tracking_carrier_usps";
 #else
+NSString* const kChromiumAIHubHeaderImage = @"chromium_ai_hub_header";
 NSString* const kChromiumDefaultBrowserScreenBannerImage =
     @"chromium_default_browser_screen_banner";
 NSString* const kChromiumGuidedTourBannerImage = @"chromium_guided_tour_banner";
@@ -57,6 +60,7 @@ NSString* const kChromiumSettingsPasswordsInOtherAppsBannerImage =
     @"chromium_settings_passwords_in_other_apps_banner";
 NSString* const kChromiumSigninBannerImage = @"chromium_signin_banner";
 NSString* const kChromiumSigninPromoLogoImage = @"chromium_signin_promo_logo";
+NSString* const kGeminiNonBrandedLogoImage = @"sparkle";
 #endif  // BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
 
 // Custom symbol names.
@@ -81,6 +85,7 @@ NSString* const kTabGroupsSymbol = @"square.grid.2x2";
 NSString* const kLanguageSymbol = @"language";
 NSString* const kLocationSymbol = @"location";
 NSString* const kPasswordSymbol = @"password";
+NSString* const kCropSymbol = @"crop";
 #if !BUILDFLAG(IS_IOS_MACCATALYST)
 NSString* const kMulticolorPasswordSymbol = @"multicolor_password";
 #endif  // BUILDFLAG(IS_IOS_MACCATALYST)
@@ -107,6 +112,12 @@ NSString* const kMyDriveSymbol = @"my_drive";
 NSString* const kSharedDrivesSymbol = @"shared_drives";
 NSString* const kEllipsisSquareFillSymbol = @"ellipsis_square_fill";
 NSString* const kMagnifyingglassSparkSymbol = @"magnifyingglass_spark";
+NSString* const kPasswordManagerTrustedVaultWidgetPromoImage =
+    @"password_manager_trusted_vault_widget_promo";
+NSString* const kPasswordManagerTrustedVaultWidgetPromoDisabledImage =
+    @"password_manager_trusted_vault_widget_promo_disabled";
+NSString* const kPhoneSparkleSymbol = @"phone_sparkle";
+NSString* const kTextSearchSymbol = @"text_search";
 
 // Custom symbol names which can be configured with a color palette.
 NSString* const kIncognitoCircleFillSymbol = @"incognito_circle_fill";
@@ -207,6 +218,8 @@ NSString* const kExpandSymbol = @"arrow.up.left.and.arrow.down.right";
 NSString* const kBackSymbol = @"arrow.backward";
 NSString* const kForwardSymbol = @"arrow.forward";
 NSString* const kPersonFillSymbol = @"person.fill";
+NSString* const kPersonClockFillSymbol = @"person.badge.clock.fill";
+NSString* const kPersonFillBadgePlusSymbol = @"person.fill.badge.plus";
 NSString* const kMailFillSymbol = @"envelope.fill";
 NSString* const kPhoneFillSymbol = @"phone.fill";
 NSString* const kDownloadPromptFillSymbol = @"arrow.down.to.line.circle.fill";
@@ -294,6 +307,10 @@ NSString* const kShieldedEnvelope = @"envelope.badge.shield.half.filled";
 NSString* const kReaderModeSymbolPreIOS18 = @"doc.plaintext";
 NSString* const kReaderModeSymbolPostIOS18 = @"text.page";
 NSString* const kCircleBadgeFill = @"circlebadge.fill";
+NSString* const kCounterClockWiseSymbol =
+    @"clock.arrow.trianglehead.counterclockwise.rotate.90";
+NSString* const kTextSparkSymbol = @"text_spark";
+NSString* const kBuilding2Symbol = @"building.2";
 
 // Names of the default symbol being non-monochrome by default. When using them,
 // you probably want to set their color to monochrome.

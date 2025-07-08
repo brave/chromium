@@ -25,13 +25,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_PROPERTY_SERIALIZER_H_
 
 #include <bitset>
+
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
-
-namespace WTF {
-class StringBuilder;
-}  // namespace WTF
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -58,6 +56,7 @@ class CORE_EXPORT StylePropertySerializer {
   String BorderImagePropertyValue() const;
   String BorderRadiusValue() const;
   String CornerShapeValue() const;
+  String CornersValue() const;
   String GetLayeredShorthandValue(const StylePropertyShorthand&) const;
   String Get2Values(const StylePropertyShorthand&) const;
   String Get4Values(const StylePropertyShorthand&) const;
@@ -81,7 +80,6 @@ class CORE_EXPORT StylePropertySerializer {
   String GetShorthandValueForGridArea(const StylePropertyShorthand&) const;
   String GetShorthandValueForGridLine(const StylePropertyShorthand&) const;
   String GetShorthandValueForGridTemplate(const StylePropertyShorthand&) const;
-  String GetShorthandValueForMasonryTrack() const;
   String ContainerValue() const;
   String TimelineValue(const StylePropertyShorthand&) const;
   String ScrollTimelineValue() const;
@@ -93,7 +91,7 @@ class CORE_EXPORT StylePropertySerializer {
   String FontSynthesisValue() const;
   String FontVariantValue() const;
   bool AppendFontLonghandValueIfNotNormal(const CSSProperty&,
-                                          WTF::StringBuilder& result) const;
+                                          StringBuilder& result) const;
   String OffsetValue() const;
   String TextBoxValue() const;
   String TextDecorationValue() const;
@@ -110,7 +108,7 @@ class CORE_EXPORT StylePropertySerializer {
   bool IsPropertyShorthandAvailable(const StylePropertyShorthand&) const;
   bool ShorthandHasOnlyInitialOrInheritedValue(
       const StylePropertyShorthand&) const;
-  void AppendBackgroundPropertyAsText(WTF::StringBuilder& result,
+  void AppendBackgroundPropertyAsText(StringBuilder& result,
                                       unsigned& num_decls) const;
 
   // This function does checks common to all shorthands, and returns:
@@ -127,23 +125,21 @@ class CORE_EXPORT StylePropertySerializer {
 
    public:
     explicit PropertyValueForSerializer(const CSSPropertyValue& property)
-        : value_(&property.Value()),
+        : value_(property.Value()),
           name_(property.Name()),
           is_important_(property.IsImportant()) {}
 
-    // TODO(sashab): Make this take a const CSSValue&.
     PropertyValueForSerializer(const CSSPropertyName& name,
-                               const CSSValue* value,
+                               const CSSValue& value,
                                bool is_important)
         : value_(value), name_(name), is_important_(is_important) {}
 
     const CSSPropertyName& Name() const { return name_; }
-    const CSSValue* Value() const { return value_; }
+    const CSSValue& Value() const { return value_; }
     bool IsImportant() const { return is_important_; }
-    bool IsValid() const { return value_; }
 
    private:
-    const CSSValue* value_;
+    const CSSValue& value_;
     CSSPropertyName name_;
     bool is_important_;
   };

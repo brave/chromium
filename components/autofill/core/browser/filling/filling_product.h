@@ -11,6 +11,8 @@
 
 namespace autofill {
 
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.autofill
+
 // Denotes the entity that is responsible for an Autofill behavior.
 enum class FillingProduct {
   // kNone is used for the suggestions that do not identify any Autofill entity.
@@ -26,7 +28,8 @@ enum class FillingProduct {
   kAutofillAi,
   kLoyaltyCard,
   kIdentityCredential,
-  kMaxValue = kIdentityCredential
+  kDataList,
+  kMaxValue = kDataList
 };
 
 FillingProduct GetFillingProductFromSuggestionType(SuggestionType type);

@@ -72,18 +72,12 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
   gfx::GpuMemoryBufferType GetType() const override {
     return gfx::SHARED_MEMORY_BUFFER;
   }
-  gfx::GpuMemoryBufferId GetId() const override { return id_; }
   gfx::GpuMemoryBufferHandle CloneHandle() const override {
     gfx::GpuMemoryBufferHandle handle(region_.Duplicate());
     handle.offset = base::checked_cast<uint32_t>(offset_);
     handle.stride = base::checked_cast<uint32_t>(stride_);
     return handle;
   }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
 
  private:
   gfx::GpuMemoryBufferId id_;
@@ -113,18 +107,12 @@ class GpuMemoryBufferFromClient : public gfx::GpuMemoryBuffer {
   int stride(size_t plane) const override {
     return client_buffer_->stride(plane);
   }
-  gfx::GpuMemoryBufferId GetId() const override { return id_; }
   gfx::GpuMemoryBufferType GetType() const override {
     return client_buffer_->GetType();
   }
   gfx::GpuMemoryBufferHandle CloneHandle() const override {
     return client_buffer_->CloneHandle();
   }
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {}
 
  private:
   gfx::GpuMemoryBufferId id_;
@@ -186,17 +174,6 @@ TestGpuMemoryBufferManager::CreateGpuMemoryBuffer(
           gfx::RowSizeForBufferFormat(size.width(), format, 0))));
   buffers_[last_gpu_memory_buffer_id_] = result.get();
   return result;
-}
-
-void TestGpuMemoryBufferManager::CopyGpuMemoryBufferAsync(
-    gfx::GpuMemoryBufferHandle buffer_handle,
-    base::UnsafeSharedMemoryRegion memory_region,
-    base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(false);
-}
-
-bool TestGpuMemoryBufferManager::IsConnected() {
-  return true;
 }
 
 }  // namespace gpu

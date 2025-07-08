@@ -558,16 +558,15 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // Accessible name calculation
   //
 
+  typedef HeapVector<NameSource> NameSources;
+
   // Retrieves the accessible name of the object, an enum indicating where the
   // name was derived from, and a list of objects that were used to derive the
-  // name, if any.
+  // name, if any (can be null), and a list of all potential sources for the
+  // name, indicating which were used (can be null).
   virtual String GetName(ax::mojom::blink::NameFrom&,
-                         AXObjectVector* name_objects) const;
-
-  typedef HeapVector<NameSource> NameSources;
-  // Retrieves the accessible name of the object and a list of all potential
-  // sources for the name, indicating which were used.
-  String GetName(NameSources*) const;
+                         AXObjectVector* name_objects,
+                         NameSources* name_sources) const;
 
   typedef HeapVector<DescriptionSource> DescriptionSources;
   // Takes the result of nameFrom from calling |name|, above, and retrieves the
@@ -926,10 +925,10 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // on an invoking element.
   AXObject* GetCommandForElement() const;
 
-  // Heuristic to get the interest target for an invoking element.
-  // Returns null if the interest target points to plain content and can be
-  // expose as a description instead.
-  AXObject* GetInterestTargetForInvoker() const;
+  // Heuristic to get the target element for an element with the `interestfor`
+  // attribute. Returns null if the `interestfor` can be exposed as a
+  // description instead (even if there is a valid target element).
+  AXObject* GetInterestForTargetPopover() const;
 
   // Elements can be positioned relative to other elements with CSS anchor
   // positioning. This function returns the positioned element that should be
@@ -1299,10 +1298,10 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
 
   // There are two types of traversal for obtaining children:
   // 1. LayoutTreeBuilderTraversal. Despite the name, this traverses a flattened
-  // DOM tree that includes pseudo element children such as ::before, and where
+  // DOM tree that includes pseudo-element children such as ::before, and where
   // shadow DOM slotting has been run.
   // 2. LayoutObject traversal. This is necessary if there is no parent node,
-  // or in a pseudo element subtree.
+  // or in a pseudo-element subtree.
   bool ShouldUseLayoutObjectTraversalForChildren() const;
   // Is this a safe time to use FlatTreeTraversal in this document? Also covers
   // use of LayoutTreeBuilderTraversal, which is used often in the accessibility

@@ -26,6 +26,7 @@
 #include "chrome/browser/ai/ai_context_bound_object.h"
 #include "chrome/browser/ai/ai_context_bound_object_set.h"
 #include "chrome/browser/ai/ai_language_model.h"
+#include "chrome/browser/ai/ai_proofreader.h"
 #include "chrome/browser/ai/ai_rewriter.h"
 #include "chrome/browser/ai/ai_summarizer.h"
 #include "chrome/browser/ai/ai_utils.h"
@@ -36,8 +37,8 @@
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/language/core/common/locale_util.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
-#include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
@@ -57,6 +58,7 @@
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom-shared.h"
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
+#include "third_party/blink/public/mojom/ai/ai_proofreader.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_rewriter.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_writer.mojom.h"
 #include "third_party/blink/public/mojom/ai/model_download_progress_observer.mojom.h"
@@ -84,16 +86,6 @@ const char kEmptyExpectedOutputLanguageWarning[] =
     "to output safety for potentially unsupported languages. Please specify it "
     "when possible for best and most reliable results using our supported "
     "list: ['en']";
-
-// Checks if the model path configured via command line is valid.
-bool IsModelPathValid(const std::string& model_path_str) {
-  std::optional<base::FilePath> model_path =
-      optimization_guide::StringToFilePath(model_path_str);
-  if (!model_path) {
-    return false;
-  }
-  return base::PathExists(*model_path);
-}
 
 blink::mojom::ModelAvailabilityCheckResult
 ConvertOnDeviceModelEligibilityReasonToModelAvailabilityCheckResult(
@@ -636,6 +628,56 @@ void AIManager::CreateSummarizer(
                      std::move(client));
 }
 
+void AIManager::CanCreateProofreader(
+    blink::mojom::AIProofreaderCreateOptionsPtr options,
+    CanCreateProofreaderCallback callback) {
+  // TODO(crbug.com/424673180): Add a warning message when options
+  // `includeCorrectionTypes` and `includeCorrectionExplanations` are set to
+  // true as those features are not yet supported by the API.
+
+  // TODO(crbug.com/424799314): Add console message for handling
+  // missing/unsupported input/explanation languages.
+  if (options &&
+      !IsLanguagesSupported(options->expected_input_languages, {},
+                            options->correction_explanation_language)) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableUnsupportedLanguage);
+    return;
+  }
+  CanCreateSession(optimization_guide::ModelBasedCapabilityKey::kProofreaderApi,
+                   on_device_model::Capabilities(), std::move(callback));
+}
+
+void AIManager::CreateProofreader(
+    mojo::PendingRemote<blink::mojom::AIManagerCreateProofreaderClient> client,
+    blink::mojom::AIProofreaderCreateOptionsPtr options) {
+  if (options &&
+      !IsLanguagesSupported(options->expected_input_languages, {},
+                            options->correction_explanation_language)) {
+    AddMessageToConsoleForUnexpectedLanguage(
+        blink::mojom::ConsoleMessageLevel::kError,
+        base::StringPrintf(kUnsupportedLanguageError, "Proofreader"));
+    mojo::Remote<blink::mojom::AIManagerCreateProofreaderClient> client_remote(
+        std::move(client));
+    AIUtils::SendClientRemoteError(
+        client_remote,
+        blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
+    return;
+  }
+  auto callback = base::BindOnce(
+      &OnSessionCreated<AIProofreader, blink::mojom::AIProofreader,
+                        blink::mojom::AIManagerCreateProofreaderClient,
+                        blink::mojom::AIProofreaderCreateOptionsPtr>,
+      std::ref(context_bound_object_set_), std::move(options),
+      /*initial_request=*/std::nullopt);
+  CreateWritingAssistanceSessionTask<
+      blink::mojom::AIManagerCreateProofreaderClient>::
+      CreateAndStart(
+          browser_context_,
+          optimization_guide::ModelBasedCapabilityKey::kProofreaderApi,
+          context_bound_object_set_, std::move(callback), std::move(client));
+}
+
 blink::mojom::AILanguageModelParamsPtr AIManager::GetLanguageModelParams() {
   auto model_info = blink::mojom::AILanguageModelParams::New(
       blink::mojom::AILanguageModelSamplingParams::New(),
@@ -830,11 +872,11 @@ void AIManager::CanCreateSession(
       optimization_guide::switches::GetOnDeviceModelExecutionOverride();
   if (model_path.has_value()) {
     // If the model path is provided, we do this additional check and post a
-    // warning message to dev tools if it's invalid.
+    // warning message to dev tools if it does not exist.
     // This needs to be done in a task runner with `MayBlock` trait.
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::MayBlock()},
-        base::BindOnce(IsModelPathValid, model_path.value()),
+        base::BindOnce(base::PathExists, model_path.value()),
         base::BindOnce(&AIManager::OnModelPathValidationComplete,
                        weak_factory_.GetWeakPtr(), model_path.value()));
   }
@@ -890,13 +932,13 @@ void AIManager::FinishCanCreateSession(
       blink::mojom::ModelAvailabilityCheckResult::kAvailable);
 }
 
-void AIManager::OnModelPathValidationComplete(const std::string& model_path,
+void AIManager::OnModelPathValidationComplete(const base::FilePath& model_path,
                                               bool is_valid_path) {
   // TODO(crbug.com/346491542): Remove this when the error page is implemented.
   if (!is_valid_path) {
     VLOG(1) << base::StringPrintf(
         "Unable to create a session because the model path ('%s') is invalid.",
-        model_path.c_str());
+        model_path.AsUTF8Unsafe());
   }
 }
 

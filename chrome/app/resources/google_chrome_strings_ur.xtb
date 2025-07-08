@@ -7,6 +7,7 @@
 <translation id="102763973188675173">‏Google Chrome کو حسب ضروت بنائیں اور اسے کنٹرول کریں۔ اپ ڈیٹ دستیاب ہے۔</translation>
 <translation id="1028061813283459617">‏براؤزنگ ڈیٹا کو اپنے Google اکاؤنٹ میں برقرار رکھتے ہوئے، صرف اس آلہ سے اسے حذف کرنے کیلئے، <ph name="BEGIN_LINK" />Chrome سے سائن آؤٹ کریں<ph name="END_LINK" />۔</translation>
 <translation id="1042270987544905725">‏‫Chrome سائن ان ڈائیلاگ بند کرنے کیلئے کلک کریں</translation>
+<translation id="1051793555070215510">اس 1 منٹ کے سروے میں حصہ لے کر پوشیدگی کو بہتر بنانے میں ہماری مدد کریں۔</translation>
 <translation id="1059838145689930908">‏اس ایکسٹینشن کو بطور <ph name="USER_EMAIL_ADDRESS" /> استعمال کرنے کیلئے، Chrome میں سائن ان کریں۔</translation>
 <translation id="1065672644894730302">آپ کی ترجیحات کو نہیں پڑھا جا سکتا ہے۔
 
@@ -36,6 +37,7 @@
 <translation id="141901961143729572">اپنے خیالات کا اشتراک کریں</translation>
 <translation id="1425903838053942728">{COUNT,plural, =0{‏Chrome کو اپ ڈیٹ کرنا مکمل ہو گیا۔ جیسے ہی آپ اسے بند کر کے دوبارہ چلائیں گے آپ تازہ ترین ورژن استعمال کر سکتے ہیں۔ اس کے بعد، آپ کے موجودہ ٹیبز دوبارہ کھل جائیں گے۔}=1{‏Chrome کو اپ ڈیٹ کرنا مکمل ہو گیا۔ جیسے ہی آپ اسے بند کر کے دوبارہ چلائیں گے آپ تازہ ترین ورژن استعمال کر سکتے ہیں۔ اس کے بعد، آپ کے موجودہ ٹیبز دوبارہ کھل جائیں گے۔ آپ کی پوشیدگی ونڈو دوبارہ نہیں کھلے گی۔}other{‏Chrome کو اپ ڈیٹ کرنا مکمل ہو گیا۔ جیسے ہی آپ اسے بند کر کے دوبارہ چلائیں گے آپ تازہ ترین ورژن استعمال کر سکتے ہیں۔ اس کے بعد، آپ کے موجودہ ٹیبز دوبارہ کھل جائیں گے۔ آپ کی # پوشیدگی ونڈوز دوبارہ نہیں کھلیں گی۔}}</translation>
 <translation id="1434626383986940139">‏Chrome کینیری ایپس</translation>
+<translation id="1439793550875056299">‏‫Chrome کو پن کریں</translation>
 <translation id="146866447420868597">‏Chrome میں سائن ان کریں؟</translation>
 <translation id="1492280395845991349">‏Chrome اپ ڈیٹ مکمل کرنے کے لیے بند کر کے دوبارہ چلائیں</translation>
 <translation id="1497802159252041924">انسٹال کی خرابی: <ph name="INSTALL_ERROR" /></translation>
@@ -56,6 +58,7 @@
 <translation id="1682634494516646069">‏Google Chrome اپنے ڈیٹا ڈائریکٹری کو پڑھ یا اس میں لکھ نہیں سکتا ہے:
 
 <ph name="USER_DATA_DIRECTORY" /></translation>
+<translation id="1688214853608504530">‏جب آپ ایڈریس بار یا تلاش کے خانہ میں ٹائپ کرتے ہیں تو Chrome آپ کی تنظیم کی تلاش، AI اور ایجنٹ ٹولز کو تجاویز حاصل کرنے کے لیے بھیجتا ہے۔</translation>
 <translation id="1698376642261615901">‏Google Chrome ایک ایسا ویب براؤزر ہے جو ویب صفحات اور ایپلیکیشنز کو روشنی کی رفتار سے چلاتا ہے۔ یہ تیز، مستحکم اور استعمال میں آسان ہے۔ Google Chrome میں پہلے سے شامل میلویئر اور فریب دہی تحفظ کے ساتھ ویب کو مزید محفوظ طور پر براؤز کریں۔</translation>
 <translation id="1713301662689114961">{0,plural, =1{‏ایک گھنٹے میں Chrome دوبارہ لانچ ہوگا}other{‏# گھنٹے میں Chrome دوبارہ لانچ ہوگا}}</translation>
 <translation id="1722488837206509557">یہ آپ کو دستیاب آلات میں سے انتخاب کرنے اور ان پر مواد ڈسپلے کرنے کی اجازت دے گا۔</translation>
@@ -64,6 +67,7 @@
 <translation id="178701303897325119">‏یہ ایکسٹینشنز اب مزید تعاون یافتہ نہیں ہے۔ اس کے بجائے Chrome تجویز کرتا ہے کہ آپ اسے ہٹا دیں</translation>
 <translation id="1812689907177901597">‏اسے آف کر کے، آپ Chrome میں سائن ان کیے بغیر Gmail جیسی Google سائٹس میں سائن ان کر سکتے ہیں</translation>
 <translation id="1821644463306970002">{NUM_TABS,plural, =1{‏‫Chrome آپ کے براؤزر کی رفتار کو کم کرنے والے ٹیب کو روکنے کی تجویز دیتا ہے}other{‏‫Chrome آپ کے براؤزر کی رفتار کو کم کرنے والے ٹیبز کو روکنے کی تجویز دیتا ہے}}</translation>
+<translation id="1832046143430087831">‏‫Chrome کے V8 انجن کے ساتھ سائٹس کو تیز رفتار بناتا ہے لیکن Chrome کو حملوں کے خلاف قدرے کم مزاحم بناتا ہے۔ یہ ترتیب آف ہے۔</translation>
 <translation id="1838374766361614909">تلاش صاف کریں</translation>
 <translation id="1860536484129686729">‏Chrome کو اس سائٹ کیلئے آپ کے کیمرے تک رسائی کی اجازت درکار ہے</translation>
 <translation id="1873233029667955273">‏Google Chrome آپ کا ڈیفالٹ براؤزر نہیں ہے</translation>
@@ -121,6 +125,7 @@
 <translation id="2569974318947988067">‏Chrome نیویگیشن کو HTTPS میں اپ گریڈ کرنے کی کوشش کرے گا</translation>
 <translation id="2571392474191184472">‏آپ کی تنظیم Chrome کا نظم کرتی ہے</translation>
 <translation id="2574930892358684005">‏<ph name="EXISTING_USER" /> اس Chrome پروفائل میں پہلے سے سائن ان ہے۔ اپنی براؤزنگ کو الگ رکھنے کیلئے، Chrome آپ کیلئے آپ کی ذاتی پروفائل تخلیق کر سکتا ہے۔</translation>
+<translation id="2579190314336775785">‏پاس ورڈز کو صرف Chrome سے باہر حذف کیا جا سکتا ہے</translation>
 <translation id="2580411288591421699">‏Google Chrome کا وہی ورژن انسٹال نہیں کیا جا سکتا ہے جو فی الحال چل رہا ہے۔ براہ کرم Google Chrome بند کریں اور دوبارہ کوشش کریں۔</translation>
 <translation id="2586406160782125153">‏یہ اس آلہ سے آپ کے براؤزنگ ڈیٹا کو حذف کر دے گا۔ بعد میں اپنے ڈیٹا کی بازیافت کرنے کیلئے، Chrome میں <ph name="USER_EMAIL" /> کے بطور سائن ان کریں۔</translation>
 <translation id="259935314519650377">ڈاؤن لوڈ کردہ انسٹالر کو کیش کرنے میں ناکام۔ خرابی: <ph name="UNPACK_CACHING_ERROR_CODE" /></translation>
@@ -222,6 +227,7 @@
 <translation id="3716540481907974026">‏ChromeOS Flex ورژن</translation>
 <translation id="3718181793972440140">‏یہ اس آلہ سے 1 آئٹم کو حذف کر دے گا۔ بعد میں اپنا ڈیٹا بازیافت کرنے کیلئے Chrome میں <ph name="USER_EMAIL" /> کے بطور سائن ان کریں۔</translation>
 <translation id="3723744677043446310">{NUM_EXTENSIONS,plural, =1{‏‫Chrome تجویز کرتا ہے کہ آپ اسے ہٹا دیں۔ <ph name="BEGIN_LINK" />تعاون یافتہ ایکسٹینشنز کے بارے میں مزید جانیں<ph name="END_LINK" />}other{‏‫Chrome تجویز کرتا ہے کہ آپ انہیں ہٹا دیں۔ <ph name="BEGIN_LINK" />تعاون یافتہ ایکسٹینشنز کے بارے میں مزید جانیں<ph name="END_LINK" />}}</translation>
+<translation id="3756724684201900923">‏‫Chrome انسٹال کرنے کے بارے میں مزید جانیں</translation>
 <translation id="3780814664026482060">Chrome - <ph name="PAGE_TITLE" />‎</translation>
 <translation id="3785324443014631273">‏ChromeOS Flex سائن ان میں ایک خرابی کی وجہ سے آپ کے ڈیٹا کی مطابقت پذیری نہیں کر سکا۔</translation>
 <translation id="3795971588916395511">Google ChromeOS</translation>
@@ -267,6 +273,7 @@
 <translation id="4326552909330437744">{NUM_TABS,plural, =1{‏‫Chrome آپ کے براؤزر کی رفتار کو کم کرنے والے ٹیب کو روکنے کی تجویز دیتا ہے}other{‏‫Chrome آپ کے براؤزر کی رفتار کو کم کرنے والے ٹیبز کو روکنے کی تجویز دیتا ہے}}</translation>
 <translation id="4328355335528187361">Google Chrome Dev (mDNS-In)‎</translation>
 <translation id="4329315893554541805">‏ذاتی نوعيت سازی اور ديگر خصوصيات حاصل کرنے کے ليے ويب اور ايپ سرگرمی اور لنک کردہ Google سروسز ميں Chrome شامل کريں</translation>
+<translation id="4334241893986177674">اس اسکرین شاٹ کو تلاش کریں</translation>
 <translation id="4334294535648607276">ڈاؤن لوڈ مکمل ہوگیا۔</translation>
 <translation id="4337324600316876133">‏مستقبل میں Google Chrome اپ ڈیٹس حاصل کرنے کے لیے آپ کو macOS 12 یا اس کے بعد کے ورژن کی ضرورت ہوگی۔ یہ کمپیوٹر macOS 11 کا استعمال کر رہا ہے۔</translation>
 <translation id="4343195214584226067">‏<ph name="EXTENSION_NAME" /> کو Chrome میں شامل کر دیا گیا ہے</translation>
@@ -354,6 +361,7 @@ Google Chrome آپ کی ترتیبات کو بازیافت کرنے سے قاص�
 <translation id="5566025111015594046">‎Google Chrome (mDNS-In)‎</translation>
 <translation id="5579324208890605088">اسٹارٹ اپ کی خرابی: براہ کرم انسٹالر کو باقاعدہ صارف کے طور پر چلائیں، منتظم کے طور پر نہیں۔</translation>
 <translation id="5596627076506792578">مزید اختیارات</translation>
+<translation id="5600352656975192682">‏کسی بھی وقت تیزی سے حاصل کرنے کے لیے Chrome کو اپنے ٹاسک بار میں پن کریں</translation>
 <translation id="5602351063754773347">‏‫Chrome تجویز کرتا ہے کہ آپ اسے ہٹا دیں۔ <ph name="BEGIN_LINK" />تعاون یافتہ ایکسٹینشنز کے بارے میں مزید جانیں<ph name="END_LINK" /></translation>
 <translation id="5649156266046089790">‏‫Chrome کی پروفائلز کی مدد سے، آپ Chrome کی اپنی سبھی چیزوں کو الگ کر سکتے ہیں۔ دوستوں اور فیملی کیلئے پروفائلز تخلیق کریں یا کام اور تفریح کو الگ کریں۔</translation>
 <translation id="565744775970812598">‏<ph name="FILE_NAME" /> خطرناک ہو سکتی ہے، اس لیے Chrome نے اسے مسدود کر دیا ہے۔</translation>
@@ -448,12 +456,12 @@ Google Chrome آپ کی ترتیبات کو بازیافت کرنے سے قاص�
 <translation id="6718739135284199302">‏Chrome کو تیز تر بنائیں</translation>
 <translation id="6735387454586646204">‏ChromeOS Flex سسٹم</translation>
 <translation id="6750954913813541382">‏املا کی غلطیوں کو درست کرنے کے لیے، آپ براؤزر میں جو متن ٹائپ کرتے ہیں، Chrome اسے Google کو بھیج دیتا ہے</translation>
+<translation id="6760235774835597023">‏‫Chrome کے V8 انجن کے ساتھ سائٹس کو تیز رفتار بناتا ہے لیکن Chrome کو حملوں کے خلاف قدرے کم مزاحم بناتا ہے۔ یہ ترتیب آن ہے۔</translation>
 <translation id="677276454032249905">‏بہر حال Chrome کو بند کریں؟</translation>
 <translation id="6794858689789885890">‏جب آپ Chrome کو بند کرتے ہیں تو ہمیشہ اپنے آلے سے سائٹ کا ڈیٹا حذف کریں</translation>
 <translation id="6831043979455480757">ترجمہ کریں</translation>
 <translation id="683440813066116847">‏mDNS ٹریفک کی اجازت دینے کیلئے Google Chrome Canary کیلئے ان باؤنڈ اصول۔</translation>
 <translation id="684888714667046800">انٹرنیٹ سے منسلک ہونے سے قاصر ہے۔ اگر آپ فائر وال استعمال کرتے ہیں، تو براہ کرم یقینی بنائیں کہ <ph name="PRODUCT_EXE_NAME" /> ااجازت یافتہ کی فہرست میں ہے۔</translation>
-<translation id="6851981911629679515">‏Chrome کے JavaScript اور WebAssembly انجن میں اضافی تحفظ کو آن کریں</translation>
 <translation id="6877155553248388166">تلاش کے حلقے کا نیچے والا بایاں کونا: <ph name="RIGHT" /> فیصد بائیں، <ph name="BOTTOM" /> فیصد نیچے</translation>
 <translation id="6881299373831449287">‏Chrome اپ ڈیٹ کیا جا رہا ہے</translation>
 <translation id="6885412569789873916">‏Chrome بی ٹا ایپس</translation>
@@ -556,7 +564,6 @@ Google Chrome آپ کی ترتیبات کو بازیافت کرنے سے قاص�
 <translation id="8019103195866286235">‏اس ایکسٹینشن کی اشاعت اس کے ڈویلپر نے ختم کی تھی اور یہ غیر محفوظ ہو سکتا ہے۔ اسے Chrome سے ہٹا دیں تاکہ یہ آپ کی ذاتی معلومات سمیت آپ کی ملاحظہ کردہ سائٹس پر آپ کا ڈیٹا مزید دیکھ اور تبدیل نہ کر سکے۔</translation>
 <translation id="8040768861829554732">‏ایکسٹینشن چاہتی ہے کہ آپ Chrome میں سائن ان کریں</translation>
 <translation id="80471789339884597">انسٹال کرنے کا شکریہ۔ آپ کو <ph name="BUNDLE_NAME" /> استعمال کرنے سے پہلے اپنے تمام براؤزرز لازمی طور سے ری اسٹارٹ کرنا چاہیے۔</translation>
-<translation id="8064015041956107954">‏آپ سب سے اوپر بائیں جانب Chrome مینیو سے بُک مارکس، ریڈنگ موڈ وغیرہ کھول سکتے ہیں</translation>
 <translation id="8064015586118426197">ChromeOS Flex</translation>
 <translation id="8077579734294125741">‏دیگر Chrome پروفائلز</translation>
 <translation id="8086881907087796310">انسٹالیشن ناکام ہو گئی کیونکہ آپ کا کمپیوٹر ہارڈ ویئر کے کم از کم تقاضوں کو پورا نہیں کرتا ہے۔</translation>
@@ -568,7 +575,6 @@ Google Chrome آپ کی ترتیبات کو بازیافت کرنے سے قاص�
 <translation id="8177472873527554730">صفحے پر مواد تلاش کرنے سے قاصر</translation>
 <translation id="8221491193165283816">آپ عام طور پر اطلاعات کو مسدود کرتے ہیں۔ اس سائٹ کو آپ کو مطلع کرنے دینے کے لیے، یہاں کلک کریں۔</translation>
 <translation id="8255190535488645436">‏Google Chrome آپ کا کیمرا اور مائیکروفون استعمال کر رہا ہے۔</translation>
-<translation id="8257796129973882597">‏آپ Chrome مینیو سے بُک مارکس، ریڈنگ موڈ وغیرہ کھول سکتے ہیں</translation>
 <translation id="8267953129876836456">‏Chrome کو آپ کے جائزے کے لیے کچھ حفاظتی تجاویز ملی ہیں</translation>
 <translation id="8286862437124483331">‏Google Chrome پاس ورڈز دکھانے کی کوشش کر رہا ہے۔ اس کی اجازت دینے کیلئے اپنا Windows پاس ورڈ ٹائپ کریں۔</translation>
 <translation id="829923460755755423">‏Google پاس ورڈ مینیجر میں ایک شارٹ کٹ شامل کریں</translation>

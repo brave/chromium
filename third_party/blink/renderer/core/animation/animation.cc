@@ -32,9 +32,11 @@
 
 #include <limits>
 #include <memory>
+#include <utility>
 
 #include "base/debug/stack_trace.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/types/optional_util.h"
 #include "cc/animation/animation_timeline.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -46,6 +48,7 @@
 #include "third_party/blink/renderer/core/animation/css/css_animation.h"
 #include "third_party/blink/renderer/core/animation/css/css_animations.h"
 #include "third_party/blink/renderer/core/animation/css/css_transition.h"
+#include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/animation/element_animations.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
@@ -311,8 +314,7 @@ Animation* Animation::Create(AnimationEffect* effect,
   }
 
   auto* context = timeline->GetDocument()->GetExecutionContext();
-  return MakeGarbageCollected<Animation>(context, timeline, effect,
-                                         /*trigger=*/nullptr);
+  return MakeGarbageCollected<Animation>(context, timeline, effect);
 }
 
 Animation* Animation::Create(ExecutionContext* execution_context,
@@ -327,8 +329,8 @@ Animation* Animation::Create(ExecutionContext* execution_context,
                              AnimationTimeline* timeline,
                              ExceptionState& exception_state) {
   if (!timeline) {
-    Animation* animation = MakeGarbageCollected<Animation>(
-        execution_context, nullptr, effect, /*trigger=*/nullptr);
+    Animation* animation =
+        MakeGarbageCollected<Animation>(execution_context, nullptr, effect);
     return animation;
   }
 
@@ -337,8 +339,7 @@ Animation* Animation::Create(ExecutionContext* execution_context,
 
 Animation::Animation(ExecutionContext* execution_context,
                      AnimationTimeline* timeline,
-                     AnimationEffect* content,
-                     AnimationTrigger* trigger)
+                     AnimationEffect* content)
     : ActiveScriptWrappable<Animation>({}),
       ExecutionContextLifecycleObserver(nullptr),
       playback_rate_(1),
@@ -361,8 +362,7 @@ Animation::Animation(ExecutionContext* execution_context,
       compositor_group_(0),
       effect_suppressed_(false),
       compositor_property_animations_have_no_effect_(false),
-      animation_has_no_effect_(false),
-      trigger_(trigger) {
+      animation_has_no_effect_(false) {
   if (execution_context && !execution_context->IsContextDestroyed())
     SetExecutionContext(execution_context);
 
@@ -382,12 +382,6 @@ Animation::Animation(ExecutionContext* execution_context,
   DCHECK(document_);
   attached_timeline->AnimationAttached(this);
   timeline_duration_ = attached_timeline->GetDuration();
-  if (trigger_) {
-    if (trigger_->GetTimelineInternal() &&
-        trigger_->GetTimelineInternal()->IsProgressBased()) {
-      trigger_->GetTimelineInternal()->AddAnimationForTriggering(this);
-    }
-  }
   probe::DidCreateAnimation(document_, sequence_number_);
 }
 
@@ -397,13 +391,9 @@ Animation::~Animation() {
 }
 
 void Animation::Dispose() {
+  DisassociateTriggers();
   if (timeline_)
     timeline_->AnimationDetached(this);
-  if (trigger_) {
-    if (trigger_->GetTimelineInternal()) {
-      trigger_->GetTimelineInternal()->RemoveAnimationForTriggering(this);
-    }
-  }
   DestroyCompositorAnimation();
   // If the DocumentTimeline and its Animation objects are
   // finalized by the same GC, we have to eagerly clear out
@@ -854,7 +844,7 @@ bool Animation::HasLowerCompositeOrdering(
     // performance. We only do it when it comes to getAnimation.
     if (originating_element1 != originating_element2) {
       if (compare_animation_type == CompareAnimationsOrdering::kTreeOrder) {
-        // Since pseudo elements are compared by their originating element,
+        // Since pseudo-elements are compared by their originating element,
         // they sort before their children.
         return originating_element1->compareDocumentPosition(
                    originating_element2) &
@@ -887,7 +877,7 @@ bool Animation::HasLowerCompositeOrdering(
       // ::view-transition subtree but we may want to sort them based on their
       // actual composite order.
       // https://github.com/w3c/csswg-drafts/issues/9588.
-      return CodeUnitCompareLessThan(
+      return WTF::CodeUnitCompareLessThan(
           PseudoElement::PseudoElementNameForEvents(owning_element1),
           PseudoElement::PseudoElementNameForEvents(owning_element2));
     }
@@ -1464,6 +1454,10 @@ void Animation::ResetPendingTasks() {
 
 // https://www.w3.org/TR/web-animations-1/#pausing-an-animation-section
 void Animation::pause(ExceptionState& exception_state) {
+  PauseInternal(exception_state);
+}
+
+void Animation::PauseInternal(ExceptionState& exception_state) {
   // 1. If animation has a pending pause task, abort these steps.
   // 2. If the play state of animation is paused, abort these steps.
   if (pending_pause_ ||
@@ -1669,6 +1663,8 @@ void Animation::PlayInternal(AutoRewind auto_rewind,
     hold_time_ = AnimationTimeDelta();
   }
 
+  SetPausedForTrigger(false);
+
   // 8. If seek time is resolved,
   //      * If has finite timeline is true,
   //          * Set animation’s start time to seek time.
@@ -1756,8 +1752,12 @@ void Animation::PlayInternal(AutoRewind auto_rewind,
   NotifyProbe();
 }
 
-// https://www.w3.org/TR/web-animations-1/#reversing-an-animation-section
 void Animation::reverse(ExceptionState& exception_state) {
+  ReverseInternal(exception_state);
+}
+
+// https://www.w3.org/TR/web-animations-1/#reversing-an-animation-section
+void Animation::ReverseInternal(ExceptionState& exception_state) {
   // 1. If there is no timeline associated with animation, or the associated
   //    timeline is inactive throw an "InvalidStateError" DOMException and abort
   //    these steps.
@@ -2134,12 +2134,30 @@ bool Animation::HasPendingActivity() const {
       finished_promise_ &&
       finished_promise_->GetState() == AnimationPromise::kPending;
 
-  // If an animation can still be played by its trigger, we should keep the
-  // animation alive.
-  bool can_be_triggered = CanBeTriggered();
+  bool can_trigger = false;
+  for (AnimationTrigger* trigger : triggers_) {
+    if (trigger->CanTrigger()) {
+      can_trigger = true;
+      break;
+    }
+  }
+  if (can_trigger) {
+    // A trigger is only a reason to keep the animation alive if triggering the
+    // animation can have an observable effect, i.e. visually affect a target or
+    // have a finish listener run.
+    if (!HasEventListeners(event_type_names::kFinish)) {
+      const auto* effect = DynamicTo<KeyframeEffect>(content_.Get());
+      // TODO(crbug.com/423632858): this check is likely not perfect as there
+      // might be a risk of garbage collecting a triggered animation whose
+      // target has been removed from the DOM but could be reattached in the
+      // future.
+      can_trigger = effect && effect->EffectTarget() &&
+                    effect->EffectTarget()->isConnected();
+    }
+  }
 
   return pending_finished_event_ || pending_cancelled_event_ ||
-         pending_remove_event_ || has_pending_promise || can_be_triggered ||
+         pending_remove_event_ || has_pending_promise || can_trigger ||
          (!finished_ && HasEventListeners(event_type_names::kFinish));
 }
 
@@ -2595,11 +2613,11 @@ void Animation::SetCompositorPending(CompositorPendingReason reason) {
 }
 
 const Animation::RangeBoundary* Animation::rangeStart() {
-  return ToRangeBoundary(range_start_);
+  return ToRangeBoundary(range_start_, GetKeyframeEffectTargetZoom());
 }
 
 const Animation::RangeBoundary* Animation::rangeEnd() {
-  return ToRangeBoundary(range_end_);
+  return ToRangeBoundary(range_end_, GetKeyframeEffectTargetZoom());
 }
 
 void Animation::setRangeStart(const Animation::RangeBoundary* range_start,
@@ -2627,7 +2645,8 @@ std::optional<TimelineOffset> Animation::GetEffectiveTimelineOffset(
 
 /* static */
 Animation::RangeBoundary* Animation::ToRangeBoundary(
-    std::optional<TimelineOffset> timeline_offset) {
+    std::optional<TimelineOffset> timeline_offset,
+    float zoom) {
   if (!timeline_offset) {
     return MakeGarbageCollected<RangeBoundary>("normal");
   }
@@ -2636,19 +2655,20 @@ Animation::RangeBoundary* Animation::ToRangeBoundary(
       MakeGarbageCollected<TimelineRangeOffset>();
   timeline_range_offset->setRangeName(timeline_offset->name);
   CSSPrimitiveValue* value =
-      CSSPrimitiveValue::CreateFromLength(timeline_offset->offset, 1);
+      CSSPrimitiveValue::CreateFromLength(timeline_offset->offset, zoom);
   CSSNumericValue* offset = CSSNumericValue::FromCSSValue(*value);
   timeline_range_offset->setOffset(offset);
   return MakeGarbageCollected<RangeBoundary>(timeline_range_offset);
 }
 
 Animation::RangeBoundary* Animation::ToRangeBoundary(
-    TimelineOffsetOrAuto timeline_offset_or_auto) {
+    TimelineOffsetOrAuto timeline_offset_or_auto,
+    float zoom) {
   if (timeline_offset_or_auto.IsAuto()) {
     return MakeGarbageCollected<RangeBoundary>("auto");
   }
 
-  return ToRangeBoundary(timeline_offset_or_auto.GetTimelineOffset());
+  return ToRangeBoundary(timeline_offset_or_auto.GetTimelineOffset(), zoom);
 }
 
 void Animation::UpdateAutoAlignedStartTime() {
@@ -2840,6 +2860,12 @@ void Animation::UpdateBoundaryAlignment(
     Timing::NormalizedTiming& timing) const {
   timing.is_start_boundary_aligned = false;
   timing.is_end_boundary_aligned = false;
+  if (PausedForTrigger()) {
+    // While paused in anticipation of a trigger, we consider the active
+    // interval to be boundary exclusive.
+    return;
+  }
+
   if (!auto_align_start_time_) {
     // If the start time is not auto adjusted to align with the bounds of the
     // animation range, then it is not possible in all cases to test whether
@@ -3007,6 +3033,15 @@ bool Animation::Update(TimingUpdateReason reason) {
   if (reason == kTimingUpdateForAnimationFrame) {
     if (idle || CalculateAnimationPlayState() ==
                     V8AnimationPlayState::Enum::kFinished) {
+      // See crbug.com/420284818. Reset composited paint status to avoid
+      // staleness that can occur during the process of tearing down an
+      // animation. This is known to occur when a retargeted transition is
+      // finished before PreCommit has run the first time and a compositor state
+      // has been created.
+      if (!finished_ && !HasActiveAnimationsOnCompositor()) {
+        UpdateCompositedPaintStatus();
+      }
+
       finished_ = true;
     }
     NotifyProbe();
@@ -3083,6 +3118,10 @@ void Animation::cancel() {
   AnimationTimeDelta current_time_before_cancel =
       CurrentTimeInternal().value_or(AnimationTimeDelta());
   SetPausedForTrigger(false);
+  // We disassociate triggers to avoid any future action by the triggers on the
+  // canceled animation. For any future trigger action to happen, the animation
+  // must be explicitly attached to a trigger.
+  DisassociateTriggers();
   V8AnimationPlayState::Enum initial_play_state = CalculateAnimationPlayState();
   if (initial_play_state != V8AnimationPlayState::Enum::kIdle) {
     ResetPendingTasks();
@@ -3609,7 +3648,7 @@ void Animation::Trace(Visitor* visitor) const {
   visitor->Trace(style_dependent_range_start_);
   visitor->Trace(style_dependent_range_end_);
   visitor->Trace(prior_native_paint_worklet_target_);
-  visitor->Trace(trigger_);
+  visitor->Trace(triggers_);
   EventTarget::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
@@ -3645,43 +3684,6 @@ void Animation::CompositorAnimationHolder::Detach() {
   compositor_animation_.reset();
 }
 
-bool Animation::CanBeTriggered() const {
-  AnimationTrigger* trigger = GetTriggerInternal();
-  // This animation can be played by |trigger| if:
-  // 1. |trigger| has a progress-based timeline (only triggers with
-  //    scroll/view timelines are supported currently) AND,
-  // 2. Either:
-  //    a. |trigger| is still in the idle state, i.e. has never played this
-  //       animation OR,
-  //    b. |trigger| is of an animation-trigger-type which could play an
-  //       animation multiple times, i.e. 'alternate' or 'repeat' or 'state'.
-  return trigger && trigger->GetTimelineInternal() &&
-         trigger->GetTimelineInternal()->IsProgressBased() &&
-         (trigger->type() !=
-              AnimationTrigger::Type(AnimationTrigger::Type::Enum::kOnce) ||
-          trigger_data_.state == AnimationTriggerState::kIdle);
-}
-
-void Animation::setTrigger(AnimationTrigger* trigger) {
-  if (trigger == trigger_) {
-    return;
-  }
-  if (trigger_) {
-    // Out with the old.
-    if (trigger_->GetTimelineInternal()) {
-      trigger_->GetTimelineInternal()->RemoveAnimationForTriggering(this);
-    }
-  }
-  trigger_ = trigger;
-  if (trigger_) {
-    // In with the new.
-    if (trigger_->GetTimelineInternal() &&
-        trigger_->GetTimelineInternal()->IsProgressBased()) {
-      trigger_->GetTimelineInternal()->AddAnimationForTriggering(this);
-    }
-  }
-}
-
 void Animation::ResetPlayback() {
   bool advances_backwards = playbackRate() < 0;
 
@@ -3694,6 +3696,31 @@ void Animation::ResetPlayback() {
   pause();
 
   SetPausedForTrigger(true);
+}
+
+void Animation::AddTrigger(AnimationTrigger* trigger) {
+  triggers_.insert(trigger);
+}
+
+void Animation::RemoveTrigger(AnimationTrigger* trigger) {
+  triggers_.erase(trigger);
+}
+
+void Animation::DisassociateTriggers() {
+  HeapHashSet<WeakMember<AnimationTrigger>> triggers;
+  triggers.swap(triggers_);
+  for (AnimationTrigger* trigger : triggers) {
+    trigger->removeAnimation(this);
+  }
+}
+
+float Animation::GetKeyframeEffectTargetZoom() const {
+  auto* keyframe_effect = DynamicTo<KeyframeEffect>(effect());
+  if (!keyframe_effect || !keyframe_effect->EffectTarget() ||
+      !keyframe_effect->EffectTarget()->GetComputedStyle()) {
+    return 1.f;
+  }
+  return keyframe_effect->EffectTarget()->ComputedStyleRef().EffectiveZoom();
 }
 
 }  // namespace blink

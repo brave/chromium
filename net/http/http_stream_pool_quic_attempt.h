@@ -18,6 +18,7 @@
 #include "net/http/http_stream_pool.h"
 #include "net/http/http_stream_pool_attempt_manager.h"
 #include "net/quic/quic_session_attempt.h"
+#include "net/quic/quic_session_attempt_request.h"
 #include "net/quic/quic_session_pool.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 
@@ -50,6 +51,8 @@ class HttpStreamPool::QuicAttempt : public QuicSessionAttempt::Delegate {
 
   base::TimeTicks start_time() const { return start_time_; }
 
+  const QuicEndpoint& quic_endpoint() const { return quic_endpoint_; }
+
   bool is_slow() const { return is_slow_; }
 
  private:
@@ -65,7 +68,7 @@ class HttpStreamPool::QuicAttempt : public QuicSessionAttempt::Delegate {
   const perfetto::Track track_;
   const perfetto::Flow flow_;
 
-  std::unique_ptr<QuicSessionAttempt> session_attempt_;
+  std::unique_ptr<QuicSessionAttemptRequest> request_;
   base::OneShotTimer slow_timer_;
   bool is_slow_ = false;
   std::optional<int> result_;

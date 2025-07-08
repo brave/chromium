@@ -167,9 +167,7 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
     config.features_enabled.push_back(
         kAutofillDynamicallyLoadsFieldsForAddressInput);
   }
-  if ([self isRunningTest:@selector
-            (testSwipeToDeleteBlockedForHomeWorkProfile)] ||
-      [self isRunningTest:@selector(testHomeWorkProfileEditPage)]) {
+  if ([self isRunningTest:@selector(testHomeAndWorkProfileEditPage)]) {
     config.features_enabled.push_back(
         autofill::features::kAutofillEnableSupportForHomeAndWork);
   }
@@ -314,9 +312,9 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
 }
 
 // Test that the edit mode for Home and Work profiles is not accessible.
-- (void)testHomeWorkProfileEditPage {
+- (void)testHomeAndWorkProfileEditPage {
   [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [AutofillAppInterface saveExampleHomeWorkAccountProfile];
+  [AutofillAppInterface saveExampleHomeAndWorkAccountProfile];
   [self openEditProfile:kHomeProfileLabel];
 
   // Switch on edit mode.
@@ -515,26 +513,6 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
       selectElementWithMatcher:grey_accessibilityLabel(
                                    [AutofillAppInterface exampleProfileName])]
       assertWithMatcher:grey_notVisible()];
-}
-
-// Checks that no action is possible when a Home and Work account profile
-// is swiped to be deleted.
-- (void)testSwipeToDeleteBlockedForHomeWorkProfile {
-  [AutofillAppInterface saveExampleHomeWorkAccountProfile];
-  [self openAutofillProfilesSettings];
-
-  // Swipe until the "Delete" button is revealed.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityLabel(
-                                   [AutofillAppInterface exampleProfileName])]
-      performAction:chrome_test_util::SwipeToShowDeleteButton()];
-
-  [ChromeEarlGreyUI waitForAppToIdle];
-
-  // Assert that "Delete" button is not displayed.
-  [[EarlGrey selectElementWithMatcher:grey_kindOfClassName(
-                                          @"UISwipeActionStandardButton")]
-      assertWithMatcher:grey_nil()];
 }
 
 // Checks that the country field is a selection field in the edit mode and the
@@ -819,8 +797,9 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
   [SigninEarlGrey signOut];
 }
 
+// TODO(crbug.com/427946024): This test is flaky.
 // Tests that the local profile is migrated to account.
-- (void)testMigrateToAccount {
+- (void)FLAKY_testMigrateToAccount {
   [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [AutofillAppInterface saveExampleProfile];
   [self

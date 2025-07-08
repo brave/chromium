@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.sync.settings;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.pressKey;
+import static androidx.test.espresso.assertion.ViewAssertions.doesNotExist;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 import static androidx.test.espresso.matcher.ViewMatchers.hasDescendant;
@@ -86,6 +87,7 @@ import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.sync.SyncTestRule;
 import org.chromium.chrome.browser.sync.ui.PassphraseCreationDialogFragment;
 import org.chromium.chrome.browser.sync.ui.PassphraseDialogFragment;
+import org.chromium.chrome.browser.ui.extensions.ExtensionsBuildflags;
 import org.chromium.chrome.browser.ui.signin.GoogleActivityController;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncHelper;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -127,8 +129,11 @@ import java.util.Set;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @DoNotBatch(reason = "TODO(crbug.com/40743432): SyncTestRule doesn't support batching.")
+// Hide the extensions item because most tests are for mobile Android where extensions aren't
+// supported. This prevents having to maintain two sets of screenshots for render tests.
+@EnableFeatures({ChromeFeatureList.BLOCK_INSTALLING_EXTENSIONS_ON_DESKTOP_ANDROID})
 public class ManageSyncSettingsTest {
-    private static final int RENDER_TEST_REVISION = 6;
+    private static final int RENDER_TEST_REVISION = 7;
 
     /** Maps selected types to their UI element IDs. */
     private Map<Integer, String> mUiDataTypes;
@@ -142,6 +147,10 @@ public class ManageSyncSettingsTest {
                     entry(
                             UserSelectableType.BOOKMARKS,
                             ManageSyncSettings.PREF_ACCOUNT_SECTION_BOOKMARKS_TOGGLE),
+                    // NOTE: EXTENSIONS are only available in the desktop Android build.
+                    entry(
+                            UserSelectableType.EXTENSIONS,
+                            ManageSyncSettings.PREF_ACCOUNT_SECTION_EXTENSIONS_TOGGLE),
                     entry(
                             UserSelectableType.PAYMENTS,
                             ManageSyncSettings.PREF_ACCOUNT_SECTION_PAYMENTS_TOGGLE),
@@ -214,6 +223,10 @@ public class ManageSyncSettingsTest {
         mUiDataTypes = new HashMap<>();
         mUiDataTypes.put(UserSelectableType.AUTOFILL, ManageSyncSettings.PREF_SYNC_AUTOFILL);
         mUiDataTypes.put(UserSelectableType.BOOKMARKS, ManageSyncSettings.PREF_SYNC_BOOKMARKS);
+        if (shouldShowExtensionsItem()) {
+            mUiDataTypes.put(
+                    UserSelectableType.EXTENSIONS, ManageSyncSettings.PREF_SYNC_EXTENSIONS);
+        }
         mUiDataTypes.put(
                 UserSelectableType.PAYMENTS, ManageSyncSettings.PREF_SYNC_PAYMENTS_INTEGRATION);
         mUiDataTypes.put(UserSelectableType.HISTORY, ManageSyncSettings.PREF_SYNC_HISTORY);
@@ -245,7 +258,10 @@ public class ManageSyncSettingsTest {
 
     @Test
     @LargeTest
-    @DisableFeatures({ChromeFeatureList.LINKED_SERVICES_SETTING})
+    @DisableFeatures({
+        ChromeFeatureList.LINKED_SERVICES_SETTING,
+        ChromeFeatureList.BLOCK_INSTALLING_EXTENSIONS_ON_DESKTOP_ANDROID
+    })
     public void testAccountSettingsView() {
         // The types that should be default-enabled in transport mode depend on various flags.
         Set<String> expectedEnabledTypes =
@@ -257,7 +273,9 @@ public class ManageSyncSettingsTest {
                                 ManageSyncSettings.PREF_ACCOUNT_SECTION_BOOKMARKS_TOGGLE,
                                 ManageSyncSettings.PREF_ACCOUNT_SECTION_READING_LIST_TOGGLE,
                                 ManageSyncSettings.PREF_ACCOUNT_SECTION_ADDRESSES_TOGGLE));
-
+        if (shouldShowExtensionsItem()) {
+            expectedEnabledTypes.add(ManageSyncSettings.PREF_ACCOUNT_SECTION_EXTENSIONS_TOGGLE);
+        }
         mSyncTestRule.setUpAccountAndSignInForTesting();
         ManageSyncSettings fragment = startManageSyncPreferences();
 
@@ -275,6 +293,12 @@ public class ManageSyncSettingsTest {
         scrollToAndVerifyPresence(R.string.account_section_history_toggle);
 
         scrollToAndVerifyPresence(R.string.account_section_bookmarks_toggle);
+
+        if (shouldShowExtensionsItem()) {
+            scrollToAndVerifyPresence(R.string.account_section_extensions_toggle);
+        } else {
+            onView(withText(R.string.account_section_extensions_toggle)).check(doesNotExist());
+        }
 
         scrollToAndVerifyPresence(R.string.account_section_reading_list_toggle);
 
@@ -456,7 +480,6 @@ public class ManageSyncSettingsTest {
         mSyncTestRule.getFakeServerHelper().setCustomPassphraseNigori("passphrase");
 
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         ManageSyncSettings fragment = startManageSyncPreferences();
 
@@ -475,7 +498,6 @@ public class ManageSyncSettingsTest {
     @Feature({"Sync"})
     public void testSyncHistoryAndTabsToggle() {
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         ManageSyncSettings fragment = startManageSyncPreferences();
         ChromeSwitchPreference historyToggle =
@@ -591,6 +613,22 @@ public class ManageSyncSettingsTest {
         Assert.assertFalse(paymentsIntegration.isEnabled());
     }
 
+    @Test
+    @SmallTest
+    @EnableFeatures({ChromeFeatureList.AUTOFILL_ENABLE_LOYALTY_CARDS_FILLING})
+    public void testPaymentSettingsStringUpdated() {
+        mSyncTestRule.setUpAccountAndSignInForTesting();
+        ManageSyncSettings fragment = startManageSyncPreferences();
+        ChromeSwitchPreference paymentsIntegration =
+                (ChromeSwitchPreference)
+                        fragment.findPreference(
+                                ManageSyncSettings.PREF_ACCOUNT_SECTION_PAYMENTS_TOGGLE);
+        Assert.assertEquals(
+                paymentsIntegration.getTitle(),
+                fragment.getActivity()
+                        .getString(R.string.account_section_payments_and_info_toggle));
+    }
+
     /**
      * Test the trusted vault key retrieval flow, which involves launching an intent and finally
      * calling TrustedVaultClient.notifyKeysChanged().
@@ -692,7 +730,7 @@ public class ManageSyncSettingsTest {
                         eq(Set.of(DataType.BOOKMARKS, DataType.PASSWORDS, DataType.READING_LIST)),
                         any(Callback.class));
 
-        mSyncTestRule.setUpAccountAndSignInForTesting();
+        mSyncTestRule.setUpAccountAndSignInWithoutWaitingForTesting();
 
         final ManageSyncSettings fragment = startManageSyncPreferences();
         Assert.assertFalse(
@@ -956,8 +994,7 @@ public class ManageSyncSettingsTest {
         final ManageSyncSettings fragment = startManageSyncPreferences();
 
         ViewUtils.waitForVisibleView(withId(R.id.signin_settings_card));
-        onView(withText(R.string.account_settings_bulk_upload_section_save_button))
-                .perform(click());
+        onView(withText(R.string.batch_upload_card_save_button)).perform(click());
         ViewUtils.waitForVisibleView(withId(R.id.batch_upload_dialog));
 
         View view =
@@ -1004,8 +1041,7 @@ public class ManageSyncSettingsTest {
         final ManageSyncSettings fragment = startManageSyncPreferences();
 
         ViewUtils.waitForVisibleView(withId(R.id.signin_settings_card));
-        onView(withText(R.string.account_settings_bulk_upload_section_save_button))
-                .perform(click());
+        onView(withText(R.string.batch_upload_card_save_button)).perform(click());
         ViewUtils.waitForVisibleView(withId(R.id.batch_upload_dialog));
 
         View view =
@@ -1051,8 +1087,7 @@ public class ManageSyncSettingsTest {
         final ManageSyncSettings fragment = startManageSyncPreferences();
 
         ViewUtils.waitForVisibleView(withId(R.id.signin_settings_card));
-        onView(withText(R.string.account_settings_bulk_upload_section_save_button))
-                .perform(click());
+        onView(withText(R.string.batch_upload_card_save_button)).perform(click());
         ViewUtils.waitForVisibleView(withId(R.id.batch_upload_dialog));
 
         View view =
@@ -1245,7 +1280,6 @@ public class ManageSyncSettingsTest {
         mSyncTestRule.getFakeServerHelper().setCustomPassphraseNigori("passphrase");
 
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         CriteriaHelper.pollUiThread(
                 () -> mSyncTestRule.getSyncService().isPassphraseRequiredForPreferredDataTypes());
@@ -1264,7 +1298,6 @@ public class ManageSyncSettingsTest {
         mSyncTestRule.getFakeServerHelper().setCustomPassphraseNigori("passphrase");
 
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         CriteriaHelper.pollUiThread(
                 () -> mSyncTestRule.getSyncService().isPassphraseRequiredForPreferredDataTypes());
@@ -1293,7 +1326,6 @@ public class ManageSyncSettingsTest {
         mSyncTestRule.getFakeServerHelper().setCustomPassphraseNigori("passphrase");
 
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         CriteriaHelper.pollUiThread(
                 () -> mSyncTestRule.getSyncService().isPassphraseRequiredForPreferredDataTypes());
@@ -1352,7 +1384,6 @@ public class ManageSyncSettingsTest {
         mSyncTestRule.getFakeServerHelper().setCustomPassphraseNigori("passphrase");
 
         mSyncTestRule.setUpAccountAndSignInForTesting();
-        SyncTestUtil.waitForSyncTransportActive();
 
         SyncService syncService = mSyncTestRule.getSyncService();
         CriteriaHelper.pollUiThread(() -> syncService.isPassphraseRequiredForPreferredDataTypes());
@@ -1484,6 +1515,11 @@ public class ManageSyncSettingsTest {
             if (accountUiDataType.getKey() == UserSelectableType.TABS) {
                 continue;
             }
+            // EXTENSIONS are only available in the desktop Android build.
+            if (accountUiDataType.getKey() == UserSelectableType.EXTENSIONS
+                    && !shouldShowExtensionsItem()) {
+                continue;
+            }
             Integer selectedType = accountUiDataType.getKey();
             String prefId = accountUiDataType.getValue();
             dataTypes.put(selectedType, (ChromeSwitchPreference) fragment.findPreference(prefId));
@@ -1542,5 +1578,12 @@ public class ManageSyncSettingsTest {
         onView(withId(R.id.recycler_view))
                 .perform(RecyclerViewActions.scrollTo(hasDescendant(withText(textId))));
         onView(withText(textId)).check(matches(isDisplayed()));
+    }
+
+    /** Returns whether the extensions sync item should be shown. */
+    private boolean shouldShowExtensionsItem() {
+        return ExtensionsBuildflags.ENABLE_DESKTOP_ANDROID_EXTENSIONS
+                && !ChromeFeatureList.isEnabled(
+                        ChromeFeatureList.BLOCK_INSTALLING_EXTENSIONS_ON_DESKTOP_ANDROID);
     }
 }

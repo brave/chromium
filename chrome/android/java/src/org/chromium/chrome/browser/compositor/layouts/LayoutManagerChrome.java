@@ -30,6 +30,7 @@ import org.chromium.chrome.browser.tab_ui.TabContentManager.ThumbnailChangeListe
 import org.chromium.chrome.browser.tab_ui.TabSwitcher;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.theme.ThemeColorProvider;
 import org.chromium.chrome.browser.theme.TopUiThemeColorProvider;
 import org.chromium.chrome.browser.toolbar.ControlContainer;
@@ -211,7 +212,7 @@ public class LayoutManagerChrome extends LayoutManagerImpl
         if (layoutType == LayoutType.TAB_SWITCHER && mHubLayout == null) {
             initTabSwitcher();
         }
-        super.showLayout(layoutType, XrUtils.isXrDevice() ? false : animate);
+        super.showLayout(layoutType, animate);
     }
 
     /**
@@ -294,28 +295,44 @@ public class LayoutManagerChrome extends LayoutManagerImpl
                 && getNextLayoutType() != LayoutType.TAB_SWITCHER
                 && !XrUtils.isXrDevice()) {
             showLayout(LayoutType.TAB_SWITCHER, animate);
+        } else if (getActiveLayoutType() == LayoutType.TAB_SWITCHER
+                && getActiveLayout().isStartingToHide()
+                && showOverview
+                && getNextLayoutType() == LayoutType.BROWSING
+                && !XrUtils.isXrDevice()) {
+            showLayout(LayoutType.TAB_SWITCHER, animate);
         }
         super.tabClosed(id, nextId, incognito, tabRemoved);
     }
 
     @Override
-    public void onTabsAllClosing(boolean incognito) {
+    public void tabsAllClosing(boolean incognito) {
         if (getActiveLayout() == mStaticLayout && !incognito && !XrUtils.isXrDevice()) {
             showLayout(LayoutType.TAB_SWITCHER, /* animate= */ false);
         }
-        super.onTabsAllClosing(incognito);
+        super.tabsAllClosing(incognito);
     }
 
     @Override
     protected void tabModelSwitched(boolean incognito) {
         super.tabModelSwitched(incognito);
-        getTabModelSelector().commitAllTabClosures();
-        if (getActiveLayout() == mStaticLayout
-                && !incognito
-                && getTabModelSelector().getModel(false).getCount() == 0
-                && getNextLayoutType() != LayoutType.TAB_SWITCHER) {
-            showLayout(LayoutType.TAB_SWITCHER, /* animate= */ false);
-        }
+        TabModelSelector selector = getTabModelSelector();
+        selector.commitAllTabClosures();
+
+        // Skip forcing the tab switcher to show with 0 tabs until tab state is fully restored in
+        // the event it is slow.
+        TabModelUtils.runOnTabStateInitialized(
+                selector,
+                (tabModelSelector) -> {
+                    boolean incognitoActive = tabModelSelector.isIncognitoBrandedModelSelected();
+
+                    if (getActiveLayout() == mStaticLayout
+                            && !incognitoActive
+                            && tabModelSelector.getModel(false).getCount() == 0
+                            && getNextLayoutType() != LayoutType.TAB_SWITCHER) {
+                        showLayout(LayoutType.TAB_SWITCHER, /* animate= */ false);
+                    }
+                });
     }
 
     /** Initializes HubLayout without needing to open the Tab Switcher. */
@@ -337,7 +354,7 @@ public class LayoutManagerChrome extends LayoutManagerImpl
      *     disabled.
      */
     public void setEnableAnimations(boolean enabled) {
-        mEnableAnimations = XrUtils.isXrDevice() ? false : enabled;
+        mEnableAnimations = enabled;
     }
 
     /** Returns whether animations should be done for model changes. */

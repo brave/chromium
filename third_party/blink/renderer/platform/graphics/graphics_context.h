@@ -71,7 +71,6 @@ class KURL;
 class PaintController;
 class Path;
 class StrokeData;
-class StyledStrokeData;
 
 // Tiling parameters for the DrawImageTiled() method.
 struct ImageTilingInfo {
@@ -284,16 +283,6 @@ class PLATFORM_EXPORT GraphicsContext {
 
   // ---------- End state management methods -----------------
 
-  // DrawLine() only operates on horizontal or vertical lines and uses the
-  // current stroke settings. For dotted or dashed stroke, the line need to be
-  // top-to-down or left-to-right to get correct interval of dots/dashes.
-  void DrawLine(const gfx::Point&,
-                const gfx::Point&,
-                const StyledStrokeData&,
-                const AutoDarkMode& auto_dark_mode,
-                bool is_text_line = false,
-                const cc::PaintFlags* flags = nullptr);
-
   void FillPath(const Path&, const AutoDarkMode& auto_dark_mode);
   void StrokePath(const Path&, const AutoDarkMode& auto_dark_mode);
 
@@ -491,10 +480,6 @@ class PLATFORM_EXPORT GraphicsContext {
 
   // Sets location of a URL destination (a.k.a. anchor) in the page.
   void SetURLDestinationLocation(const String& name, const gfx::Point&);
-
-  static void AdjustLineToPixelBoundaries(gfx::PointF& p1,
-                                          gfx::PointF& p2,
-                                          float stroke_width);
 
   void SetInDrawingRecorder(bool);
   bool InDrawingRecorder() const { return in_drawing_recorder_; }

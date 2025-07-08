@@ -378,6 +378,12 @@ chromium-metrics-reviews@google.com.
   <int value="75" label="UMA_NTP_MOST_VISITED_UNPIN_UNDO"/>
 </enum>
 
+<enum name="WebUIPreloadReason">
+  <int value="0" label="BrowserWarmup"/>
+  <int value="1" label="WebUIDestroyed"/>
+  <int value="2" label="WebUIRequested"/>
+</enum>
+
 <enum name="WebUIPreloadResult">
   <int value="0"
       label="No Preload: no preloaded WebUI is available when a WebUI is
@@ -572,6 +578,7 @@ chromium-metrics-reviews@google.com.
 
 <enum name="WebUIUrlHashes">
   <int value="-2137891043" label="chrome-untrusted://scanner-feedback/"/>
+  <int value="-2117475303" label="chrome://comments-side-panel.top-chrome/"/>
   <int value="-2103246641" label="chrome://signin-internals/"/>
   <int value="-2087891836" label="chrome://debug-webuis-disabled/"/>
   <int value="-2086395469" label="chrome://dlp-internals/"/>
@@ -731,6 +738,7 @@ chromium-metrics-reviews@google.com.
   <int value="-377028639" label="chrome://copresence/"/>
   <int value="-359703631" label="chrome://slow_trace/"/>
   <int value="-336117866" label="chrome://focus-mode-media/"/>
+  <int value="-332876060" label="chrome://autofill-ml-internals/"/>
   <int value="-245337017" label="chrome://user-actions/"/>
   <int value="-233401490" label="chrome://accessory-update/"/>
   <int value="-222190329" label="chrome://dino/"/>
@@ -848,6 +856,7 @@ chromium-metrics-reviews@google.com.
   <int value="1076364348" label="chrome://web-app-internals/"/>
   <int value="1084212752" label="chrome://personalization/"/>
   <int value="1109407387" label="chrome://keyboardoverlay/"/>
+  <int value="1131279479" label="chrome://actor-internals/"/>
   <int value="1131405887" label="chrome://taskscheduler-internals/"/>
   <int value="1134924982" label="chrome://app-icon/"/>
   <int value="1145000455" label="chrome://arc-overview-tracing/"/>

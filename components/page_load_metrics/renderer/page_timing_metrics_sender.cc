@@ -132,7 +132,7 @@ void PageTimingMetricsSender::DidObserveSoftNavigation(
   // increase by one, and the navigation_id to update, however, we have no
   // expectations about start_time values.  This is because soft-navs start_time
   // might not be monotonically increasing. See: crbug.com/418449366#comment3
-  CHECK(new_metrics.count > soft_navigation_metrics_->count);
+  CHECK(new_metrics.count >= soft_navigation_metrics_->count);
   CHECK(!new_metrics.start_time.is_zero());
   CHECK(new_metrics.navigation_id != soft_navigation_metrics_->navigation_id);
 
@@ -250,11 +250,9 @@ void PageTimingMetricsSender::UpdateResourceMetadata(
   it->second->SetIsMainFrameResource(is_main_frame_resource);
 }
 
-void PageTimingMetricsSender::SetUpUkmReporting(
-    base::ReadOnlySharedMemoryRegion shared_memory_smoothness,
+void PageTimingMetricsSender::SetUpDroppedFramesReporting(
     base::ReadOnlySharedMemoryRegion shared_memory_dropped_frames) {
-  sender_->SetUpUkmReporting(std::move(shared_memory_smoothness),
-                             std::move(shared_memory_dropped_frames));
+  sender_->SetUpDroppedFramesReporting(std::move(shared_memory_dropped_frames));
 }
 
 void PageTimingMetricsSender::Update(

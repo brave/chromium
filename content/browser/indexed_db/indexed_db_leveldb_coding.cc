@@ -20,6 +20,7 @@
 #include "base/notreached.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/services/storage/indexed_db/scopes/leveldb_scopes_coding.h"
@@ -95,9 +96,6 @@ constexpr unsigned char kIndexNamesKeyTypeByte = 201;
 constexpr unsigned char kObjectMetaDataTypeMaximum = 255;
 constexpr unsigned char kIndexMetaDataTypeMaximum = 255;
 
-const constexpr int kDatabaseLockPartition = 0;
-const constexpr int kObjectStoreLockPartition = 1;
-
 IndexedDBKey InvalidKey() {
   return IndexedDBKey{blink::mojom::IDBKeyType::Invalid};
 }
@@ -128,11 +126,11 @@ void EncodeStringWithSentinel(const std::u16string& value, std::string* into) {
 // `output`. Returns true on success.
 bool DecodeStringWithSentinel(std::string_view& encoded,
                               std::u16string* output) {
-  constexpr int kChunkLengthInBytes = sizeof(kPaddingByte) + sizeof(char16_t);
-  if (encoded.size() < kChunkLengthInBytes + kSentinelLength) {
+  if (encoded.empty()) {
     return false;
   }
 
+  constexpr int kChunkLengthInBytes = sizeof(kPaddingByte) + sizeof(char16_t);
   for (; !encoded.empty(); encoded = encoded.substr(kChunkLengthInBytes)) {
     if (encoded.front() == kSentinel) {
       encoded = encoded.substr(kSentinelLength);
@@ -144,8 +142,9 @@ bool DecodeStringWithSentinel(std::string_view& encoded,
     if (encoded.at(0) != kPaddingByte) {
       return false;
     }
-    output->push_back(static_cast<char16_t>(encoded.at(1)) << 8 |
-                      encoded.at(2));
+    uint8_t hi = static_cast<uint8_t>(encoded.at(1));
+    uint8_t lo = static_cast<uint8_t>(encoded.at(2));
+    output->push_back((char16_t{hi} << 8) | char16_t{lo});
   }
   return false;
 }
@@ -167,10 +166,10 @@ void EncodeBinaryWithSentinel(const std::string& value, std::string* into) {
 // Reads and consumes the first bytes of `encoded` and outputs decoded binary as
 // string in `output`. Returns true on success.
 bool DecodeBinaryWithSentinel(std::string_view& encoded, std::string* output) {
-  constexpr int kChunkLengthInBytes = sizeof(kPaddingByte) + 1;
-  if (encoded.size() < kChunkLengthInBytes + kSentinelLength) {
+  if (encoded.empty()) {
     return false;
   }
+  constexpr int kChunkLengthInBytes = sizeof(kPaddingByte) + 1;
   for (; !encoded.empty(); encoded = encoded.substr(kChunkLengthInBytes)) {
     if (encoded.front() == kSentinel) {
       encoded = encoded.substr(1);
@@ -419,13 +418,14 @@ bool MaybeEncodeIDBKey(const IndexedDBKey& value, std::string* into) {
   return EncodeIDBKeyRecursively(value, into, 0);
 }
 
-void EncodeSortableIDBKey(const IndexedDBKey& value, std::string* into) {
+void EncodeSortableIDBKeyRecursively(const IndexedDBKey& value,
+                                     std::string* into) {
   size_t previous_size = into->size();
   switch (value.type()) {
     case blink::mojom::IDBKeyType::Array: {
       EncodeByte(kOrderedArrayTypeByte, into);
       for (const IndexedDBKey& key : value.array()) {
-        EncodeSortableIDBKey(key, into);
+        EncodeSortableIDBKeyRecursively(key, into);
       }
       EncodeByte(kSentinel, into);
       DCHECK_GT(into->size(), previous_size);
@@ -453,6 +453,12 @@ void EncodeSortableIDBKey(const IndexedDBKey& value, std::string* into) {
     default:
       NOTREACHED();
   }
+}
+
+std::string EncodeSortableIDBKey(const IndexedDBKey& value) {
+  std::string encoded;
+  EncodeSortableIDBKeyRecursively(value, &encoded);
+  return encoded;
 }
 
 #define COMPILE_ASSERT_MATCHING_VALUES(a, b)                          \
@@ -1514,22 +1520,6 @@ std::string IndexedDBKeyToDebugString(std::string_view key) {
   }
   result << "]";
   return result.str();
-}
-
-PartitionedLockId GetDatabaseLockId(std::u16string database_name) {
-  return {kDatabaseLockPartition, base::UTF16ToUTF8(database_name)};
-}
-
-PartitionedLockId GetObjectStoreLockId(int64_t database_id,
-                                       int64_t object_store_id) {
-  // These keys used to attempt to be bytewise-comparable, which is why
-  // it uses big-endian encoding here. There was a goal to match the
-  // existing leveldb key scheme used by IndexedDB. This is no longer a goal.
-  std::array<uint8_t, 16u> chars;
-  auto [db, obj] = base::span(chars).split_at<8u>();
-  db.copy_from(base::U64ToBigEndian(static_cast<uint64_t>(database_id)));
-  obj.copy_from(base::U64ToBigEndian(static_cast<uint64_t>(object_store_id)));
-  return {kObjectStoreLockPartition, std::string(chars.begin(), chars.end())};
 }
 
 KeyPrefix::KeyPrefix()

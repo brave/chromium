@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Személyeket tartalmazó találatok egyelőre nem jelennek meg. Próbálkozzon másik utasítással.</translation>
 <translation id="1815850098929213707">A kiválasztott billentyű: <ph name="KEYS" />. Koppintson a gombra a vezérlő szerkesztéséhez.</translation>
 <translation id="1818174214124933000">Ha a Küldés lehetőséget választja, visszajelzését és a tartalmakat (lásd alább) elküldjük a Google-nak, ahol emberek ellenőrzik, és termékeink, valamint szolgáltatásaink betanítására vagy továbbfejlesztésére használjuk fel őket az <ph name="LINK_POLICY_BEGIN" />Adatvédelmi irányelvekkel<ph name="LINK_POLICY_END" /> és a <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google Általános Szerződési Feltételekkel<ph name="LINK_TERMS_OF_SERVICE_END" /> összhangban.</translation>
-<translation id="1821075635029692203">A tanár nem támogatott forrást küldött. Jelezze ezt neki.</translation>
 <translation id="1823120442877418684">Karakterek</translation>
 <translation id="1827738518074806965">Galéria</translation>
 <translation id="183287940576828840">Sértő/nem biztonságos</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Kiosztásváltó</translation>
 <translation id="224421911978987610">hosszú expozíció</translation>
 <translation id="2244834438220057800">zöld</translation>
+<translation id="2248689665683494517">minimalista csendélet: néhány szál pipacs egy üvegvázában, fekete háttér előtt</translation>
 <translation id="225692081236532131">Aktiválás állapota</translation>
 <translation id="2267285889943769271">Képernyőkép hozzáadása</translation>
 <translation id="2268044343513325586">Pontosítás</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">sifon</translation>
 <translation id="4310735698903592804">A legújabb háttérképeket a Google AI biztosítja</translation>
 <translation id="4320904097188876154">neonlila</translation>
+<translation id="432961742358282111">Definíciók, fordítások vagy mértékegységek átváltásának megjelenítéséhez kattintson a jobb egérgombbal, vagy tartsa nyomva az ujját a képernyőn. A funkció kezeléséhez használja a balra és jobbra nyilakat.</translation>
 <translation id="4333390807948134856">A következő gomb van megnyomva: <ph name="KEY_NAME" /></translation>
 <translation id="4334293042716981313"><ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />Saját utasítást is írhat<ph name="END_LINK_FREEFORM_SUBPAGE" />.</translation>
 <translation id="4354430579665871434">billentyű</translation>
@@ -949,7 +950,7 @@
 <translation id="5145331109270917438">Módosítás dátuma</translation>
 <translation id="5154917547274118687">Memória</translation>
 <translation id="5160857336552977725">Jelentkezzen be <ph name="DEVICE_TYPE" /> eszközén</translation>
-<translation id="5168185087976003268">Akkumulátor egészsége</translation>
+<translation id="5168185087976003268">Akkumulátor állapota</translation>
 <translation id="5170568018924773124">Megjelenítés mappában</translation>
 <translation id="517075088756846356">A frissítési folyamat folytatásához húzza ki, majd csatlakoztassa újra a(z) <ph name="DEVICE_NAME" /> tápkábelét</translation>
 <translation id="5180108905184566358">majomkenyérfák</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Kérdezze a Chromebook súgófórumának szakértőit</translation>
-<translation id="7309823890857024809">minimalista csendélet: néhány szál pipacs egy üvegvázában, fekete háttér előtt</translation>
 <translation id="7311368985037279727">billentyűzet színe</translation>
 <translation id="7317831949569936035">Iskolai regisztráció</translation>
 <translation id="7319430975418800333">A3</translation>

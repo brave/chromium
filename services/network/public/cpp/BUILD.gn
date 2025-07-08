@@ -7,6 +7,7 @@ import("//mojo/public/tools/bindings/mojom.gni")
 import("//net/features.gni")
 import("//services/network/public/cpp/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
+import("//testing/test.gni")
 import("//third_party/blink/renderer/build/scripts/scripts.gni")  # TODO(crbug.com/397934758)
 
 _is_directory_transfer_required = is_fuchsia
@@ -454,6 +455,29 @@ component("document_isolation_policy") {
   defines = [ "IS_NETWORK_CPP_DOCUMENT_ISOLATION_IMPL" ]
 }
 
+source_set("ip_address_space_overrides_test_utils") {
+  testonly = true
+
+  sources = [
+    "ip_address_space_overrides_test_utils.cc",
+    "ip_address_space_overrides_test_utils.h",
+  ]
+
+  public_deps = [
+    "//base",
+    "//services/network/public/mojom:mojom_ip_address_shared",
+  ]
+
+  deps = [
+    ":cpp",
+    ":flags_and_switches",
+    "//base",
+    "//net:test_support",
+  ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+}
+
 component("shared_storage_support") {
   sources = [
     "shared_storage_mojom_traits.cc",
@@ -817,6 +841,15 @@ source_set("perftests") {
     "//testing/gtest",
     "//testing/perf:perf",
     "//third_party/google_benchmark",
+  ]
+}
+
+test("coep_fuzztest") {
+  sources = [ "cross_origin_embedder_policy_parser_fuzztest.cc" ]
+  fuzztests = [ "CrossOriginEmbedderPolicyParserTest.CrossOriginEmbedderPolicyParserFuzzerTest" ]
+  deps = [
+    ":cpp",
+    "//third_party/fuzztest:fuzztest_gtest_main",
   ]
 }
 

@@ -138,6 +138,33 @@ TEST_F(ChangePasswordFormWaiterTest,
       ChangePasswordFormWaiter::kChangePasswordFormWaitingTimeout);
 }
 
+TEST_F(ChangePasswordFormWaiterTest, NotFoundTimeoutResetOnLoadingEvent) {
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+  static_cast<content::WebContentsObserver*>(&waiter)
+      ->DocumentOnLoadCompletedInPrimaryMainFrame();
+
+  EXPECT_CALL(completion_callback, Run).Times(0);
+  task_environment()->FastForwardBy(
+      ChangePasswordFormWaiter::kChangePasswordFormWaitingTimeout / 2);
+
+  // Emulate another loading finished event again.
+  static_cast<content::WebContentsObserver*>(&waiter)
+      ->DocumentOnLoadCompletedInPrimaryMainFrame();
+  // Normally it would trigger timeout, but since another loading happened
+  // before it doesn't happen.
+  task_environment()->FastForwardBy(
+      ChangePasswordFormWaiter::kChangePasswordFormWaitingTimeout / 2);
+
+  EXPECT_CALL(completion_callback, Run(nullptr));
+  // Now finally after waiting 1.5 * kChangePasswordFormWaitingTimeout callback
+  // is triggered.
+  task_environment()->FastForwardBy(
+      ChangePasswordFormWaiter::kChangePasswordFormWaitingTimeout / 2);
+}
+
 TEST_F(ChangePasswordFormWaiterTest, PasswordChangeFormIdentified) {
   base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
       completion_callback;
@@ -164,17 +191,16 @@ TEST_F(ChangePasswordFormWaiterTest, PasswordChangeFormIdentified) {
       ->OnPasswordFormParsed(form_manager.get());
 }
 
-TEST_F(ChangePasswordFormWaiterTest,
-       PasswordChangeFormNotFoundWithoutConfirmationField) {
+TEST_F(ChangePasswordFormWaiterTest, LoginForm) {
   base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
       completion_callback;
 
   std::vector<autofill::FormFieldData> fields;
   fields.push_back(CreateTestFormField(
-      /*label=*/"Password:", /*name=*/"password",
-      /*value=*/"", autofill::FormControlType::kInputPassword));
+      /*label=*/"Username:", /*name=*/"username",
+      /*value=*/"", autofill::FormControlType::kInputEmail));
   fields.push_back(CreateTestFormField(
-      /*label=*/"New password:", /*name=*/"new_password_1",
+      /*label=*/"Password:", /*name=*/"password",
       /*value=*/"", autofill::FormControlType::kInputPassword));
   autofill::FormData form;
   form.set_url(GURL("https://www.foo.com"));
@@ -184,6 +210,123 @@ TEST_F(ChangePasswordFormWaiterTest,
   ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
 
   EXPECT_CALL(completion_callback, Run).Times(0);
+  static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
+      ->OnPasswordFormParsed(form_manager.get());
+}
+
+TEST_F(ChangePasswordFormWaiterTest, SignUpForm) {
+  std::vector<autofill::FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Username:", /*name=*/"username",
+      /*value=*/"", autofill::FormControlType::kInputEmail));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Create password:", /*name=*/"new_password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Confirm password:", /*name=*/"new_password_2",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  autofill::FormData form;
+  form.set_renderer_id(autofill::test::MakeFormRendererId());
+  form.set_url(GURL("https://www.foo.com"));
+  form.set_fields(std::move(fields));
+  auto form_manager = CreateFormManager(form);
+
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+
+  EXPECT_CALL(completion_callback, Run).Times(0);
+  static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
+      ->OnPasswordFormParsed(form_manager.get());
+}
+
+TEST_F(ChangePasswordFormWaiterTest, FormlessSettingsPage) {
+  std::vector<autofill::FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Email:", /*name=*/"username",
+      /*value=*/"", autofill::FormControlType::kInputEmail));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Current password:", /*name=*/"password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"New password:", /*name=*/"new_password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  autofill::FormData form;
+  // Not setting render_id means there is no <form> tag.
+  form.set_url(GURL("https://www.foo.com"));
+  form.set_fields(std::move(fields));
+  auto form_manager = CreateFormManager(form);
+
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+
+  EXPECT_CALL(completion_callback, Run(form_manager.get()));
+  static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
+      ->OnPasswordFormParsed(form_manager.get());
+}
+
+TEST_F(ChangePasswordFormWaiterTest, NewPasswordFieldAlone) {
+  std::vector<autofill::FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"New password:", /*name=*/"new_password",
+      /*value=*/"", autofill::FormControlType::kInputPassword, "new-password"));
+  autofill::FormData form;
+  form.set_url(GURL("https://www.foo.com"));
+  form.set_fields(std::move(fields));
+  auto form_manager = CreateFormManager(form);
+
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+
+  EXPECT_CALL(completion_callback, Run(form_manager.get()));
+  static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
+      ->OnPasswordFormParsed(form_manager.get());
+}
+
+TEST_F(ChangePasswordFormWaiterTest, ChangePasswordFormWithoutConfirmation) {
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+
+  std::vector<autofill::FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Old password:", /*name=*/"password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"New password:", /*name=*/"new_password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  autofill::FormData form;
+  form.set_url(GURL("https://www.foo.com"));
+  form.set_fields(std::move(fields));
+  auto form_manager = CreateFormManager(form);
+
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+
+  EXPECT_CALL(completion_callback, Run(form_manager.get()));
+  static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
+      ->OnPasswordFormParsed(form_manager.get());
+}
+
+TEST_F(ChangePasswordFormWaiterTest, ChangePasswordFormWithoutOldPassword) {
+  base::MockOnceCallback<void(password_manager::PasswordFormManager*)>
+      completion_callback;
+
+  std::vector<autofill::FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"New password:", /*name=*/"new_password",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Confirm password:", /*name=*/"new_password_2",
+      /*value=*/"", autofill::FormControlType::kInputPassword));
+  autofill::FormData form;
+  form.set_url(GURL("https://www.foo.com"));
+  form.set_fields(std::move(fields));
+  auto form_manager = CreateFormManager(form);
+
+  ChangePasswordFormWaiter waiter(web_contents(), completion_callback.Get());
+
+  EXPECT_CALL(completion_callback, Run(form_manager.get()));
   static_cast<password_manager::PasswordFormManagerObserver*>(&waiter)
       ->OnPasswordFormParsed(form_manager.get());
 }

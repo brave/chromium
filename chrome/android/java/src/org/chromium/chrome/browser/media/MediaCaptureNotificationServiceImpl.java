@@ -18,10 +18,10 @@ import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.Log;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
-import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
@@ -42,6 +42,7 @@ import org.chromium.components.browser_ui.notifications.PendingIntentProvider;
 import org.chromium.components.webrtc.MediaCaptureNotificationUtil;
 import org.chromium.components.webrtc.MediaCaptureNotificationUtil.MediaType;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.media.capture.ScreenCapture;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.url.GURL;
 
@@ -187,7 +188,7 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
                     }
                 }
             }
-            if (BuildConfig.IS_DESKTOP_ANDROID) {
+            if (DeviceInfo.isDesktop()) {
                 if (mNotifications.size() > 1 && mNotifications.firstKey() == notificationId) {
                     // For large screen device, we use the previous notification to update
                     // foreground
@@ -202,7 +203,7 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
             }
             mNotificationManager.cancel(NOTIFICATION_NAMESPACE, notificationId);
             mNotificationsType.delete(notificationId);
-            if (BuildConfig.IS_DESKTOP_ANDROID) {
+            if (DeviceInfo.isDesktop()) {
                 mNotifications.remove(notificationId);
             }
             updateSharedPreferencesEntry(notificationId, true);
@@ -247,7 +248,7 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
                         appContext.getString(R.string.app_name),
                         contentIntent,
                         stopIntent);
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             // For large screen device, we use the latest notification to start or update
             // the foreground service.
             startOrUpdateForegroundService(notificationId, notification, mediaType);
@@ -255,7 +256,7 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
             mNotificationManager.notify(notification);
         }
         mNotificationsType.put(notificationId, mediaType);
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             mNotifications.put(notificationId, notification);
         }
         updateSharedPreferencesEntry(notificationId, false);
@@ -301,7 +302,9 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
                         notificationId,
                         notification.getNotification(),
                         foregroundServiceType);
+
         mStartedForegroundService = true;
+        ScreenCapture.onForegroundServiceRunning(MediaCaptureNotificationUtil.isCapture(mediaType));
     }
 
     /**
@@ -334,6 +337,7 @@ public class MediaCaptureNotificationServiceImpl extends MediaCaptureNotificatio
             ForegroundServiceUtils.getInstance()
                     .stopForeground(getService(), Service.STOP_FOREGROUND_REMOVE);
             mStartedForegroundService = false;
+            ScreenCapture.onForegroundServiceRunning(false);
         }
         super.onDestroy();
     }

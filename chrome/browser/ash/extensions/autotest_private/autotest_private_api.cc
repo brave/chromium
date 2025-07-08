@@ -73,6 +73,7 @@
 #include "base/scoped_observation.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
@@ -1007,7 +1008,7 @@ class DisplaySmoothnessTracker {
     DCHECK_EQ(windows.size(), 1u);
     auto* root_window = windows[0].get();
     throughput_.push_back(
-        100 - root_window->GetHost()->compositor()->GetPercentDroppedFrames());
+        root_window->GetHost()->compositor()->GetAverageThroughput());
   }
 
   aura::WindowTracker root_window_tracker_;
@@ -6076,7 +6077,7 @@ AutotestPrivateGetDisplaySmoothnessFunction::Run() {
 
   auto* root_window = ash::Shell::GetRootWindowForDisplayId(display_id);
   const uint32_t smoothness =
-      100 - root_window->GetHost()->compositor()->GetPercentDroppedFrames();
+      root_window->GetHost()->compositor()->GetAverageThroughput();
   return RespondNow(
       ArgumentList(api::autotest_private::GetDisplaySmoothness::Results::Create(
           smoothness)));

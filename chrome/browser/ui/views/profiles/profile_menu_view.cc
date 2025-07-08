@@ -26,6 +26,8 @@
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/profiles/batch_upload/batch_upload_service.h"
+#include "chrome/browser/profiles/batch_upload/batch_upload_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
@@ -47,12 +49,14 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/managed_ui.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "chrome/browser/ui/profiles/profile_colors_util.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
 #include "chrome/browser/ui/sync/sync_passphrase_dialog.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
@@ -76,6 +80,8 @@
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/features.h"
+#include "components/sync/service/sync_service.h"
 #include "components/vector_icons/vector_icons.h"
 #include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -91,6 +97,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 #include "chrome/browser/enterprise/signin/enterprise_signin_prefs.h"
@@ -229,9 +236,10 @@ void ProfileMenuView::BuildMenu() {
 
   const bool is_web_app = web_app::AppBrowserController::IsWebApp(&browser());
   if (is_web_app) {
-    browser().window()->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHPasswordsWebAppProfileSwitchFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    BrowserUserEducationInterface::From(&browser())
+        ->NotifyFeaturePromoFeatureUsed(
+            feature_engagement::kIPHPasswordsWebAppProfileSwitchFeature,
+            FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   }
 
   // Users should not be able to use features from WebApps.
@@ -292,31 +300,6 @@ void ProfileMenuView::OnManageGoogleAccountButtonClicked() {
       &profile(),
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
           .email);
-}
-
-void ProfileMenuView::OnPasswordsButtonClicked() {
-  RecordClick(ActionableItem::kPasswordsButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  NavigateToManagePasswordsPage(
-      &browser(), password_manager::ManagePasswordsReferrer::kProfileChooser);
-}
-
-void ProfileMenuView::OnCreditCardsButtonClicked() {
-  RecordClick(ActionableItem::kCreditCardsButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kPaymentsSubPage);
-}
-
-void ProfileMenuView::OnAddressesButtonClicked() {
-  RecordClick(ActionableItem::kAddressesButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kAddressesSubPage);
 }
 
 void ProfileMenuView::OnGuestProfileButtonClicked() {
@@ -420,7 +403,10 @@ void ProfileMenuView::OnSigninButtonClicked(
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   // TODO(crbug.com/404807488): Update the button and the dialog strings.
   if (base::FeatureList::IsEnabled(switches::kEnableHistorySyncOptin)) {
-    browser().signin_view_controller()->ShowModalHistorySyncOptInDialog();
+    browser()
+        .GetFeatures()
+        .signin_view_controller()
+        ->ShowModalHistorySyncOptInDialog();
     return;
   }
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -449,7 +435,7 @@ void ProfileMenuView::OnSignoutButtonClicked() {
     return;
   }
   GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
-  browser().signin_view_controller()->SignoutOrReauthWithPrompt(
+  browser().GetFeatures().signin_view_controller()->SignoutOrReauthWithPrompt(
       signin_metrics::AccessPoint::kProfileMenuSignoutConfirmationPrompt,
       signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
       signin_metrics::SourceForRefreshTokenOperation::
@@ -523,22 +509,22 @@ void ProfileMenuView::OnEditProfileButtonClicked() {
   chrome::ShowSettingsSubPage(&browser(), chrome::kManageProfileSubPage);
 }
 
-void ProfileMenuView::OnCookiesClearedOnExitLinkClicked() {
-  RecordClick(ActionableItem::kCookiesClearedOnExitLink);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kContentSettingsSubPage +
-                                              std::string("/") +
-                                              chrome::kCookieSettingsSubPage);
-}
-
 void ProfileMenuView::OnAutofillSettingsButtonClicked() {
   RecordClick(ActionableItem::kAutofillSettingsButton);
   if (!perform_menu_actions()) {
     return;
   }
   chrome::ShowSettingsSubPage(&browser(), chrome::kAutofillSubPage);
+}
+
+void ProfileMenuView::OnBuildBatchUploadButtonClicked() {
+  RecordClick(ActionableItem::kBatchUploadButton);
+  if (!perform_menu_actions()) {
+    return;
+  }
+  BatchUploadServiceFactory::GetForProfile(&profile())
+      ->OpenBatchUpload(&browser(),
+                        BatchUploadService::EntryPoint::kProfileMenu);
 }
 
 void ProfileMenuView::SetMenuTitleForAccessibility() {
@@ -790,16 +776,52 @@ void ProfileMenuView::BuildHistorySyncOptInButton() {
       explicit_signin_access_point_.value_or(
           signin_metrics::AccessPoint::kAvatarBubbleSignIn);
   signin_metrics::LogSyncOptInOffered(access_point);
-  AddFeatureButton(
+  AddPromoButton(
       l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SYNC_PROMO_ROW_BUTTON_LABEL),
       base::BindRepeating(
           &ProfileMenuView::OnSigninButtonClicked, base::Unretained(this),
           IdentityManagerFactory::GetForProfile(&profile())
               ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin),
           ActionableItem::kHistorySyncOptInButton, access_point),
-      kDevicesChromeRefreshIcon, /*icon_to_image_ratio=*/1.0f,
-      kColorProfileMenuSyncPromoButtonBackground,
-      /*add_vertical_margin=*/true);
+      kDevicesChromeRefreshIcon);
+}
+
+void ProfileMenuView::OnBatchUploadDataReceived(
+    std::map<syncer::DataType, syncer::LocalDataDescription> local_data_map) {
+  size_t local_data_count = std::accumulate(
+      local_data_map.begin(), local_data_map.end(), 0u,
+      [](size_t current_count,
+         std::pair<syncer::DataType, syncer::LocalDataDescription> local_data) {
+        return current_count + local_data.second.local_data_models.size();
+      });
+  if (local_data_count == 0) {
+    return;
+  }
+
+  AddPromoButton(
+      l10n_util::GetPluralStringFUTF16(IDS_PROFILE_MENU_BATCH_UPLOAD_BUTTON,
+                                       local_data_count),
+      base::BindRepeating(&ProfileMenuView::OnBuildBatchUploadButtonClicked,
+                          base::Unretained(this)),
+      vector_icons::kSaveCloudIcon);
+
+  // Adding the button being asynchronous, the menu may be already been shown,
+  // update the view size to accommodate for the addition of the button. In
+  // theory this update should not even be visible to the user.
+  if (views::Widget* widget = GetWidget()) {
+    widget->SetSize(widget->non_client_view()->GetPreferredSize());
+  }
+}
+
+void ProfileMenuView::MaybeBuildBatchUploadButton() {
+  if (!base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos)) {
+    return;
+  }
+
+  BatchUploadServiceFactory::GetForProfile(&profile())
+      ->GetLocalDataDescriptionsForAvailableTypes(base::BindOnce(
+          &ProfileMenuView::OnBatchUploadDataReceived, base::Unretained(this)));
 }
 
 void ProfileMenuView::BuildAutofillSettingsButton() {
@@ -977,6 +999,8 @@ void ProfileMenuView::BuildFeatureButtons() {
       IsNewSyncPromoVariantEnabled()) {
     BuildHistorySyncOptInButton();
   }
+  // May add the button asynchronously, order is not be guaranteed.
+  MaybeBuildBatchUploadButton();
   BuildAutofillSettingsButton();
   MaybeBuildManageGoogleAccountButton();
   BuildCustomizeProfileButton();

@@ -20,7 +20,6 @@
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/shell.h"
-#include "ash/system/federated/federated_service_controller_impl.h"
 #include "base/check_deref.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -72,6 +71,7 @@
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/screen.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/gfx/image/image.h"
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #include "chrome/grit/preinstalled_web_apps_resources.h"
@@ -556,8 +556,7 @@ void AppListClientImpl::SetProfile(Profile* new_profile) {
 
 void AppListClientImpl::SetUpSearchUI() {
   search_controller_ = app_list::CreateSearchController(
-      profile_, current_model_updater_, this, GetNotifier(),
-      ash::Shell::Get()->federated_service_controller());
+      profile_, current_model_updater_, this, GetNotifier());
 
   // Refresh the results used for the suggestion chips with empty query.
   // This fixes crbug.com/999287.
@@ -606,7 +605,6 @@ void AppListClientImpl::OnTemplateURLServiceChanged() {
           template_url_service->search_terms_data()) == SEARCH_ENGINE_GOOGLE;
 
   current_model_updater_->SetSearchEngineIsGoogle(is_google);
-  search_controller_->OnDefaultSearchIsGoogleSet(is_google);
 }
 
 void AppListClientImpl::ShowAppList(ash::AppListShowSource source) {
@@ -741,40 +739,13 @@ bool AppListClientImpl::HasReordered() {
   return current_model_updater_->ModelHasBeenReorderedInThisSession();
 }
 
-void AppListClientImpl::GetAssistantNewEntryPointEligibility(
-    GetAssistantNewEntryPointEligibilityCallback callback) {
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  CHECK(profile_) << "Profile must be set if the delegate is obtained";
-  delegate->is_new_entry_point_eligible_for_primary_profile_ready().Post(
-      FROM_HERE,
-      base::BindOnce(
-          &AppListClientImpl::OnAssistantNewEntryPointEligibilityReady,
-          weak_ptr_factory_.GetWeakPtr(), profile_, std::move(callback)));
-}
-
-std::optional<std::string> AppListClientImpl::GetAssistantNewEntryPointName() {
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    return std::nullopt;
-  }
-
-  return delegate->GetNewEntryPointName();
-}
-
-ui::ImageModel AppListClientImpl::GetGeminiIcon() {
+gfx::Image AppListClientImpl::GetGeminiIcon() {
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   int resource_id = IDR_PREINSTALLED_WEB_APPS_GEMINI_ICON_192_PNG;
 #else
   int resource_id = IDR_PRODUCT_LOGO_128;
 #endif
-  return ui::ImageModel::FromResourceId(resource_id);
+  return ui::ImageModel::FromResourceId(resource_id).GetImage();
 }
 
 std::unique_ptr<ash::ScopedIphSession>
@@ -930,7 +901,8 @@ void AppListClientImpl::MaybeRecordLauncherAction(
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromContinueTask ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromQuickAppAccess ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromAppsCollections ||
-      launched_from == ash::AppListLaunchedFrom::kLaunchedFromDiscoveryChip);
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromDiscoveryChip ||
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromSearchBoxIcon);
 
   // Return early if the current user is not new.
   if (!user_manager_->IsCurrentUserNew()) {
@@ -1003,46 +975,6 @@ void AppListClientImpl::MaybeRecordActivatedItemVisibility(
                     ash::AppsCollectionsController::Get()
                         ->GetUserExperimentalArmAsHistogramSuffix()}),
       default_app_name.value());
-}
-
-void AppListClientImpl::OnAssistantNewEntryPointEligibilityReady(
-    Profile* profile,
-    GetAssistantNewEntryPointEligibilityCallback callback) {
-  // A profile might have been switched during the async call. Fail-safe if it
-  // has changed.
-  if (profile != profile_) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  ash::assistant::AssistantBrowserDelegate* delegate =
-      GetAssistantBrowserDelegateForNewEntryPoint();
-  if (!delegate) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  base::expected<bool, ash::assistant::AssistantBrowserDelegate::Error>
-      eligibility = delegate->IsNewEntryPointEligibleForPrimaryProfile();
-  CHECK(eligibility.has_value())
-      << "AppListClientImpl is reading a value after waiting the ready event. "
-         "There should be no error.";
-
-  std::move(callback).Run(eligibility.value());
-}
-
-ash::assistant::AssistantBrowserDelegate*
-AppListClientImpl::GetAssistantBrowserDelegateForNewEntryPoint() {
-  if (profile_ == nullptr) {
-    return nullptr;
-  }
-
-  // Assistant new entry point is supported only for a primary profile.
-  if (!IsPrimaryProfile(user_manager_.get(), profile_.get())) {
-    return nullptr;
-  }
-
-  return ash::assistant::AssistantBrowserDelegate::Get();
 }
 
 std::optional<bool> AppListClientImpl::IsNewUser(

@@ -26,6 +26,8 @@
 #include "chrome/browser/glic/widget/glic_view.h"
 #include "chrome/browser/glic/widget/glic_widget.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -122,7 +124,8 @@ class InteractiveGlicTestT : public T {
     Test::embedded_test_server()->ServeFilesFromSourceDirectory(
         "chrome/test/data/webui/glic/");
 
-    ASSERT_TRUE(Test::embedded_test_server()->Start());
+    ASSERT_TRUE(test_server_handle_ =
+                    Test::embedded_test_server()->StartAndReturnHandle());
 
     // Need to set this here rather than in SetUpCommandLine because we need to
     // use the embedded test server to get the right URL and it's not started
@@ -361,21 +364,21 @@ class InteractiveGlicTestT : public T {
         expected_size, "CheckWidgetMinimumSize");
   }
 
-  auto ExpectUserCanResize(bool expect_resize) {
-    return Api::CheckResult(
-        [this]() {
-          return window_controller()
-              .GetGlicWidget()
-              ->widget_delegate()
-              ->CanResize();
-        },
-        expect_resize, "ExpectUserCanResize");
-  }
-
   auto CheckTabCount(int expected_count) {
     return Api::CheckResult(
         [this] { return browser()->tab_strip_model()->GetTabCount(); },
         expected_count, "CheckTabCount");
+  }
+
+  auto CheckOcclusionTracked(bool expect_is_tracked) {
+    return Api::CheckResult(
+        [this]() {
+          return base::Contains(PictureInPictureWindowManager::GetInstance()
+                                    ->GetOcclusionTracker()
+                                    ->GetPictureInPictureWidgetsForTesting(),
+                                window_controller().GetGlicWidget());
+        },
+        expect_is_tracked, "CheckOcclusionTracked");
   }
 
   auto Wait(base::TimeDelta timeout) {
@@ -389,6 +392,15 @@ class InteractiveGlicTestT : public T {
         Api::ObserveState(glic::test::internal::kDelayState,
                           std::move(observer)),
         Api::WaitForState(glic::test::internal::kDelayState, true));
+  }
+
+  auto WaitForCanResizeEnabled(bool enabled) {
+    return Api::Steps(
+        Api::ObserveState(internal::kGlicWindowControllerResizeState,
+                          std::ref(window_controller())),
+        Api::Log("WaitForCanResize: ", enabled ? "true" : "false"),
+        Api::WaitForState(internal::kGlicWindowControllerResizeState, enabled),
+        Api::StopObservingState(internal::kGlicWindowControllerResizeState));
   }
 
   content::RenderFrameHost* FindGlicGuestMainFrame() {
@@ -469,6 +481,7 @@ class InteractiveGlicTestT : public T {
 
   base::WeakPtr<Browser> active_browser_;
   glic::GlicTestEnvironment glic_test_environment_;
+  net::test_server::EmbeddedTestServerHandle test_server_handle_;
   // This is the default test file. Tests can override with a different path.
   std::string glic_page_path_ = "/glic/test_client/index.html";
   GURL guest_url_;

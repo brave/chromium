@@ -333,6 +333,7 @@ source_set("browser_sources") {
     "popup_menu.h",
     "prefetch_handle.h",
     "prefetch_metrics.h",
+    "prefetch_priority.h",
     "prefetch_request_status_listener.h",
     "prefetch_service_delegate.cc",
     "prefetch_service_delegate.h",
@@ -429,6 +430,8 @@ source_set("browser_sources") {
     "shared_worker_service.h",
     "site_instance.h",
     "site_instance_process_assignment.h",
+    "site_instance_process_creation_client.cc",
+    "site_instance_process_creation_client.h",
     "site_isolation_mode.h",
     "site_isolation_policy.cc",
     "site_isolation_policy.h",
@@ -485,7 +488,6 @@ source_set("browser_sources") {
     "video_capture_service.h",
     "video_picture_in_picture_window_controller.h",
     "visibility.h",
-    "vpn_service_proxy.h",
     "weak_document_ptr.cc",
     "weak_document_ptr.h",
     "web_authentication_delegate.cc",
@@ -546,13 +548,6 @@ source_set("browser_sources") {
         [ "//third_party/webrtc/modules/desktop_capture:pipewire_config" ]
   }
 
-  if (content_enable_legacy_ipc) {
-    sources += [
-      "browser_message_filter.cc",
-      "browser_message_filter.h",
-    ]
-  }
-
   public_deps = [
     "//base",
     "//build:chromecast_buildflags",
@@ -568,6 +563,7 @@ source_set("browser_sources") {
     "//media/mojo/mojom:remoting",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
+    "//ppapi/buildflags",
     "//sandbox/policy/mojom",
     "//services/audio/public/mojom",
     "//services/cert_verifier/public/mojom",
@@ -607,7 +603,6 @@ source_set("browser_sources") {
     "//components/viz/host",
     "//content/browser",  # Must not be public_deps!
     "//device/fido",
-    "//gpu",
     "//gpu/command_buffer/service:gles2",
     "//media",
     "//media/capture",
@@ -638,14 +633,6 @@ source_set("browser_sources") {
       "plugin_service.h",
       "plugin_service_filter.h",
     ]
-  }
-
-  if (enable_ppapi) {
-    sources += [
-      "browser_ppapi_host.h",
-      "pepper_vpn_provider_resource_host_proxy.h",
-    ]
-    deps += [ "//ppapi/c" ]
   }
 
   if (is_posix || is_fuchsia) {

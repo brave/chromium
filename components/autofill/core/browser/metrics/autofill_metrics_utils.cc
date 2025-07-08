@@ -17,6 +17,8 @@ namespace internal {
 constexpr DenseSet<FormType> kAddressFormTypes = {FormType::kAddressForm};
 constexpr DenseSet<FormType> kCreditCardFormTypes = {
     FormType::kCreditCardForm, FormType::kStandaloneCvcForm};
+constexpr DenseSet<FormType> kLoyaltyCardFormTypes = {
+    FormType::kLoyaltyCardForm};
 constexpr DenseSet<FieldType> kFieldTypesOfATypicalStoreLocatorForm = {
     ADDRESS_HOME_CITY, ADDRESS_HOME_STATE, ADDRESS_HOME_ZIP};
 
@@ -90,6 +92,9 @@ DenseSet<FormTypeNameForLogging> GetFormTypesForLogging(
       case FormType::kStandaloneCvcForm:
         form_types.insert(FormTypeNameForLogging::kStandaloneCvcForm);
         break;
+      case FormType::kLoyaltyCardForm:
+        form_types.insert(FormTypeNameForLogging::kLoyaltyCardForm);
+        break;
       case FormType::kPasswordForm:
       case FormType::kUnknownFormType:
         break;
@@ -106,12 +111,14 @@ AutofillProfileRecordTypeCategory GetCategoryOfProfile(
     case AutofillProfile::RecordType::kLocalOrSyncable:
       return AutofillProfileRecordTypeCategory::kLocalOrSyncable;
     case AutofillProfile::RecordType::kAccount:
-    case AutofillProfile::RecordType::kAccountHome:
-    case AutofillProfile::RecordType::kAccountWork:
       return profile.initial_creator_id() ==
                      AutofillProfile::kInitialCreatorOrModifierChrome
                  ? AutofillProfileRecordTypeCategory::kAccountChrome
                  : AutofillProfileRecordTypeCategory::kAccountNonChrome;
+    case AutofillProfile::RecordType::kAccountHome:
+      return AutofillProfileRecordTypeCategory::kAccountHome;
+    case AutofillProfile::RecordType::kAccountWork:
+      return AutofillProfileRecordTypeCategory::kAccountWork;
   }
 }
 
@@ -124,6 +131,10 @@ const char* GetProfileCategorySuffix(
       return "AccountChrome";
     case AutofillProfileRecordTypeCategory::kAccountNonChrome:
       return "AccountNonChrome";
+    case AutofillProfileRecordTypeCategory::kAccountHome:
+      return "AccountHome";
+    case AutofillProfileRecordTypeCategory::kAccountWork:
+      return "AccountWork";
   }
 }
 
@@ -181,6 +192,12 @@ DenseSet<FormTypeNameForLogging> GetAddressFormTypesForLogging(
   return internal::GetFormTypesForLogging(form, internal::kAddressFormTypes);
 }
 
+DenseSet<FormTypeNameForLogging> GetLoyaltyFormTypesForLogging(
+    const FormStructure& form) {
+  return internal::GetFormTypesForLogging(form,
+                                          internal::kLoyaltyCardFormTypes);
+}
+
 DenseSet<FormTypeNameForLogging> GetCreditCardFormTypesForLogging(
     const FormStructure& form) {
   return internal::GetFormTypesForLogging(form, internal::kCreditCardFormTypes);
@@ -203,6 +220,7 @@ bool ShouldLogAutofillSuggestionShown(
     case AutofillSuggestionTriggerSource::kPasswordManagerProcessedFocusedField:
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
       return true;
     case AutofillSuggestionTriggerSource::kTextFieldValueChanged:
     case AutofillSuggestionTriggerSource::kComposeDelayedProactiveNudge:

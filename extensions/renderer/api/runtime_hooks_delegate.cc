@@ -48,7 +48,7 @@ void GetExtensionId(v8::Local<v8::Name> property_name,
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context =
-      info.Holder()->GetCreationContextChecked(isolate);
+      info.HolderV2()->GetCreationContextChecked(isolate);
 
   ScriptContext* script_context = GetScriptContextFromV8Context(context);
   // This could potentially be invoked after the script context is removed
@@ -66,7 +66,7 @@ void GetDynamicId(v8::Local<v8::Name> property_name,
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context =
-      info.Holder()->GetCreationContextChecked(isolate);
+      info.HolderV2()->GetCreationContextChecked(isolate);
 
   ScriptContext* script_context = GetScriptContextFromV8Context(context);
   // This could potentially be invoked after the script context is removed
@@ -155,7 +155,7 @@ v8::LocalVector<v8::Value> MassageRequestUpdateCheckResults(
   DCHECK(success);
 
   // Version is wrapped as a parameter on a details object.
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Object> details = v8::Object::New(isolate);
   auto key = gin::StringToV8(isolate, "version");
   details->CreateDataProperty(context, key, version).Check();
@@ -254,7 +254,7 @@ RequestResult RuntimeHooksDelegate::HandleRequest(
   }
 
   if (should_massage) {
-    messaging_util::MassageSendMessageArguments(context->GetIsolate(),
+    messaging_util::MassageSendMessageArguments(v8::Isolate::GetCurrent(),
                                                 allow_options, arguments);
   }
 

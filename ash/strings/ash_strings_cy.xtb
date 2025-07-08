@@ -606,7 +606,6 @@ Fel arall bydd y pad cyffwrdd integredig yn cael ei ail-alluogi mewn <ph name="T
 <translation id="3033545621352269033">Ymlaen</translation>
 <translation id="3033912566804961911">Cyfuno gyda <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Agor Ffeiliau</translation>
-<translation id="3038571455154067151">I fewngofnodi, rhowch eich cod mynediad rhiant Family Link</translation>
 <translation id="3039939407102840004">Mae batri'r pwyntil ar <ph name="PERCENTAGE" /> y cant.</translation>
 <translation id="304097922505898963">Agor yr ap Llwybrau Byr Bysellau</translation>
 <translation id="304417730895741346">Mae eich apiau sydd ar agor ac sydd wedi'u pinio yn ymddangos ar y silff. I binio ap i'r silff, de-gliciwch ap nau tapiwch eich pad cyffwrdd gyda dau fys.</translation>
@@ -1014,6 +1013,7 @@ Mae rhai nodweddion wedi'u cyfyngu i gynyddu oes y batri.</translation>
 <translation id="4305817255990598646">Newid</translation>
 <translation id="4307713728991152670">Gosod gweld lluniau, cyfryngau ac apiau diweddar eich ffôn</translation>
 <translation id="4312840429157639164">Mae'r camera wedi'i snapio i'r gornel dde uchaf. Gwrthdaro ag arwyneb y system.</translation>
+<translation id="4312935606722154789">Grwpio neu ddadgrwpio dwy ffenestr ochr-yn-ochr</translation>
 <translation id="4316910396681052118">POB AP</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Cuddio holl awgrymiadau porwr Chrome</translation>
@@ -1582,7 +1582,6 @@ Dim dyfeisiau yn gysylltiedig.</translation>
 <translation id="6095425951508823973">Ychwanegu cysylltiad â <ph name="PROVIDER" /></translation>
 <translation id="6099678161144790572">Golygwyd yn y mis diwethaf</translation>
 <translation id="6103838137565245112">system</translation>
-<translation id="610395411842312282">Grwpio dwy ffenestr ochr-yn-ochr</translation>
 <translation id="6108952804512516814">Creu gydag AI</translation>
 <translation id="6114505516289286752">Wedi lawrlwytho ffeiliau lleferydd <ph name="LANGUAGE" /></translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

@@ -29,13 +29,14 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <optional>
 
 #include "base/check.h"
 #include "base/memory/scoped_refptr.h"
 #include "cc/paint/paint_record.h"
 #include "third_party/blink/public/common/privacy_budget/identifiable_token.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_element_hit_test_region.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
 #include "third_party/blink/renderer/core/canvas_interventions/canvas_interventions_enums.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_performance_monitor.h"
@@ -78,6 +79,7 @@ class PaintCanvas;
 
 namespace blink {
 
+class Canvas2DDrawElementOption;
 class CanvasImageSource;
 class ComputedStyle;
 class Element;
@@ -157,14 +159,31 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   bool ShouldDisableAccelerationBecauseOfReadback() const override;
 
   // CanvasRenderingContext implementation
+  bool IsCanvas2DResourceValid() override;
   int AllocatedBufferCountPerPixel() override {
-    return (Host() && Host()->ResourceProvider()) ? 1 : 0;
+    if (!Host()) {
+      return 0;
+    }
+
+    int buffer_count = 0;
+    auto* provider = canvas()->GetResourceProviderForCanvas2D();
+    if (provider) {
+      buffer_count = 1;
+      if (provider->IsAccelerated()) {
+        // The number of internal GPU buffers vary between one (stable
+        // non-displayed state) and three (triple-buffered animations).
+        // Adding 2 is a pessimistic but relevant estimate.
+        // Note: These buffers might be allocated in GPU memory.
+        buffer_count += 2;
+      }
+    }
+    return buffer_count;
   }
 
   int Width() const final;
   int Height() const final;
 
-  bool CanCreateCanvas2dResourceProvider() const final;
+  bool CanCreateCanvas2dResourceProvider() final;
 
   RespectImageOrientationEnum RespectImageOrientation() const final;
 
@@ -187,12 +206,14 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void drawElement(Element* element,
                    double x,
                    double y,
+                   Canvas2DDrawElementOption* options,
                    ExceptionState& exception_state);
   void drawElement(Element* element,
                    double x,
                    double y,
                    double dwidth,
                    double dheight,
+                   Canvas2DDrawElementOption* options,
                    ExceptionState& exception_state);
   void setHitTestRegions(VectorOf<CanvasElementHitTestRegion> hit_test_regions,
                          ExceptionState& exception_state);
@@ -202,7 +223,8 @@ class MODULES_EXPORT CanvasRenderingContext2D final
 
   bool IsPaintable() const final;
 
-  void WillDrawImage(CanvasImageSource*) const final;
+  void WillDrawImage(CanvasImageSource*,
+                     bool image_is_texture_backed) const final;
 
   std::optional<cc::PaintRecord> FlushCanvas(FlushReason) override;
 
@@ -261,11 +283,14 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   FRIEND_TEST_ALL_PREFIXES(CanvasRenderingContext2DTestAccelerated,
                            PrepareMailboxWhenContextIsLostWithFailedRestore);
 
+  void EnableAccelerationIfPossible() override;
+
   void DrawElementInternal(Element* element,
                            double x,
                            double y,
                            std::optional<double> dwidth,
                            std::optional<double> dheight,
+                           Canvas2DDrawElementOption* options,
                            ExceptionState& exception_state);
 
   void PruneLocalFontCache(size_t target_size);
@@ -289,11 +314,14 @@ class MODULES_EXPORT CanvasRenderingContext2D final
   void Stop() final;
 
   cc::Layer* CcLayer() const override;
-  bool IsCanvas2DBufferValid() const override;
+  bool IsCanvas2DBufferValid() override;
 
   void ColorSchemeMayHaveChanged() override;
 
+  CanvasResourceProvider* GetResourceProviderForCanvas2D() const override;
   CanvasResourceProvider* GetOrCreateCanvas2DResourceProvider() override;
+  std::unique_ptr<CanvasResourceProvider> ReplaceResourceProviderForCanvas2D(
+      std::unique_ptr<CanvasResourceProvider>) override;
 
   FilterOperations filter_operations_;
   HashMap<String, FontDescription> fonts_resolved_using_current_style_;

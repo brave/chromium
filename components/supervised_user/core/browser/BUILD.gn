@@ -35,7 +35,7 @@ source_set("test_support") {
     "//components/signin/public/base:test_support",
     "//components/signin/public/identity_manager",
     "//components/signin/public/identity_manager:test_support",
-    "//components/supervised_user/core/common:common",
+    "//components/supervised_user/core/common",
     "//components/supervised_user/test_support",
     "//components/sync:test_support",
     "//components/sync_preferences:test_support",
@@ -44,6 +44,9 @@ source_set("test_support") {
     "//testing/gmock",
     "//testing/gtest",
   ]
+  if (is_android) {
+    deps += [ "//components/supervised_user/core/browser/android:content_filters_observer_bridge" ]
+  }
 }
 
 static_library("mocked") {
@@ -93,8 +96,6 @@ static_library("browser") {
     "child_account_service.h",
     "family_link_user_capabilities.cc",
     "family_link_user_capabilities.h",
-    "family_link_user_log_record.cc",
-    "family_link_user_log_record.h",
     "kids_chrome_management_url_checker_client.cc",
     "kids_chrome_management_url_checker_client.h",
     "list_family_members_service.cc",
@@ -110,6 +111,8 @@ static_library("browser") {
     "supervised_user_error_page.h",
     "supervised_user_interstitial.cc",
     "supervised_user_interstitial.h",
+    "supervised_user_log_record.cc",
+    "supervised_user_log_record.h",
     "supervised_user_metrics_service.cc",
     "supervised_user_metrics_service.h",
     "supervised_user_pref_store.cc",
@@ -169,6 +172,13 @@ static_library("browser") {
     "//ui/base",
     "//url",
   ]
+
+  if (is_android) {
+    deps += [
+      "//components/supervised_user/android:jni_headers",
+      "//components/supervised_user/core/browser/android:content_filters_observer_bridge",
+    ]
+  }
 }
 
 if (is_android) {
@@ -183,7 +193,7 @@ source_set("unit_tests") {
     "api_access_token_fetcher_unittest.cc",
     "child_account_service_unittest.cc",
     "family_link_user_capabilities_unittest.cc",
-    "family_link_user_log_record_unittest.cc",
+    "supervised_user_log_record_unittest.cc",
     "fetcher_config_unittest.cc",
     "kids_chrome_management_url_checker_client_unittest.cc",
     "list_family_members_service_unittest.cc",
@@ -203,7 +213,6 @@ source_set("unit_tests") {
     "supervised_user_url_filter_unittest.cc",
     "supervised_user_utils_unittest.cc",
   ]
-
   deps = [
     ":browser",
     ":fetcher",

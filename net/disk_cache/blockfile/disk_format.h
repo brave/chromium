@@ -92,7 +92,10 @@ struct NET_EXPORT_PRIVATE IndexHeader {
   int32_t experiment;        // Id of an ongoing test.
   uint64_t create_time;      // Creation time for this set of files.
   int64_t num_bytes;         // Total size of the stored data, in version 3.0
-  int32_t pad[50];
+
+  // Set if a problem is detected; discards cache on next open.
+  int32_t corruption_detected = 0;
+  int32_t pad[49];
   LruData     lru;           // Eviction control data.
 };
 
@@ -146,13 +149,13 @@ enum EntryFlags {
 #pragma pack(push, 4)
 // Rankings information for a given entry.
 struct RankingsNode {
-  uint64_t last_used;           // LRU info.
-  uint64_t no_longer_used_last_modified;
-  CacheAddr   next;             // LRU list.
-  CacheAddr   prev;             // LRU list.
-  CacheAddr   contents;         // Address of the EntryStore.
-  int32_t dirty;                // The entry is being modifyied.
-  uint32_t self_hash;           // RankingsNode's hash.
+  uint64_t last_used = 0;  // LRU info.
+  uint64_t no_longer_used_last_modified = 0;
+  CacheAddr next = 0;      // LRU list.
+  CacheAddr prev = 0;      // LRU list.
+  CacheAddr contents = 0;  // Address of the EntryStore.
+  int32_t dirty = 0;       // The entry is being modifyied.
+  uint32_t self_hash = 0;  // RankingsNode's hash.
 };
 #pragma pack(pop)
 

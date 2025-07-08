@@ -29,17 +29,26 @@ using ::blink::WebLocalFrame;
 using ::blink::WebMouseEvent;
 using ::blink::mojom::EventType;
 
-DragAndReleaseTool::DragAndReleaseTool(mojom::DragAndReleaseActionPtr action,
-                                       content::RenderFrame& frame)
-    : frame_(frame), action_(std::move(action)) {}
+DragAndReleaseTool::DragAndReleaseTool(
+    content::RenderFrame& frame,
+    Journal::TaskId task_id,
+    Journal& journal,
+    mojom::DragAndReleaseActionPtr action,
+    mojom::ToolTargetPtr target,
+    mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 DragAndReleaseTool::~DragAndReleaseTool() = default;
 
-void DragAndReleaseTool::Execute(ToolFinishedCallback callback) {
+mojom::ActionResultPtr DragAndReleaseTool::Execute() {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    std::move(callback).Run(std::move(validated_result.error()));
-    return;
+    return std::move(validated_result.error());
   }
 
   gfx::PointF from_point = validated_result->from;
@@ -50,57 +59,48 @@ void DragAndReleaseTool::Execute(ToolFinishedCallback callback) {
   // Move and press down the mouse on the from_point.
   if (!InjectMouseEvent(EventType::kMouseMove, from_point,
                         WebMouseEvent::Button::kNoButton)) {
-    std::move(callback).Run(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseFromMoveSuppressed));
-    return;
+    return MakeResult(
+        mojom::ActionResultCode::kDragAndReleaseFromMoveSuppressed);
   }
 
   if (!InjectMouseEvent(EventType::kMouseDown, from_point,
                         WebMouseEvent::Button::kLeft)) {
-    std::move(callback).Run(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseDownSuppressed));
-    return;
+    return MakeResult(mojom::ActionResultCode::kDragAndReleaseDownSuppressed);
   }
 
   // Move and release the mouse on the to_point.
   if (!InjectMouseEvent(EventType::kMouseMove, to_point,
                         WebMouseEvent::Button::kLeft)) {
-    std::move(callback).Run(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseToMoveSuppressed));
-    return;
+    return MakeResult(mojom::ActionResultCode::kDragAndReleaseToMoveSuppressed);
   }
 
   if (!InjectMouseEvent(EventType::kMouseUp, to_point,
                         WebMouseEvent::Button::kLeft)) {
-    std::move(callback).Run(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseUpSuppressed));
-    return;
+    return MakeResult(mojom::ActionResultCode::kDragAndReleaseUpSuppressed);
   }
 
-  std::move(callback).Run(MakeOkResult());
+  return MakeOkResult();
 }
 
 std::string DragAndReleaseTool::DebugString() const {
   return absl::StrFormat("DragAndReleaseTool[from-%s -> to-%s]",
-                         ToDebugString(action_->from_target),
+                         ToDebugString(target_),
                          ToDebugString(action_->to_target));
 }
 
 DragAndReleaseTool::ValidatedResult DragAndReleaseTool::Validate() const {
-  if (!frame_->GetWebFrame() || !frame_->GetWebFrame()->FrameWidget()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kFrameWentAway));
-  }
-  mojom::ToolTargetPtr& from_target = action_->from_target;
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
+
   mojom::ToolTargetPtr& to_target = action_->to_target;
 
-  if (from_target->is_dom_node_id() || to_target->is_dom_node_id()) {
+  if (target_->is_dom_node_id() || to_target->is_dom_node_id()) {
     return base::unexpected(
         MakeResult(mojom::ActionResultCode::kArgumentsInvalid,
                    "DomNodeId target not supported"));
   }
 
-  gfx::PointF from_point = gfx::PointF(from_target->get_coordinate());
+  gfx::PointF from_point = gfx::PointF(target_->get_coordinate());
   gfx::PointF to_point = gfx::PointF(to_target->get_coordinate());
 
   if (!IsPointWithinViewport(from_point, frame_.get())) {

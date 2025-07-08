@@ -1160,6 +1160,12 @@ def _set_rust_flags(module: Module.Target, rust_flags: List[str],
     module.edition = list(rust_flags_dict["--edition"])[0]
 
   for cfg in rust_flags_dict.get("--cfg", set()):
+    # This cfg is not actually used in code; Chromium only uses it to force
+    # rebuilds on rustc rolls. It doesn't hurt, per se, but it does create
+    # annoying diff noise on Android.bp files, so we drop it for
+    # aesthetic/convenience reasons.
+    if cfg.startswith("cr_rustc_revision="):
+      continue
     feature_regex = re.match(_FEATURE_REGEX, cfg)
     if feature_regex:
       module.features.add(feature_regex.group(1))
@@ -1373,7 +1379,6 @@ def create_proto_modules(blueprint, gn, target, is_test_target):
   source_module.genrule_srcs.add(':' + source_module.name)
   source_module.genrule_headers.add(header_module.name)
 
-  source_module.genrule_shared_libs.add('libprotobuf-cpp-lite')
   cmd += [f'--cpp_out=lite=true:{absolute_cpp_out_dir}']
 
   cmd += absolute_sources
@@ -2602,7 +2607,8 @@ def create_concatenated_generated_headers_module(bp_module_name,
   blueprint.add_module(module)
   return module
 
-def set_module_flags(module, cflags, defines, ldflags, libs):
+
+def configure_cc_module(module, cflags, defines, ldflags, libs):
   module.cflags.update(_get_cflags(cflags, defines))
   module.ldflags.update({
       flag
@@ -2610,6 +2616,14 @@ def set_module_flags(module, cflags, defines, ldflags, libs):
       if flag in ldflag_allowlist or flag.startswith("-Wl,-wrap,")
   })
   _set_linker_script(module, libs)
+  for lib in libs:
+    # Generally library names should be mangled as 'libXXX', unless they
+    # are HAL libraries (e.g., android.hardware.health@2.0) or AIDL c++ / NDK
+    # libraries (e.g. "android.hardware.power.stats-V1-cpp")
+    android_lib = lib if '@' in lib or "-cpp" in lib or "-ndk" in lib \
+      else 'lib' + lib
+    if lib in shared_library_allowlist:
+      module.shared_libs.add(android_lib)
   # TODO: implement proper cflag parsing.
   for flag in cflags:
     if '-std=' in flag:
@@ -2806,14 +2820,14 @@ def create_modules_from_target(blueprint, gn, gn_target_name, parent_gn_type,
     module.rtti = target.rtti
 
     if target.type in gn_utils.LINKER_UNIT_TYPES:
-      set_module_flags(module, target.cflags, target.defines, target.ldflags,
-                       target.libs)
+      configure_cc_module(module, target.cflags, target.defines, target.ldflags,
+                          target.libs)
       set_module_include_dirs(module, target.cflags, target.include_dirs)
       # TODO: set_module_xxx is confusing, apply similar function to module and target in better way.
       for arch_name, arch in target.get_archs().items():
         # TODO(aymanm): Make libs arch-specific.
-        set_module_flags(module.target[arch_name], arch.cflags, arch.defines,
-                         arch.ldflags, [])
+        configure_cc_module(module.target[arch_name], arch.cflags, arch.defines,
+                            arch.ldflags, arch.libs)
         # -Xclang -target-feature -Xclang +mte are used to enable MTE (Memory Tagging Extensions).
         # Flags which does not start with '-' could not be in the cflags so enabling MTE by
         # -march and -mcpu Feature Modifiers. MTE is only available on arm64. This is needed for
@@ -2872,14 +2886,6 @@ def create_modules_from_target(blueprint, gn, gn_target_name, parent_gn_type,
       # Don't try to inject library/source dependencies into genrules or
       # filegroups because they are not compiled in the traditional sense.
       module.defaults = [cc_defaults_module]
-      for lib in target.libs:
-        # Generally library names should be mangled as 'libXXX', unless they
-        # are HAL libraries (e.g., android.hardware.health@2.0) or AIDL c++ / NDK
-        # libraries (e.g. "android.hardware.power.stats-V1-cpp")
-        android_lib = lib if '@' in lib or "-cpp" in lib or "-ndk" in lib \
-          else 'lib' + lib
-        if lib in shared_library_allowlist:
-          module.add_android_shared_lib(android_lib)
 
     if module.type == 'cc_library_shared':
       output_name = target.output_name
@@ -3196,6 +3202,11 @@ def create_modules_from_target(blueprint, gn, gn_target_name, parent_gn_type,
       concatenated_hdrs_module.host_supported = (arch_name == 'host'
                                                  or (arch_name == 'common'
                                                      and module.host_supported))
+      # Disable cross host support for concatenated headers. By default all cc_genrule
+      # modules disables this. However, this module is created manually which follows
+      # a different codepath.
+      if concatenated_hdrs_module.host_supported:
+        concatenated_hdrs_module.host_cross_supported = False
       module.variant(arch_name).generated_headers.add(
           concatenated_hdrs_module.name)
 

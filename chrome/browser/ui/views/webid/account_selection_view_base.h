@@ -160,7 +160,8 @@ class AccountSelectionViewBase {
   AccountSelectionViewBase(
       FedCmAccountSelectionView* owner,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      const content::RelyingPartyData& rp_data);
+      const content::RelyingPartyData& rp_data,
+      float device_scale_factor);
   virtual ~AccountSelectionViewBase();
 
   // Updates the FedCM dialog to show the "account picker" sheet.
@@ -211,19 +212,20 @@ class AccountSelectionViewBase {
   // the account on the left, and information about the account on the right.
   // |clickable_position| contains an int if and only if the account is a
   // HoverButton, and in that case the number is the 0-based position of that
-  // account in the overall dialog.
+  // account in the overall dialog. |used_string| is set if this is a returning
+  // account in a multi IDP dialog.
   std::unique_ptr<views::View> CreateAccountRow(
       const IdentityRequestAccountPtr& account,
       std::optional<int> clickable_position,
       bool should_include_idp,
       bool is_modal_dialog = false,
       int additional_vertical_padding = 0,
-      std::optional<std::u16string> last_used_string = std::nullopt);
+      std::optional<std::u16string> used_string = std::nullopt);
 
   // Returns a StyledLabel containing a disclosure label. The label links to
   // privacy policy and terms of service URLs, if available.
   std::unique_ptr<views::StyledLabel> CreateDisclosureLabel(
-      const content::IdentityProviderData& idp_data);
+      const IdentityRequestAccountPtr& account);
 
   // Gets the summary and description string of the error.
   std::pair<std::u16string, std::u16string> GetErrorDialogText(
@@ -246,6 +248,9 @@ class AccountSelectionViewBase {
 
   // Relying party data to customize the dialog.
   content::RelyingPartyData rp_data_;
+
+  // The device's scale factor.
+  float device_scale_factor_;
 
   // Used to ensure that callbacks are not run if the AccountSelectionViewBase
   // is destroyed.

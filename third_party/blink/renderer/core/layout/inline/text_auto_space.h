@@ -18,6 +18,7 @@
 namespace blink {
 
 struct InlineItemsData;
+class InlineNode;
 
 // A wrapper of TextAutoSpace for the inline layout.
 class CORE_EXPORT TextAutoSpace {
@@ -30,7 +31,8 @@ class CORE_EXPORT TextAutoSpace {
     virtual void DidApply(base::span<const OffsetWithSpacing>) = 0;
   };
 
-  explicit TextAutoSpace(const InlineItemsData& data);
+  explicit TextAutoSpace(const ComputedStyle& block_style,
+                         const InlineItemsData& data);
 
   // True if this may apply auto-spacing. If this is false, it's safe to skip
   // calling `Apply()`.
@@ -40,10 +42,10 @@ class CORE_EXPORT TextAutoSpace {
   // https://drafts.csswg.org/css-text-4/#propdef-text-autospace
   //
   // The `data` must be the same instance as the one given to the constructor.
-  void Apply(InlineItemsData& data);
-  void ApplyIfNeeded(InlineItemsData& data) {
+  void Apply(const InlineNode& node, InlineItemsData& data);
+  void ApplyIfNeeded(const InlineNode& node, InlineItemsData& data) {
     if (MayApply()) [[unlikely]] {
-      Apply(data);
+      Apply(node, data);
     }
   }
 
@@ -53,16 +55,18 @@ class CORE_EXPORT TextAutoSpace {
 
  private:
   bool may_apply_ = false;
-  InlineItemSegments::RunSegmenterRanges ranges_;
   Callback* callback_for_testing_ = nullptr;
 };
 
-inline TextAutoSpace::TextAutoSpace(const InlineItemsData& data) {
+inline TextAutoSpace::TextAutoSpace(const ComputedStyle& block_style,
+                                    const InlineItemsData& data) {
   if (!RuntimeEnabledFeatures::CSSTextAutoSpaceEnabled()) {
     return;
   }
 
   if (data.text_content.Is8Bit() ||
+      // Skip checking the styles of `InlineItem`s for the performance.
+      block_style.TextAutospace() == ETextAutospace::kNoAutospace ||
       data.text_content.IsAllSpecialCharacters<[](UChar ch) {
         return !Character::MayNeedEastAsianSpacing(ch);
       }>()) {

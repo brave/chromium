@@ -5,14 +5,14 @@
 module tabs_api.mojom;
 
 import "chrome/browser/ui/webui/tabs/tabs.mojom";
+import "components/tab_groups/public/mojom/tab_group_types.mojom";
 import "mojo/public/mojom/base/empty.mojom";
 import "mojo/public/mojom/base/error.mojom";
 import "url/mojom/url.mojom";
 
-// References a tab object. The id can refer to different types of underlying
-// resource. The |type| field can be used to differentiate between the type
-// of underlying resources.
-struct TabId {
+// References a node in the tab tree. (id, type) uniquely identifies a node in
+// the tree.
+struct NodeId {
   // The type of object referenced by the id.
   enum Type {
     // An unknown type. This will never be returned by the service and usually
@@ -34,7 +34,7 @@ struct TabId {
 };
 
 struct Tab {
-  TabId id;
+  NodeId id;
   string title;
   url.mojom.Url url;
 
@@ -50,6 +50,13 @@ struct Tab {
 // identifier. It is purely used in this API to determine the position within
 // the TabstripModel.
 struct Position {
+  // The parent of the tab. This is only set if the tab is a child of a
+  // collection.
+  // TODO(crbug.com/412935315): make this a required field. All nodes should
+  // have a parent, except for the TabStripCollection which is the root. The
+  // root should never need to be moved, doing so should trigger a CHECK error.
+  NodeId? parent_id;
+  // The index of the tab within the parent.
   uint32 index;
 };
 
@@ -79,8 +86,18 @@ struct TabCollection {
 
   // Unique id for the specific TabCollection. The id type would be a
   // kCollection.
-  TabId id;
+  NodeId id;
   CollectionType collection_type;
+};
+
+// TODO(crbug.com/425652802): This should be merged with struct
+// TabGroupVisualData in
+// //chrome/browser/ui/webui/tab_strip/tab_strip.mojom and moved to
+// //components/tab_groups/public/mojom/tab_group_types.mojom
+struct TabGroupVisualData {
+  string title;
+  tab_groups.mojom.Color color;
+  bool is_collapsed;
 };
 
 // The TabCollection tree has child nodes that can be a Tab or a
@@ -118,7 +135,7 @@ interface TabStripService {
 
   // Get a single tab.
   [Sync]
-  GetTab(TabId id) => result<Tab, mojo_base.mojom.Error>;
+  GetTab(NodeId id) => result<Tab, mojo_base.mojom.Error>;
 
   // Creates a new tab.
   // Position specifies the location of the Tab after creation. If position is
@@ -135,13 +152,18 @@ interface TabStripService {
   // invocation will be rejected with a |Code.kNotFound| error.
   // If the method call succeeds, all of the tabs will have been closed.
   [Sync]
-  CloseTabs(array<TabId> id)
+  CloseTabs(array<NodeId> id)
       => result<mojo_base.mojom.Empty, mojo_base.mojom.Error>;
 
   // Activates a tab. The only accepted id type for this method are |kContent|
   // ids.
   [Sync]
-  ActivateTab(TabId id)
+  ActivateTab(NodeId id)
+      => result<mojo_base.mojom.Empty, mojo_base.mojom.Error>;
+
+  // Moves a tab identified by id to a specified position.
+  [Sync]
+  MoveTab(NodeId id, Position position)
       => result<mojo_base.mojom.Empty, mojo_base.mojom.Error>;
 };
 
@@ -160,13 +182,38 @@ struct OnTabsCreatedEvent {
 
 struct OnTabsClosedEvent {
   // Tab ids of the closed tabs.
-  array<TabId> tabs;
+  array<NodeId> tabs;
 };
 
 struct OnTabDataChangedEvent {
   // Tab data of the updated tab. For now just apply a broad update rather than
   // granular tab data.
   Tab tab;
+};
+
+struct OnTabGroupCreatedEvent {
+  // The ID of the newly created group.
+  NodeId group_id;
+  // The visual data of the newly created group.
+  TabGroupVisualData visual_data;
+  // Position of the group in the tab strip.
+  Position position;
+};
+
+struct OnTabGroupVisualsChangedEvent {
+  // The ID of the group whose visuals have changed.
+  NodeId group_id;
+  // The new visual data of the group.
+  TabGroupVisualData visual_data;
+};
+
+struct OnTabMovedEvent {
+  // The id of the tab that moved.
+  NodeId id;
+  // The original position.
+  Position from;
+  // The new position.
+  Position to;
 };
 
 // TODO (crbug.com/412955607)
@@ -180,6 +227,15 @@ interface TabsObserver {
   // When tabs have been closed on the tab strip.
   OnTabsClosed(OnTabsClosedEvent event);
 
+  // When a tab has been moved.
+  OnTabMoved(OnTabMovedEvent event);
+
   // When tab data has been updated.
   OnTabDataChanged(OnTabDataChangedEvent tab);
+
+  // When a new tab group has been created.
+  OnTabGroupCreated(OnTabGroupCreatedEvent event);
+
+  // When a tab group's visuals have been changed.
+  OnTabGroupVisualsChanged(OnTabGroupVisualsChangedEvent event);
 };

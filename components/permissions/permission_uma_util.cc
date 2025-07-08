@@ -305,7 +305,7 @@ void RecordPermissionActionUkm(
     std::optional<std::vector<ElementAnchoredBubbleVariant>> variants,
     std::optional<bool> has_three_consecutive_denies,
     std::optional<bool> has_previously_revoked_permission,
-    std::optional<PermissionUmaUtil::PredictionGrantLikelihood>
+    std::optional<PermissionUiSelector::PredictionGrantLikelihood>
         predicted_grant_likelihood,
     std::optional<PermissionRequestRelevance> permission_request_relevance,
     PredictionRequestFeatures::ActionCounts
@@ -837,7 +837,7 @@ void PermissionUmaUtil::PermissionRevoked(
                          /*web_contents=*/nullptr, browser_context,
                          /*render_frame_host*/ nullptr,
                          /*predicted_grant_likelihood=*/std::nullopt,
-                         /*prediction_request_relevance=*/std::nullopt,
+                         /*permission_request_relevance=*/std::nullopt,
                          /*prediction_decision_held_back=*/std::nullopt);
 }
 
@@ -963,7 +963,8 @@ void PermissionUmaUtil::PermissionPromptResolved(
     PermissionPromptDisposition ui_disposition,
     std::optional<PermissionPromptDispositionReason> ui_reason,
     std::optional<std::vector<ElementAnchoredBubbleVariant>> variants,
-    std::optional<PredictionGrantLikelihood> predicted_grant_likelihood,
+    std::optional<PermissionUiSelector::PredictionGrantLikelihood>
+        predicted_grant_likelihood,
     std::optional<PermissionRequestRelevance> permission_request_relevance,
     std::optional<bool> prediction_decision_held_back,
     std::optional<permissions::PermissionIgnoredReason> ignored_reason,
@@ -1251,7 +1252,8 @@ void PermissionUmaUtil::RecordPermissionAction(
     content::WebContents* web_contents,
     content::BrowserContext* browser_context,
     content::RenderFrameHost* render_frame_host,
-    std::optional<PredictionGrantLikelihood> predicted_grant_likelihood,
+    std::optional<PermissionUiSelector::PredictionGrantLikelihood>
+        predicted_grant_likelihood,
     std::optional<PermissionRequestRelevance> permission_request_relevance,
     std::optional<bool> prediction_decision_held_back) {
   DCHECK(PermissionUtil::IsPermission(permission));
@@ -1466,13 +1468,6 @@ void PermissionUmaUtil::RecordPermissionPredictionServiceHoldback(
            GetPermissionRequestString(
                PermissionUtil::GetUmaValueForRequestType(request_type))}),
       is_heldback);
-}
-
-// static
-void PermissionUmaUtil::RecordPageInfoDialogAccessType(
-    PageInfoDialogAccessType access_type) {
-  base::UmaHistogramEnumeration(
-      "Permissions.ConfirmationChip.PageInfoDialogAccessType", access_type);
 }
 
 // static
@@ -2010,9 +2005,19 @@ void PermissionUmaUtil::RecordPermissionIndicatorElapsedTimeSinceLastUsage(
 
 // static
 void PermissionUmaUtil::RecordPermissionRequestRelevance(
-    PermissionRequestRelevance permission_request_relevance) {
-  base::UmaHistogramEnumeration("Permissions.AIv1.PermissionRequestRelevance",
-                                permission_request_relevance);
+    permissions::RequestType permission_request_type,
+    PermissionRequestRelevance permission_request_relevance,
+    std::string model_version) {
+  std::string permission_request_type_string =
+      permission_request_type == permissions::RequestType::kNotifications
+          ? "Notifications"
+          : "Geolocation";
+
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Permissions.", model_version, ".",
+                    permission_request_type_string,
+                    ".PermissionRequestRelevance"}),
+      permission_request_relevance);
 }
 
 // static

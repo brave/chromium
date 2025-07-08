@@ -15,7 +15,6 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
-import android.util.Pair;
 
 import androidx.activity.ComponentDialog;
 import androidx.test.espresso.intent.Intents;
@@ -53,6 +52,7 @@ import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuSwitches;
 import org.chromium.content_public.common.ContentFeatures;
+import org.chromium.ui.listmenu.MenuModelBridge;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.mojom.MenuSourceType;
 import org.chromium.ui.widget.AnchoredPopupWindow;
@@ -328,9 +328,9 @@ public class ContextMenuTest extends AwParameterizedTest {
                         params,
                         /* usePopupWindow= */ false);
 
-        List<Pair<Integer, ModelList>> contextMenuState = populator.buildContextMenu();
+        List<ModelList> contextMenuState = populator.buildContextMenu();
 
-        ModelList items = contextMenuState.get(0).second;
+        ModelList items = contextMenuState.get(0);
         Integer[] actualItems = new Integer[items.size()];
 
         for (int i = 0; i < items.size(); i++) {
@@ -457,6 +457,7 @@ public class ContextMenuTest extends AwParameterizedTest {
         final ContextMenuParams params =
                 new ContextMenuParams(
                         /* nativePtr= */ 0,
+                        new MenuModelBridge(),
                         ContextMenuDataMediaType.NONE,
                         /* pageUrl= */ GURL.emptyGURL(),
                         /* linkUrl= */ GURL.emptyGURL(),
@@ -470,8 +471,8 @@ public class ContextMenuTest extends AwParameterizedTest {
                         /* triggeringTouchYDp= */ 0,
                         /* sourceType= */ 0,
                         /* openedFromHighlight= */ false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
 
         AwContextMenuHelper helper = AwContextMenuHelper.create(mAwContents.getWebContents());
@@ -487,6 +488,7 @@ public class ContextMenuTest extends AwParameterizedTest {
 
         return new ContextMenuParams(
                 0,
+                new MenuModelBridge(),
                 mediaType,
                 new GURL("http://www.example.com/page_url"),
                 linkUrl ? new GURL("http://www.example.com/other_example") : GURL.emptyGURL(),
@@ -500,8 +502,8 @@ public class ContextMenuTest extends AwParameterizedTest {
                 0,
                 MenuSourceType.TOUCH,
                 false,
-                /* openedFromInterestTarget= */ false,
-                /* interestTargetNodeID= */ 0,
+                /* openedFromInterestFor= */ false,
+                /* interestForNodeID= */ 0,
                 /* additionalNavigationParams= */ null);
     }
 }

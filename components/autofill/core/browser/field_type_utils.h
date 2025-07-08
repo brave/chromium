@@ -17,11 +17,6 @@ namespace autofill {
 // determined.
 bool FieldHasMeaningfulPossibleFieldTypes(const AutofillField& field);
 
-// Returns the number of possible field types (type votes) of a `field` that are
-// in a specific `group`.
-size_t NumberOfPossibleFieldTypesInGroup(const AutofillField& field,
-                                         FieldTypeGroup group);
-
 // Returns true if the type of `field` is a possible type.
 bool TypeOfFieldIsPossibleType(const AutofillField& field);
 
@@ -41,6 +36,7 @@ bool IsAlternativeNameType(FieldType type);
 
 // A tag type is a type that doesn't provide complete information about a field
 // on its own, and that instead needs a second type to complement its meaning.
+// TODO(crbug.com/422563282): Remove when cleaning up kAutofillAiNoTagTypes.
 bool IsTagType(FieldType type);
 
 }  // namespace autofill

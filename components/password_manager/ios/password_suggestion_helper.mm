@@ -222,21 +222,25 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
         realm = SysUTF8ToNSString(password_manager::GetShownOrigin(origin));
       }
 
+      autofill::SuggestionType suggestionType =
+          usernameAndRealm.is_backup_credential
+              ? autofill::SuggestionType::kBackupPasswordEntry
+              : autofill::SuggestionType::kPasswordEntry;
+
       FormSuggestionMetadata metadata;
       metadata.is_single_username_form = is_single_username_form;
       metadata.likely_from_real_password_field = isPasswordField;
+
       [results
-          addObject:
-              [FormSuggestion
-                         suggestionWithValue:username
-                          displayDescription:realm
-                                        icon:nil
-                                        type:autofill::SuggestionType::
-                                                 kPasswordEntry
-                                     payload:autofill::Suggestion::Payload()
-                              requiresReauth:YES
-                  acceptanceA11yAnnouncement:nil
-                                    metadata:std::move(metadata)]];
+          addObject:[FormSuggestion suggestionWithValue:username
+                                     displayDescription:realm
+                                                   icon:nil
+                                                   type:suggestionType
+                                                payload:autofill::Suggestion::
+                                                            Payload()
+                                         requiresReauth:YES
+                             acceptanceA11yAnnouncement:nil
+                                               metadata:std::move(metadata)]];
     }
   }
 
@@ -314,6 +318,7 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
 
 - (password_manager::FillDataRetrievalResult)
     passwordFillDataForUsername:(NSString*)username
+             isBackupCredential:(BOOL)isBackupCredential
         likelyRealPasswordField:(bool)passwordField
                  formIdentifier:(autofill::FormRendererId)formId
                 fieldIdentifier:(autofill::FieldRendererId)fieldId
@@ -328,12 +333,14 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
     return base::unexpected(
         password_manager::FillDataRetrievalStatus::kNoFrame);
   }
-  return fill_data->GetFillData(SysNSStringToUTF16(username), formId, fieldId,
+  return fill_data->GetFillData(SysNSStringToUTF16(username),
+                                isBackupCredential, formId, fieldId,
                                 passwordField);
 }
 
 - (password_manager::FillDataRetrievalResult)
     passwordFillDataForUsername:(NSString*)username
+             isBackupCredential:(BOOL)isBackupCredential
                      forFrameId:(const std::string&)frameId {
   auto [fill_data, is_new] = [self fillDataForFrameId:frameId];
   if (is_new) {
@@ -345,7 +352,8 @@ base::TimeDelta GetCleanupTaskPeriodMs() {
     return base::unexpected(
         password_manager::FillDataRetrievalStatus::kNoFrame);
   }
-  return fill_data->GetFillData(SysNSStringToUTF16(username));
+  return fill_data->GetFillData(SysNSStringToUTF16(username),
+                                isBackupCredential);
 }
 
 - (void)resetForNewPage {

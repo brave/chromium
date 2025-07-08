@@ -77,6 +77,16 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
                 <td>${key}</td>
                 <td>${criteria[key]}</td>
               </tr>`)}
+            <tr>
+              <td>Detected VRAM (MiB)</td>
+              <td>${this.pageData_.performanceInfo.vramMb === 0n ?
+                'Not Available' :
+                this.pageData_.performanceInfo.vramMb}</td>
+            </tr>
+            <tr>
+              <td>Minimum VRAM required (MiB)</td>
+              <td>${this.pageData_.minVramMb}</td>
+            </tr>
           </tbody>
         </table>
       </div>`}
@@ -88,6 +98,7 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
           <th>Name</th>
           <th>Version</th>
           <th>Recently Used</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -96,6 +107,14 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
             <td>${adaptation.featureName}</td>
             <td>${adaptation.version}</td>
             <td>${adaptation.isRecentlyUsed}</td>
+            <td>
+              <button @click=${() =>
+                this.onFeatureUsageSetterClick_(adaptation.featureKey, true)
+              }>set to true</button>
+              <button @click=${() =>
+                this.onFeatureUsageSetterClick_(adaptation.featureKey, false)
+              }>set to false</button>
+            </td>
           </tr>`)}
       </tbody>
     </table>

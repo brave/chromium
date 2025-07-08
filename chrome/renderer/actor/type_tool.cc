@@ -9,6 +9,7 @@
 #include "base/no_destructor.h"
 #include "base/notimplemented.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
 #include "base/time/time.h"
 #include "chrome/common/actor.mojom-shared.h"
@@ -48,6 +49,12 @@ using ::blink::WebNode;
 using ::blink::WebString;
 
 namespace {
+
+// Typing into input fields often causes custom made dropdowns to appear and
+// update content. These are often updated via async tasks that try to detect
+// when a user has finished typing. Delay observation to try to ensure the page
+// stability monitor kicks in only after these tasks have invoked.
+constexpr base::TimeDelta kObservationDelay = base::Seconds(1);
 
 // Structure to hold the mapping
 struct KeyInfo {
@@ -126,13 +133,26 @@ TypeTool::TargetAndKeys::~TargetAndKeys() = default;
 TypeTool::TargetAndKeys::TargetAndKeys(const TargetAndKeys&) = default;
 TypeTool::TargetAndKeys& TypeTool::TargetAndKeys::operator=(
     const TargetAndKeys&) = default;
+TypeTool::TargetAndKeys::TargetAndKeys(TargetAndKeys&&) = default;
+TypeTool::TargetAndKeys& TypeTool::TargetAndKeys::operator=(TargetAndKeys&&) =
+    default;
 
 TypeTool::KeyParams::KeyParams() = default;
 TypeTool::KeyParams::~KeyParams() = default;
 TypeTool::KeyParams::KeyParams(const KeyParams& other) = default;
 
-TypeTool::TypeTool(mojom::TypeActionPtr action, content::RenderFrame& frame)
-    : frame_(frame), action_(std::move(action)) {}
+TypeTool::TypeTool(content::RenderFrame& frame,
+                   Journal::TaskId task_id,
+                   Journal& journal,
+                   mojom::TypeActionPtr action,
+                   mojom::ToolTargetPtr target,
+                   mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 TypeTool::~TypeTool() = default;
 
@@ -255,11 +275,10 @@ mojom::ActionResultPtr TypeTool::SimulateKeyPress(TypeTool::KeyParams params) {
   return MakeOkResult();
 }
 
-void TypeTool::Execute(ToolFinishedCallback callback) {
+mojom::ActionResultPtr TypeTool::Execute() {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    std::move(callback).Run(std::move(validated_result.error()));
-    return;
+    return std::move(validated_result.error());
   }
 
   if (std::holds_alternative<gfx::PointF>(validated_result->target)) {
@@ -271,8 +290,7 @@ void TypeTool::Execute(ToolFinishedCallback callback) {
 
     // Cancel rest of typing if initial click failed.
     if (!IsOk(*result)) {
-      std::move(callback).Run(std::move(result));
-      return;
+      return result;
     }
   } else {
     WebElement element = std::get<blink::WebElement>(validated_result->target);
@@ -303,29 +321,29 @@ void TypeTool::Execute(ToolFinishedCallback callback) {
   for (const auto& param : validated_result->key_sequence) {
     mojom::ActionResultPtr result = SimulateKeyPress(param);
     if (!IsOk(*result)) {
-      std::move(callback).Run(std::move(result));
-      return;
+      return result;
     }
   }
 
-  std::move(callback).Run(MakeOkResult());
+  return MakeOkResult();
 }
 
 std::string TypeTool::DebugString() const {
   return absl::StrFormat("TypeTool[%s;text(%s);mode(%s);FollowByEnter(%v)]",
-                         ToDebugString(action_->target), action_->text,
+                         ToDebugString(target_), action_->text,
                          base::ToString(action_->mode),
                          action_->follow_by_enter);
 }
 
-TypeTool::ValidatedResult TypeTool::Validate() const {
-  if (!frame_->GetWebFrame() || !frame_->GetWebFrame()->FrameWidget()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kFrameWentAway));
-  }
+base::TimeDelta TypeTool::ExecutionObservationDelay() const {
+  return kObservationDelay;
+}
 
-  mojom::ToolTargetPtr& target = action_->target;
-  CHECK(target);
+TypeTool::ValidatedResult TypeTool::Validate() const {
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
+
+  CHECK(target_);
 
   if (!base::IsStringASCII(action_->text)) {
     // TODO(crbug.com/409032824): Add support beyond ASCII.
@@ -350,9 +368,9 @@ TypeTool::ValidatedResult TypeTool::Validate() const {
     key_sequence.push_back(GetEnterKeyParams());
   }
 
-  if (target->is_coordinate()) {
+  if (target_->is_coordinate()) {
     // Injecting a click first at the coordinate.
-    gfx::PointF coordinate = gfx::PointF(target->get_coordinate());
+    gfx::PointF coordinate = gfx::PointF(target_->get_coordinate());
     if (!IsPointWithinViewport(coordinate, frame_.get())) {
       return base::unexpected(
           MakeResult(mojom::ActionResultCode::kCoordinatesOutOfBounds));
@@ -360,7 +378,7 @@ TypeTool::ValidatedResult TypeTool::Validate() const {
 
     return TargetAndKeys{coordinate, std::move(key_sequence)};
   } else {
-    int32_t dom_node_id = target->get_dom_node_id();
+    int32_t dom_node_id = target_->get_dom_node_id();
     WebNode node = GetNodeFromId(frame_.get(), dom_node_id);
     if (node.IsNull()) {
       return base::unexpected(

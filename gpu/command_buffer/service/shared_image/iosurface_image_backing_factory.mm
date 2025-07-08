@@ -22,7 +22,7 @@
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_context.h"
@@ -121,7 +121,8 @@ constexpr SharedImageUsageSet kSupportedUsage =
     SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX |
     SHARED_IMAGE_USAGE_HIGH_PERFORMANCE_GPU |
     SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
-    SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE | SHARED_IMAGE_USAGE_CPU_UPLOAD;
+    SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE | SHARED_IMAGE_USAGE_CPU_UPLOAD |
+    SHARED_IMAGE_USAGE_RASTER_COPY_SOURCE | SHARED_IMAGE_USAGE_CPU_READ;
 
 }  // anonymous namespace
 
@@ -258,7 +259,6 @@ IOSurfaceImageBackingFactory::CreateSharedImage(
   gfx::GpuMemoryBufferHandle handle;
   handle.type = gfx::IO_SURFACE_BUFFER;
   handle.io_surface = std::move(io_surface);
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
 
   CHECK(!format.PrefersExternalSampler());
   return CreateSharedImageGMBs(mailbox, format, size, color_space,
@@ -352,7 +352,6 @@ IOSurfaceImageBackingFactory::CreateSharedImageInternal(
   // reported immediately after allocation/upload and before other GL
   // operations.
   gfx::ScopedIOSurface io_surface;
-  const gfx::GenericSharedMemoryId io_surface_id;
   {
     gl::ScopedProgressReporter scoped_progress_reporter(progress_reporter_);
     const gfx::BufferFormat buffer_format = ToBufferFormat(format);
@@ -377,9 +376,9 @@ IOSurfaceImageBackingFactory::CreateSharedImageInternal(
       for_framebuffer_attachment && angle_texture_usage_;
 
   auto backing = std::make_unique<IOSurfaceImageBacking>(
-      io_surface, io_surface_id, mailbox, format, size, color_space,
-      surface_origin, alpha_type, usage, std::move(debug_label),
-      texture_target_, framebuffer_attachment_angle, is_cleared, is_thread_safe,
+      io_surface, mailbox, format, size, color_space, surface_origin,
+      alpha_type, usage, std::move(debug_label), texture_target_,
+      framebuffer_attachment_angle, is_cleared, is_thread_safe,
       gr_context_type_);
   if (!pixel_data.empty()) {
     gl::ScopedProgressReporter scoped_progress_reporter(progress_reporter_);
@@ -413,7 +412,6 @@ IOSurfaceImageBackingFactory::CreateSharedImageGMBs(
   }
 
   auto io_surface = handle.io_surface;
-  const auto io_surface_id = handle.id;
 
   // Ensure that the IOSurface has the same size and pixel format as those
   // specified by `size` and `format`. A malicious client could lie about
@@ -447,10 +445,10 @@ IOSurfaceImageBackingFactory::CreateSharedImageGMBs(
       for_framebuffer_attachment && angle_texture_usage_;
 
   return std::make_unique<IOSurfaceImageBacking>(
-      io_surface, io_surface_id, mailbox, format, size, color_space,
-      surface_origin, alpha_type, usage, std::move(debug_label),
-      texture_target_, framebuffer_attachment_angle, /*is_cleared=*/true,
-      is_thread_safe, gr_context_type_, std::move(buffer_usage));
+      io_surface, mailbox, format, size, color_space, surface_origin,
+      alpha_type, usage, std::move(debug_label), texture_target_,
+      framebuffer_attachment_angle, /*is_cleared=*/true, is_thread_safe,
+      gr_context_type_, std::move(buffer_usage));
 }
 
 SharedImageBackingType IOSurfaceImageBackingFactory::GetBackingType() {

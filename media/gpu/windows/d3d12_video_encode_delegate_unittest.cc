@@ -36,7 +36,8 @@ class MockD3D12VideoEncodeDelegate : public D3D12VideoEncodeDelegate {
   EncoderStatus::Or<BitstreamBufferMetadata> EncodeImpl(
       ID3D12Resource*,
       UINT,
-      const VideoEncoder::EncodeOptions&) override {
+      const VideoEncoder::EncodeOptions&,
+      const gfx::ColorSpace&) override {
     return BitstreamBufferMetadata();
   }
 
@@ -134,6 +135,7 @@ D3D12VideoEncodeDelegateTestBase::GetEncoderOutputMetadataResourceMap(
         D3D12_VIDEO_ENCODER_OUTPUT_METADATA* metadata =
             new D3D12_VIDEO_ENCODER_OUTPUT_METADATA{
                 .EncodedBitstreamWrittenBytesCount = bitstream_size,
+                .WrittenSubregionsCount = 1,
             };
         (*mapped_metadata)[resource.Get()].reset(metadata);
         *data = metadata;

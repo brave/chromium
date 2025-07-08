@@ -12,6 +12,7 @@
 #include "base/debug/dump_without_crashing.h"
 #include "base/immediate_crash.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/strings/string_split.h"
@@ -223,6 +224,8 @@ void UnbindGLContextFromShaderCache(
   glBlobCacheCallbacksANGLE(nullptr, nullptr, nullptr);
 }
 
+base::AtomicSequenceNumber g_next_command_buffer_id;
+
 }  // anonymous namespace
 
 void SharedContextState::compileError(const char* shader,
@@ -254,50 +257,6 @@ void SharedContextState::compileError(const char* shader,
       base::debug::DumpWithoutCrashing();
     }
   }
-}
-
-base::AtomicSequenceNumber g_next_command_buffer_id;
-
-SharedContextState::MemoryTracker::MemoryTracker(
-    CommandBufferId command_buffer_id,
-    uint64_t client_tracing_id,
-    scoped_refptr<gpu::MemoryTracker::Observer> peak_memory_monitor,
-    GpuPeakMemoryAllocationSource source)
-    : command_buffer_id_(command_buffer_id),
-      client_tracing_id_(client_tracing_id),
-      peak_memory_monitor_(std::move(peak_memory_monitor)),
-      allocation_source_(source) {}
-
-SharedContextState::MemoryTracker::~MemoryTracker() {
-  DCHECK(!size_);
-}
-
-void SharedContextState::MemoryTracker::TrackMemoryAllocatedChange(
-    int64_t delta) {
-  DCHECK(delta >= 0 || size_ >= static_cast<uint64_t>(-delta));
-  uint64_t old_size = size_;
-  size_ += delta;
-
-  if (peak_memory_monitor_) {
-    peak_memory_monitor_->OnMemoryAllocatedChange(command_buffer_id_, old_size,
-                                                  size_, allocation_source_);
-  }
-}
-
-uint64_t SharedContextState::MemoryTracker::GetSize() const {
-  return size_;
-}
-
-uint64_t SharedContextState::MemoryTracker::ClientTracingId() const {
-  return client_tracing_id_;
-}
-
-int SharedContextState::MemoryTracker::ClientId() const {
-  return gpu::ChannelIdFromCommandBufferId(command_buffer_id_);
-}
-
-uint64_t SharedContextState::MemoryTracker::ContextGroupTracingId() const {
-  return command_buffer_id_.GetUnsafeValue();
 }
 
 SharedContextState::SharedContextState(
@@ -390,22 +349,15 @@ SharedContextState::~SharedContextState() {
   // and also when using Graphite.
   DCHECK(!owned_gr_context_ || owned_gr_context_->unique());
 
-  // GPU memory allocations except skia_resource_cache_size_ tracked by this
-  // memory_tracker_ should have beenreleased.
-  DCHECK_EQ(skia_resource_cache_size_,
-            memory_tracker_shared_context_state_->GetSize());
-
   // gr_context_ and all resources owned by it will be released soon, so set it
   // to null.
   gr_context_ = nullptr;
 
-  // Null out `graphite_shared_context_` as well to ensure that the below call
-  // clears memory usage.
-  graphite_shared_context_ = nullptr;
-
-  // UpdateSkiaOwnedMemorySize() will update skia memory usage to 0, to ensure
-  // that PeakGpuMemoryMonitor sees 0 allocated memory.
-  UpdateSkiaOwnedMemorySize();
+  // GPU memory allocations except memory_tracker_shared_context_state_ should
+  // have been released. Ensure that PeakGpuMemoryMonitor sees 0 allocated
+  // memory for Skia memory in SHARED_CONTEXT_STATE.
+  int64_t delta = 0 - memory_tracker_shared_context_state_->GetSize();
+  memory_tracker_shared_context_state_->TrackMemoryAllocatedChange(delta);
 
   // Delete the GrContext. This will either do cleanup if the context is
   // current, or the GrContext was already abandoned if the GLContext was lost.
@@ -417,6 +369,21 @@ SharedContextState::~SharedContextState() {
     context_->ReleaseCurrent(nullptr);
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
       this);
+}
+
+gpu::GraphiteSharedContext* SharedContextState::graphite_shared_context()
+    const {
+#if BUILDFLAG(SKIA_USE_DAWN)
+  if (dawn_context_provider_) {
+    return dawn_context_provider_->GetGraphiteSharedContext();
+  }
+#endif
+#if BUILDFLAG(SKIA_USE_METAL)
+  if (metal_context_provider_) {
+    return metal_context_provider_->GetGraphiteSharedContext();
+  }
+#endif
+  return nullptr;
 }
 
 bool SharedContextState::IsUsingGL() const {
@@ -618,11 +585,12 @@ bool SharedContextState::InitializeGraphite(
   const skgpu::graphite::ContextOptions context_options =
       GetDefaultGraphiteContextOptions(workarounds);
 
+  gpu::GraphiteSharedContext* graphite_shared_context = nullptr;
   if (gr_context_type_ == GrContextType::kGraphiteDawn) {
 #if BUILDFLAG(SKIA_USE_DAWN)
     CHECK(dawn_context_provider_);
     if (dawn_context_provider_->InitializeGraphiteContext(context_options)) {
-      graphite_shared_context_ =
+      graphite_shared_context =
           dawn_context_provider_->GetGraphiteSharedContext();
     } else {
       // There is currently no way for the GPU process to gracefully handle
@@ -639,7 +607,7 @@ bool SharedContextState::InitializeGraphite(
 #if BUILDFLAG(SKIA_USE_METAL)
     if (metal_context_provider_ &&
         metal_context_provider_->InitializeGraphiteContext(context_options)) {
-      graphite_shared_context_ =
+      graphite_shared_context =
           metal_context_provider_->GetGraphiteSharedContext();
     } else {
       DLOG(ERROR) << "Failed to create Graphite Context for Metal";
@@ -647,16 +615,15 @@ bool SharedContextState::InitializeGraphite(
     }
 #endif
   }
-  if (!graphite_shared_context_) {
+  if (!graphite_shared_context) {
     LOG(ERROR) << "Skia Graphite disabled: Graphite Context creation failed.";
     return false;
   }
 
-  if (features::IsSkiaGraphitePrecompilationEnabled(
-          base::CommandLine::ForCurrentProcess())) {
-    InitiatePrecompilation(graphite_shared_context());
+  if (gpu_preferences.perform_graphite_precompilation) {
+    InitiatePrecompilation(graphite_shared_context);
 
-    precompile_context_ = graphite_shared_context()->makePrecompileContext();
+    precompile_context_ = graphite_shared_context->makePrecompileContext();
 
     // Every 5 minutes report how many new pipelines have been encountered
     // since the last call
@@ -678,7 +645,7 @@ bool SharedContextState::InitializeGraphite(
       &max_viz_compositor_image_provider_cache_bytes);
 
   gpu_main_graphite_recorder_ = MakeGraphiteRecorder(
-      graphite_shared_context(), context_options.fGpuBudgetInBytes,
+      graphite_shared_context, context_options.fGpuBudgetInBytes,
       max_gpu_main_image_provider_cache_bytes);
 
   const bool can_handle_context_resources =
@@ -699,7 +666,7 @@ bool SharedContextState::InitializeGraphite(
     // be inserted in order, so this grants the Viz thread more flexibility
     // without any negative impact. See https://crbug.com/406292843
     viz_compositor_graphite_recorder_ = MakeGraphiteRecorder(
-        graphite_shared_context(), context_options.fGpuBudgetInBytes,
+        graphite_shared_context, context_options.fGpuBudgetInBytes,
         max_viz_compositor_image_provider_cache_bytes,
         /*require_ordered_recordings=*/false);
   }
@@ -1149,16 +1116,17 @@ uint64_t SharedContextState::GetMemoryUsage() {
 }
 
 void SharedContextState::UpdateSkiaOwnedMemorySize() {
-  // NOTE: If `graphite_shared_context_` is null, then either (a) it was not
-  // successfully created or (b) this instance is being destroyed. In the former
-  // case, the Graphite GPU main recorder will also not have been created, while
-  // in the latter case, it will imminently be destroyed.
+  // Ensure PeakGpuMemoryMonitor sees 0 allocated memory.
+  // NOTE: If `graphite_shared_context_` is null, then it was not
+  // successfully created. The Graphite GPU main recorder will also not have
+  // been created. When this instance is being destroyed,
+  // memory_tracker_shared_context_state_ is updated in SharedContextState dtor.
   if (!gr_context_ && !graphite_shared_context()) {
-    memory_tracker_shared_context_state_->TrackMemoryAllocatedChange(
-        0u - skia_resource_cache_size_);
-    skia_resource_cache_size_ = 0u;
+    int64_t delta = 0 - memory_tracker_shared_context_state_->GetSize();
+    memory_tracker_shared_context_state_->TrackMemoryAllocatedChange(delta);
     return;
   }
+
   size_t new_size;
   if (gr_context_) {
     gr_context_->getResourceCacheUsage(nullptr /* resourceCount */, &new_size);
@@ -1177,12 +1145,11 @@ void SharedContextState::UpdateSkiaOwnedMemorySize() {
       new_size += graphite_shared_context()->currentBudgetedBytes();
     }
   }
-  // Skia does not have a CommandBufferId. PeakMemoryMonitor currently does not
-  // use CommandBufferId to identify source, so use zero here to separate
-  // prevent confusion.
-  memory_tracker_shared_context_state_->TrackMemoryAllocatedChange(
-      static_cast<int64_t>(new_size) - skia_resource_cache_size_);
-  skia_resource_cache_size_ = static_cast<uint64_t>(new_size);
+
+  // Update for PeakGpuMemoryMonitor.
+  int64_t delta = static_cast<int64_t>(new_size) -
+                  memory_tracker_shared_context_state_->GetSize();
+  memory_tracker_shared_context_state_->TrackMemoryAllocatedChange(delta);
 }
 
 void SharedContextState::PessimisticallyResetGrContext() const {

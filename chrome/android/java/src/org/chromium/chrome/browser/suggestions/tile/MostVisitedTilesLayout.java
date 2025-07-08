@@ -6,18 +6,26 @@ package org.chromium.chrome.browser.suggestions.tile;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.widget.HorizontalScrollView;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.Px;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
+import org.chromium.chrome.browser.user_education.IphCommand;
+import org.chromium.chrome.browser.user_education.IphCommandBuilder;
+import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.browser_ui.widget.tile.TileView;
+import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.ui.base.DeviceFormFactor;
 
 /** The most visited tiles layout. */
+@NullMarked
 public class MostVisitedTilesLayout extends TilesLinearLayout {
 
     private final boolean mIsTablet;
@@ -27,6 +35,7 @@ public class MostVisitedTilesLayout extends TilesLinearLayout {
     private final int mIntervalPaddingsTablet;
     private final int mEdgePaddingsTablet;
     private @Nullable Integer mTileToMoveInViewIdx;
+    private @Nullable Runnable mTriggerIphTask;
 
     /** Constructor for inflating from XML. */
     public MostVisitedTilesLayout(Context context, AttributeSet attrs) {
@@ -48,16 +57,6 @@ public class MostVisitedTilesLayout extends TilesLinearLayout {
             tileView.setOnCreateContextMenuListener(null);
         }
         removeAllViews();
-    }
-
-    @Nullable
-    public SuggestionsTileView findTileViewForTesting(SiteSuggestion suggestion) {
-        int tileCount = getTileCount();
-        for (int i = 0; i < tileCount; i++) {
-            SuggestionsTileView tileView = (SuggestionsTileView) getTileAt(i);
-            if (suggestion.equals(tileView.getData())) return tileView;
-        }
-        return null;
     }
 
     public SiteSuggestion getTileViewData(TileView tileView) {
@@ -106,7 +105,33 @@ public class MostVisitedTilesLayout extends TilesLinearLayout {
         mTileToMoveInViewIdx = tileIdx;
     }
 
+    /**
+     * Attempts to show the in-product help for MVT Customization "Pin this shortcut" feature. At
+     * least one tile must exist, since help is anchored on the first. Must be called before layout
+     * takes place.
+     */
+    public void triggerCustomizationIph(UserEducationHelper userEducationHelper) {
+        if (getTileCount() == 0) return;
+
+        // Defer until layout, so that the first TileView can be used as the the anchor.
+        mTriggerIphTask =
+                () -> {
+                    TileView firstTileView = getTileAt(0);
+                    IphCommand command =
+                            new IphCommandBuilder(
+                                            getResources(),
+                                            FeatureConstants.MOST_VISITED_TILES_CUSTOMIZATION_PIN,
+                                            R.string.ntp_custom_links_help_pin,
+                                            R.string.ntp_custom_links_help_pin)
+                                    .setAnchorView(firstTileView)
+                                    .setInsetRect(new Rect(0, 0, 0, 0))
+                                    .build();
+                    userEducationHelper.requestShowIph(command);
+                };
+    }
+
     @Override
+    @Initializer
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         if (mInitialTileCount == null) {
             mInitialTileCount = getTileCount();
@@ -131,6 +156,11 @@ public class MostVisitedTilesLayout extends TilesLinearLayout {
             }
             mTileToMoveInViewIdx = null;
         }
+
+        if (mTriggerIphTask != null) {
+            mTriggerIphTask.run();
+            mTriggerIphTask = null;
+        }
     }
 
     private @Nullable Integer getScrollXToMakeTileVisible(int tileIdx) {
@@ -140,13 +170,13 @@ public class MostVisitedTilesLayout extends TilesLinearLayout {
         HorizontalScrollView parent = (HorizontalScrollView) getParent();
         @Px float tileXPx = getTileAt(tileIdx).getX();
         @Px int scrollXPx = parent.getScrollX();
-        // If scroll position is too high so that the tile is out-of-view / truncated, scroll right
+        // If scroll position is too high so that the tile is out-of-view / truncated, scroll left
         // so that the tile appears on the left edge (RTL doesn't matter).
         @Px int scrollXHiPx = (int) tileXPx;
         if (scrollXPx > scrollXHiPx) {
             return scrollXHiPx;
         }
-        // If scroll position is too low so that the tile is out-of-view / truncated, scroll left
+        // If scroll position is too low so that the tile is out-of-view / truncated, scroll right
         // so that the tile appears on the right edge (RTL doesn't matter).
         @Px int scrollXLoPx = (int) (tileXPx + mTileViewWidthPx - parent.getWidth());
         if (scrollXPx < scrollXLoPx) {

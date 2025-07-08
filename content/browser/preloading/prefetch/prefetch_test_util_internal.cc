@@ -6,6 +6,7 @@
 
 #include "base/containers/span.h"
 #include "base/run_loop.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "content/browser/preloading/prefetch/prefetch_container.h"
@@ -41,20 +42,6 @@ net::RedirectInfo SyntheticRedirect(const GURL& new_url) {
 }
 
 }  // namespace
-
-std::ostream& operator<<(std::ostream& ostream, PrefetchReusableForTests v) {
-  switch (v) {
-    case PrefetchReusableForTests::kDisabled:
-      return ostream << "AllowMultipleUses Disabled";
-    case PrefetchReusableForTests::kEnabled:
-      return ostream << "AllowMultipleUses Enabled";
-  }
-}
-
-std::vector<PrefetchReusableForTests> PrefetchReusableValuesForTests() {
-  return std::vector<PrefetchReusableForTests>{
-      PrefetchReusableForTests::kDisabled, PrefetchReusableForTests::kEnabled};
-}
 
 void MakeServableStreamingURLLoaderForTest(
     PrefetchContainer* prefetch_container,

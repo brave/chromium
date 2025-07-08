@@ -10,9 +10,9 @@
 #include <string_view>
 
 #include "base/memory/ref_counted.h"
-#include "base/test/task_environment.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_store.h"
+#include "components/safe_search_api/fake_url_checker_client.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/supervised_user/core/browser/supervised_user_metrics_service.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
@@ -21,6 +21,10 @@
 #include "components/sync/test/mock_sync_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "services/network/test/test_url_loader_factory.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "components/supervised_user/core/browser/android/content_filters_observer_bridge.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace supervised_user {
 
@@ -71,14 +75,83 @@ class SupervisedUserMetricsServiceExtensionDelegateFake
   bool RecordExtensionsMetrics() override;
 };
 
+class MetricsServiceAccessorDelegateMock
+    : public SupervisedUserMetricsService::MetricsServiceAccessorDelegate {
+ public:
+  MetricsServiceAccessorDelegateMock();
+  ~MetricsServiceAccessorDelegateMock() override;
+  MOCK_METHOD(void,
+              RegisterSyntheticFieldTrial,
+              (std::string_view trial_name, std::string_view group_name),
+              (override));
+};
+
+#if BUILDFLAG(IS_ANDROID)
+// Fake implementation of ContentFiltersObserverBridge for testing. Imitates
+// events that would normally be produced by the Android's secure settings
+// (which store content filter settings). Content bridge is initialized with
+// "disabled" setting.
+class FakeContentFiltersObserverBridge final
+    : public ContentFiltersObserverBridge {
+ public:
+  FakeContentFiltersObserverBridge(std::string_view setting_name,
+                                   base::RepeatingClosure on_enabled,
+                                   base::RepeatingClosure on_disabled);
+  FakeContentFiltersObserverBridge(const FakeContentFiltersObserverBridge&) =
+      delete;
+  FakeContentFiltersObserverBridge& operator=(
+      const FakeContentFiltersObserverBridge&) = delete;
+  ~FakeContentFiltersObserverBridge() override;
+
+  // Override to suppress initialization of the java bridge.
+  void Init() override;
+  void Shutdown() override;
+
+  // Set mocked value and trigger native code callbacks.
+  void SetEnabled(bool enabled) override;
+
+  base::WeakPtr<FakeContentFiltersObserverBridge> GetWeakPtr();
+
+ private:
+  base::WeakPtrFactory<FakeContentFiltersObserverBridge> weak_ptr_factory_{
+      this};
+};
+#endif  // BUILDFLAG(IS_ANDROID)
+
+// Offers access to the protected constructor of SupervisedUserService, used
+// to inject fake content filters observers.
+class TestSupervisedUserService : public SupervisedUserService {
+ public:
+  // Matching constructor of SupervisedUserService.
+  TestSupervisedUserService(
+      signin::IdentityManager* identity_manager,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      PrefService& user_prefs,
+      SupervisedUserSettingsService& settings_service,
+      syncer::SyncService* sync_service,
+      std::unique_ptr<SupervisedUserURLFilter> url_filter,
+      std::unique_ptr<SupervisedUserService::PlatformDelegate>
+          platform_delegate);
+
+#if BUILDFLAG(IS_ANDROID)
+  base::WeakPtr<FakeContentFiltersObserverBridge>
+  browser_content_filters_observer_weak_ptr();
+  base::WeakPtr<FakeContentFiltersObserverBridge>
+  search_content_filters_observer_weak_ptr();
+#endif  // BUILDFLAG(IS_ANDROID)
+};
+
 // Configures a handy set of components that form supervised user features, for
 // unit testing. This is a lightweight, unit-test oriented alternative to a
 // TestingProfile with enabled supervision.
-// Requires single-threaded task environment for unittests (see
+// Requires single-threaded task environment for unit tests (see
 // base::test::TaskEnvironment), and requires that Shutdown() is called.
 class SupervisedUserTestEnvironment {
  public:
   SupervisedUserTestEnvironment();
+  explicit SupervisedUserTestEnvironment(
+      std::unique_ptr<MetricsServiceAccessorDelegateMock>
+          metrics_service_accessor_delegate);
   SupervisedUserTestEnvironment(const SupervisedUserTestEnvironment&) = delete;
   SupervisedUserTestEnvironment& operator=(
       const SupervisedUserTestEnvironment&) = delete;
@@ -88,6 +161,14 @@ class SupervisedUserTestEnvironment {
   SupervisedUserService* service() const;
   PrefService* pref_service();
   sync_preferences::TestingPrefServiceSyncable* pref_service_syncable();
+  safe_search_api::FakeURLCheckerClient* url_checker_client();
+
+#if BUILDFLAG(IS_ANDROID)
+  base::WeakPtr<FakeContentFiltersObserverBridge>
+  browser_content_filters_observer();
+  base::WeakPtr<FakeContentFiltersObserverBridge>
+  search_content_filters_observer();
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // Simulators of parental controls. Instance methods use services from this
   // test environment, while static methods are suitable for heavier testing
@@ -124,23 +205,12 @@ class SupervisedUserTestEnvironment {
   syncer::MockSyncService sync_service_;
 
   // Core services under test
-  std::unique_ptr<SupervisedUserService> service_ =
-      std::make_unique<SupervisedUserService>(
-          identity_test_env_.identity_manager(),
-          test_url_loader_factory_.GetSafeWeakWrapper(),
-          *pref_store_environment_.pref_service(),
-          *pref_store_environment_.settings_service(),
-          &sync_service_,
-          std::make_unique<SupervisedUserURLFilter>(
-              *pref_store_environment_.pref_service(),
-              std::make_unique<FakeURLFilterDelegate>()),
-          std::make_unique<FakePlatformDelegate>());
-  std::unique_ptr<SupervisedUserMetricsService> metrics_service_ =
-      std::make_unique<SupervisedUserMetricsService>(
-          pref_store_environment_.pref_service(),
-          *service_.get(),
-          std::make_unique<
-              SupervisedUserMetricsServiceExtensionDelegateFake>());
+  std::unique_ptr<TestSupervisedUserService> service_;
+  std::unique_ptr<SupervisedUserMetricsService> metrics_service_;
+
+  // The objects are actually owned by the service_, but are referenced here for
+  // convenience.
+  raw_ptr<safe_search_api::FakeURLCheckerClient> url_checker_client_;
 };
 }  // namespace supervised_user
 

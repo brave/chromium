@@ -10,17 +10,17 @@
 
 namespace features {
 
-BASE_FEATURE(kPrefetchUseContentRefactor,
-             "PrefetchUseContentRefactor",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kPrefetchReusable,
-             "PrefetchReusable",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPrefetchTesting,
+             "PrefetchTesting",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // 4MiB, 2**20 * 4.
 const base::FeatureParam<int> kPrefetchReusableBodySizeLimit{
-    &kPrefetchReusable, "prefetch_reusable_body_size_limit", 4194304};
+    &kPrefetchTesting, "kPrefetchReusableBodySizeLimit", 4194304};
+
+BASE_FEATURE(kPrefetchUseContentRefactor,
+             "PrefetchUseContentRefactor",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPrefetchNIKScope,
              "PrefetchNIKScope",
@@ -49,16 +49,6 @@ BASE_FEATURE(kPrefetchStateContaminationMitigation,
 const base::FeatureParam<bool>
     kPrefetchStateContaminationSwapsBrowsingContextGroup{
         &kPrefetchStateContaminationMitigation, "swaps_bcg", true};
-
-BASE_FEATURE(kPrefetchProxy, "PrefetchProxy", base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kPrefetchCookieIndices,
-             "PrefetchCookieIndices",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kPrefetchNewLimits,
-             "PrefetchNewLimits",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPrefetchServiceWorkerNoFetchHandlerFix,
              "PrefetchServiceWorkerNoFetchHandlerFix",
@@ -108,4 +98,15 @@ BASE_FEATURE(kPrefetchQueueingPartialFixWithoutScheduler,
              "PrefetchQueueingPartialFixWithoutScheduler",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kPrefetchCanaryCheckerParams,
+             "PrefetchCanaryCheckerParams",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPrefetchMultipleActiveSetSizeLimitForBase,
+             "PrefetchMultipleActiveSetSizeLimitForBase",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+const base::FeatureParam<size_t>
+    kPrefetchMultipleActiveSetSizeLimitForBaseValue{
+        &kPrefetchMultipleActiveSetSizeLimitForBase,
+        "prefetch_multiple_active_set_size_limit_for_base_value", 2};
 }  // namespace features

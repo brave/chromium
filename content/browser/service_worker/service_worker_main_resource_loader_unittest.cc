@@ -518,7 +518,7 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
     registration_->set_last_update_check(base::Time::Now());
     std::optional<blink::ServiceWorkerStatusCode> status;
     base::RunLoop run_loop;
-    registry()->StoreRegistration(
+    registry().StoreRegistration(
         registration_.get(), version_.get(),
         ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
     run_loop.Run();
@@ -548,7 +548,7 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
     }
   }
 
-  ServiceWorkerRegistry* registry() { return helper_->context()->registry(); }
+  ServiceWorkerRegistry& registry() { return helper_->context()->registry(); }
   mojo::Remote<storage::mojom::ServiceWorkerStorageControl>&
   GetStorageControl() {
     return helper_->context()->GetStorageControl();
@@ -700,8 +700,9 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
     base::RunLoop run_loop;
     cache_storage->Open(
         kTestCacheNameU16, /* trace_id= */ 0,
-        base::BindLambdaForTesting([&](blink::mojom::OpenResultPtr result) {
-          EXPECT_TRUE(result->is_cache());
+        base::BindLambdaForTesting([&](blink::mojom::CacheStorage::OpenResult
+                                           result) {
+          EXPECT_TRUE(result.has_value());
 
           std::vector<blink::mojom::BatchOperationPtr> operation_ptr_vec;
           operation_ptr_vec.push_back(blink::mojom::BatchOperation::New());
@@ -712,7 +713,7 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
               OkResponse(nullptr /* blob_body */,
                          network::mojom::FetchResponseSource::kUnspecified,
                          cache_response_time, kTestCacheName);
-          cache.Bind(std::move(result->get_cache()));
+          cache.Bind(std::move(result.value()));
           cache->Batch(
               std::move(operation_ptr_vec), /* trace_id= */ 0,
               base::BindOnce(
@@ -1049,7 +1050,8 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, BrokenBlobResponse) {
   // However, since the blob is broken we should get an error while transferring
   // the body.
   client_.RunUntilComplete();
-  EXPECT_EQ(net::ERR_OUT_OF_MEMORY, client_.completion_status().error_code);
+  EXPECT_EQ(net::ERR_BLOB_OUT_OF_MEMORY,
+            client_.completion_status().error_code);
 
   if (LoaderRecordsTimingMetrics()) {
     // Timing histograms shouldn't be recorded on broken response.

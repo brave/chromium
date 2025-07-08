@@ -49,6 +49,7 @@ chromium-metrics-reviews@google.com.
   <int value="14" label="'Select plus address' link in the password sheet"/>
   <int value="15" label="'Manage plus addresses' link in the password sheet"/>
   <int value="16" label="'Manage loyalty cards' link"/>
+  <int value="17" label="'Verify it's you' link"/>
 </enum>
 
 <enum name="AccessorySheetTrigger">
@@ -276,6 +277,21 @@ chromium-metrics-reviews@google.com.
   <int value="7" label="Edit username and password and save"/>
 </enum>
 
+<!-- LINT.IfChange(CredentialManagerAndroidGetResult) -->
+
+<enum name="CredentialManagerAndroidGetResult">
+  <int value="0" label="New type of error, unhandled in Chrome"/>
+  <int value="1" label="The operation succeeded"/>
+  <int value="2" label="The user intentionally canceled the flow"/>
+  <int value="3" label="Custom error by the third-party SDK"/>
+  <int value="4" label="Failed due to a transient internal API interruption"/>
+  <int value="5" label="Configurations are mismatched for the provider"/>
+  <int value="6" label="Failed with no detailed information"/>
+  <int value="7" label="Credential manager is unsupported"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/credential_management/android/java/src/org/chromium/components/credential_management/CredentialManagerAndroidGetResult.java:CredentialManagerAndroidGetResult) -->
+
 <enum name="CredentialManagerAPIError">
   <summary>
     Numeric values correspond to CredentialManagerStatusCodes class.
@@ -334,6 +350,19 @@ chromium-metrics-reviews@google.com.
       label="(DEPRECATED in M111) Empty credential, called in
              autofill-assistant mode"/>
 </enum>
+
+<!-- LINT.IfChange(CredentialManagerStoreResult) -->
+
+<enum name="CredentialManagerStoreResult">
+  <int value="0" label="New type of error, unhandled in Chrome"/>
+  <int value="1" label="The operation succeeded"/>
+  <int value="2" label="The user intentionally canceled the flow"/>
+  <int value="3" label="No create options are available from any provider(s)"/>
+  <int value="4" label="Failed due to a transient internal API interruption."/>
+  <int value="5" label="Unknown error by the Android API"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/credential_management/android/java/src/org/chromium/components/credential_management/CredentialManagerStoreResult.java:CredentialManagerStoreResult) -->
 
 <enum name="CrossDomainPasswordFillingConfirmation">
   <int value="0" label="Confirmed"/>
@@ -584,7 +613,7 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Password Context Manu"/>
   <int value="3" label="Password Dropdown"/>
   <int value="4" label="Password Generation Confirmation"/>
-  <int value="5" label="Profile Chooser"/>
+  <int value="5" label="(DEPRECATED - 06/25) Profile Chooser"/>
   <int value="6" label="Passwords Accessory Sheet"/>
   <int value="7" label="Touch To Fill"/>
   <int value="8" label="Safe state bubble"/>
@@ -728,11 +757,17 @@ chromium-metrics-reviews@google.com.
              credentials report"/>
 </enum>
 
-<enum name="PasswordBubbleFollowupType">
-  <int value="0" label="Safe state"/>
-  <int value="1" label="More passwords to fix"/>
-  <int value="2" label="Unsafe state"/>
+<!-- LINT.IfChange(PasswordChangeDialogAction) -->
+
+<enum name="PasswordChangeDialogAction">
+  <int value="0" label="Cancel button clicked"/>
+  <int value="1" label="Accept button clicked"/>
+  <int value="2" label="'About password change' link clicked"/>
 </enum>
+
+<!-- LINT.ThenChange(/chrome/browser/ui/passwords/password_change_ui_controller.h:PasswordChangeDialogAction) -->
+
+<!-- LINT.IfChange(PasswordChangeFlowState) -->
 
 <enum name="PasswordChangeFlowState">
   <int value="0" label="Offering password change"/>
@@ -742,7 +777,20 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Changing password"/>
   <int value="5" label="Password successfully changed"/>
   <int value="6" label="Password change failed"/>
+  <int value="7" label="OTP detected"/>
+  <int value="8" label="Canceled by the user"/>
 </enum>
+
+<!-- LINT.ThenChange(/chrome/browser/password_manager/password_change_delegate.h) -->
+
+<!-- LINT.IfChange(PasswordChangeToastEvent) -->
+
+<enum name="PasswordChangeToastEvent">
+  <int value="0" label="Shown"/>
+  <int value="1" label="Canceled"/>
+</enum>
+
+<!-- LINT.ThenChange(/chrome/browser/ui/passwords/password_change_ui_controller.h:PasswordChangeToastEvent) -->
 
 <enum name="PasswordCheckInteraction">
   <int value="0" label="Check started automatically"/>
@@ -1608,6 +1656,10 @@ chromium-metrics-reviews@google.com.
       label="Reading successful, but suspicious bulk deletions were detected.
              To err on the side of safety, drop all password sync metadata
              and start again."/>
+  <int value="7"
+      label="Reading successful, but undecryptable passwords were detected.
+             To err on the side of safety, drop all password sync metadata
+             and start again."/>
 </enum>
 
 <enum name="PasswordSyncState">
@@ -1670,11 +1722,6 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Somewhat guessable password"/>
   <int value="3" label="Safely unguessable password"/>
   <int value="4" label="Very unguessable password"/>
-</enum>
-
-<enum name="PostPasswordMigrationSheetOutcome">
-  <int value="0" label="The sheet was acknowledged"/>
-  <int value="1" label="The sheet was dismissed"/>
 </enum>
 
 <enum name="ProactivePasswordGenerationBottomSheetTransitionType">

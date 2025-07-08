@@ -13,7 +13,7 @@
 namespace blink {
 
 ScriptCachedMetadataHandler::ScriptCachedMetadataHandler(
-    const WTF::TextEncoding& encoding,
+    const TextEncoding& encoding,
     std::unique_ptr<CachedMetadataSender> sender)
     : sender_(std::move(sender)), encoding_(encoding) {}
 
@@ -88,7 +88,7 @@ void ScriptCachedMetadataHandler::OnMemoryDump(
     const String& dump_prefix) const {
   if (!cached_metadata_)
     return;
-  const String dump_name = WTF::StrCat({dump_prefix, "/script"});
+  const String dump_name = StrCat({dump_prefix, "/script"});
   auto* dump = pmd->CreateMemoryAllocatorDump(dump_name);
   dump->AddScalar("size", "bytes", GetCodeCacheSize());
   pmd->AddSuballocation(dump->Guid(),
@@ -109,7 +109,7 @@ void ScriptCachedMetadataHandler::CommitToPersistentStorage(
 }
 
 ScriptCachedMetadataHandlerWithHashing::ScriptCachedMetadataHandlerWithHashing(
-    const WTF::TextEncoding& encoding,
+    const TextEncoding& encoding,
     std::unique_ptr<CachedMetadataSender> sender)
     : ScriptCachedMetadataHandler(encoding, std::move(sender)) {}
 

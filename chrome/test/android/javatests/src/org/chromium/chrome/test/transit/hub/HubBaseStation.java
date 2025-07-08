@@ -13,29 +13,22 @@ import static org.chromium.base.test.transit.ViewElement.unscopedOption;
 
 import android.view.View;
 
-import androidx.annotation.Nullable;
-import androidx.test.espresso.Espresso;
-
 import com.google.android.material.tabs.TabLayout;
 
-import org.chromium.base.test.transit.Element;
 import org.chromium.base.test.transit.Facility;
-import org.chromium.base.test.transit.Station;
-import org.chromium.base.test.transit.Transition;
 import org.chromium.base.test.transit.ViewElement;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.hub.HubToolbarView;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.browser.layouts.LayoutType;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeActivityTabModelBoundStation;
 import org.chromium.chrome.test.transit.layouts.LayoutTypeVisibleCondition;
-import org.chromium.chrome.test.transit.page.PageStation;
-import org.chromium.chrome.test.transit.tabmodel.TabModelSelectorCondition;
 
 /** The base station for Hub, with several panes and a toolbar. */
-public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
-    public final Element<TabModelSelector> tabModelSelectorElement;
+public abstract class HubBaseStation
+        extends ChromeActivityTabModelBoundStation<ChromeTabbedActivity> {
     public final ViewElement<HubToolbarView> toolbarElement;
     public final ViewElement<View> paneHostElement;
     public ViewElement<View> viewHolderElement;
@@ -47,13 +40,13 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
     protected final boolean mRegularTabsExist;
 
     public HubBaseStation(
-            boolean regularTabsExist, boolean incognitoTabsExist, boolean hasMenuButton) {
-        super(ChromeTabbedActivity.class);
+            boolean isIncognito,
+            boolean regularTabsExist,
+            boolean incognitoTabsExist,
+            boolean hasMenuButton) {
+        super(ChromeTabbedActivity.class, isIncognito);
         mRegularTabsExist = regularTabsExist;
         mIncognitoTabsExist = incognitoTabsExist;
-
-        tabModelSelectorElement =
-                declareEnterConditionAsElement(new TabModelSelectorCondition(mActivityElement));
 
         toolbarElement = declareView(HubToolbarView.class, withId(R.id.hub_toolbar));
         paneHostElement = declareView(withId(R.id.hub_pane_host));
@@ -88,15 +81,6 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
     public abstract @PaneId int getPaneId();
 
     /**
-     * Returns to the previous tab via the back button.
-     *
-     * @return the {@link PageStation} that Hub returned to.
-     */
-    public <T extends PageStation> T leaveHubToPreviousTabViaBack(T destination) {
-        return travelToSync(destination, Transition.retryOption(), () -> Espresso.pressBack());
-    }
-
-    /**
      * Selects the tab switcher pane on the Hub.
      *
      * @return the corresponding subclass of {@link HubBaseStation}.
@@ -117,9 +101,8 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
         String contentDescription =
                 HubStationUtils.getContentDescriptionSubstringForIdPaneSelection(paneId);
         SwitchPaneButtonFacility button =
-                enterFacilitySync(
-                        new SwitchPaneButtonFacility(contentDescription), /* trigger= */ null);
-        return travelToSync(destinationStation, button.buttonElement.getClickTrigger());
+                noopTo().enterFacility(new SwitchPaneButtonFacility(contentDescription));
+        return button.buttonElement.clickTo().arriveAt(destinationStation);
     }
 
     /** Convenience method to select the Regular Tab Switcher pane. */

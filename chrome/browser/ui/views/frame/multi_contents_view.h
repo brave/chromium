@@ -10,6 +10,7 @@
 
 #include "base/callback_list.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/views/frame/contents_container_view.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -18,7 +19,9 @@
 
 class BrowserView;
 class ContentsWebView;
+class MultiContentsDropTargetView;
 class MultiContentsResizeArea;
+class MultiContentsViewDelegate;
 class MultiContentsViewDropTargetController;
 class MultiContentsViewMiniToolbar;
 
@@ -34,10 +37,6 @@ namespace views {
 class WebView;
 }  // namespace views
 
-// TODO(crbug.com/394369035): The drop target view will eventually have its
-// own class. Move this declaration into the class once ready.
-DECLARE_ELEMENT_IDENTIFIER_VALUE(kMultiContentsViewDropTargetElementId);
-
 // MultiContentsView shows up to two contents web views side by side, and
 // manages their layout relative to each other.
 class MultiContentsView : public views::View,
@@ -47,24 +46,21 @@ class MultiContentsView : public views::View,
 
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kMultiContentsViewElementId);
-
-  using WebContentsFocusedCallback =
-      base::RepeatingCallback<void(content::WebContents*)>;
-
-  using WebContentsResizeCallback = base::RepeatingCallback<void(double)>;
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kStartContainerViewScrimElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kEndContainerViewScrimElementId);
 
   struct ViewWidths {
     double start_width = 0;
     double resize_width = 0;
     double end_width = 0;
+
+    double drop_target_width = 0;
   };
 
   static constexpr int kSplitViewContentInset = 8;
 
-  MultiContentsView(
-      BrowserView* browser_view,
-      WebContentsFocusedCallback inactive_contents_focused_callback,
-      WebContentsResizeCallback contents_resize_callback);
+  MultiContentsView(BrowserView* browser_view,
+                    std::unique_ptr<MultiContentsViewDelegate> delegate);
   MultiContentsView(const MultiContentsView&) = delete;
   MultiContentsView& operator=(const MultiContentsView&) = delete;
   ~MultiContentsView() override;
@@ -74,6 +70,8 @@ class MultiContentsView : public views::View,
 
   // Returns the currently inactive ContentsWebView.
   ContentsWebView* GetInactiveContentsView();
+
+  ContentsContainerView* GetActiveContentsContainerView();
 
   // Returns true if more than one WebContents is displayed.
   bool IsInSplitView() const;
@@ -93,6 +91,9 @@ class MultiContentsView : public views::View,
 
   // Updates the the size of the contents views based on |ratio|.
   void UpdateSplitRatio(double ratio);
+
+  // Sets whether a scrim should show over the inactive contents view.
+  void SetInactiveScrimVisibility(bool show_inactive_scrim);
 
   // Helper method to execute an arbitrary callback on each visible contents
   // view. Will execute the callback on the active contents view first.
@@ -118,6 +119,8 @@ class MultiContentsView : public views::View,
   }
 
   gfx::Insets& end_contents_view_inset() { return end_contents_view_inset_; }
+
+  bool is_drag_and_drop_enabled() const { return is_drag_and_drop_enabled_; }
 
   void set_min_contents_width_for_testing(int width) {
     min_contents_width_for_testing_ = std::make_optional(width);
@@ -161,6 +164,7 @@ class MultiContentsView : public views::View,
   void UpdateContentsBorderAndOverlay();
 
   raw_ptr<BrowserView> browser_view_;
+  std::unique_ptr<MultiContentsViewDelegate> delegate_;
 
   // Holds ContentsContainerViews, when not in a split view the second
   // ContentsContainerView is not visible.
@@ -175,6 +179,10 @@ class MultiContentsView : public views::View,
   // each other.
   raw_ptr<MultiContentsResizeArea> resize_area_ = nullptr;
 
+  // The views that are shown for entering split view. E.g., this is shown when
+  // the user drags a link to the edge of the contents view.
+  raw_ptr<MultiContentsDropTargetView> drop_target_view_ = nullptr;
+
   // Handles incoming drag events to show/hide the drop target for entering
   // split view.
   std::unique_ptr<MultiContentsViewDropTargetController>
@@ -182,12 +190,6 @@ class MultiContentsView : public views::View,
 
   // The index in contents_views_ of the active contents view.
   int active_index_ = 0;
-
-  // Callback to be executed when the user focuses the inactive contents view.
-  WebContentsFocusedCallback inactive_contents_focused_callback_;
-
-  // Callback to be executed when the user resizes the contents.
-  WebContentsResizeCallback contents_resize_callback_;
 
   // Current ratio of |contents_views_|'s first ContentsContainerView's width /
   // overall contents view width.
@@ -200,6 +202,13 @@ class MultiContentsView : public views::View,
   // Insets of the start and end contents view when in split view
   gfx::Insets start_contents_view_inset_;
   gfx::Insets end_contents_view_inset_;
+
+  bool show_inactive_scrim_ = false;
+
+  // This is needed because drag and drop is broken on Wayland. Once that is
+  // resolved, this variable should be deleted.
+  // TODO(crbug.com/425715421): Fix drag and drop on Wayland.
+  bool is_drag_and_drop_enabled_ = true;
 
   std::optional<int> min_contents_width_for_testing_ = std::nullopt;
 };

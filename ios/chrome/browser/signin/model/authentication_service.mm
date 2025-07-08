@@ -20,10 +20,12 @@
 #import "components/signin/ios/browser/features.h"
 #import "components/signin/public/base/gaia_id_hash.h"
 #import "components/signin/public/base/signin_pref_names.h"
+#import "components/signin/public/base/signin_switches.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/signin/public/identity_manager/device_accounts_synchronizer.h"
 #import "components/signin/public/identity_manager/primary_account_mutator.h"
 #import "components/signin/public/identity_manager/signin_constants.h"
+#import "components/signin/public/identity_manager/tribool.h"
 #import "components/sync/base/account_pref_utils.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
@@ -175,7 +177,7 @@ void AuthenticationService::Initialize(
   NSString* primary_account =
       [shared_defaults objectForKey:app_group::kPrimaryAccount];
 
-  if (!primary_account) {
+  if (!primary_account || primary_account.length == 0) {
     id<SystemIdentity> identity =
         GetPrimaryIdentity(signin::ConsentLevel::kSignin);
     if (identity.gaiaID) {
@@ -313,9 +315,9 @@ bool AuthenticationService::HasPrimaryIdentity(
 bool AuthenticationService::HasPrimaryIdentityManaged(
     signin::ConsentLevel consent_level) const {
   return identity_manager_
-      ->FindExtendedAccountInfo(
-          identity_manager_->GetPrimaryAccountInfo(consent_level))
-      .IsManaged();
+             ->FindExtendedAccountInfo(
+                 identity_manager_->GetPrimaryAccountInfo(consent_level))
+             .IsManaged() == signin::Tribool::kTrue;
 }
 
 bool AuthenticationService::ShouldClearDataForSignedInPeriodOnSignOut() const {
@@ -643,7 +645,8 @@ void AuthenticationService::OnRefreshTokenUpdated(id<SystemIdentity> identity) {
 
 void AuthenticationService::OnAccessTokenRefreshFailed(
     id<SystemIdentity> identity,
-    id<RefreshAccessTokenError> error) {
+    id<RefreshAccessTokenError> error,
+    const std::set<std::string>& scopes) {
   if (!identity) {
     DLOG(ERROR)
         << "Unexpected call of OnAccessTokenRefreshFailed with null identity";

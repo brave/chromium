@@ -8,6 +8,7 @@
 
 #import "base/functional/callback.h"
 #import "base/ios/ios_util.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -51,6 +52,7 @@
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/chrome/test/earl_grey/earl_grey_scoped_block_swizzler.h"
 #import "ios/chrome/test/earl_grey/test_switches.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/testing/earl_grey/matchers.h"
@@ -66,7 +68,6 @@ using chrome_test_util::PasswordsTableViewMatcher;
 using chrome_test_util::SettingsCollectionView;
 using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::SettingsNavigationBar;
-using chrome_test_util::TabGridEditButton;
 using chrome_test_util::TextFieldForCellWithLabelId;
 using chrome_test_util::TurnTableViewSwitchOn;
 using password_manager::kPasswordManagerSurfaceVisitHistogramName;
@@ -164,7 +165,7 @@ GREYElementInteraction* GetPasswordDetailTextFieldWithID(int detail_id) {
 GREYElementInteraction* SaveInAccountConfirmationDialogButton() {
   return [[EarlGrey
       selectElementWithMatcher:
-          grey_allOf(chrome_test_util::ButtonWithAccessibilityLabelId(
+          grey_allOf(chrome_test_util::AlertItemWithAccessibilityLabelId(
                          IDS_IOS_BULK_UPLOAD_BUTTON_TITLE),
                      grey_interactable(), nil)]
       inRoot:grey_accessibilityID(
@@ -1732,15 +1733,23 @@ void OpenPasswordManagerWidgetPromoInstructions() {
   // aiming at `kRemoteIndex`.
   constexpr int kJump = kRemoteIndex * 30 + 150;
 
-  // Check that the detail view loaded correctly by verifying the site content.
-  [[[EarlGrey
-      selectElementWithMatcher:
-          [self matcherForPasswordDetailCellWithWebsites:
+  {
+    // Disable EarlGrey synchronization in this scope to avoid infinite spinner
+    // loop.
+    ScopedSynchronizationDisabler disabler;
+
+    // Check that the detail view loaded correctly by verifying the site
+    // content.
+    [[[EarlGrey
+        selectElementWithMatcher:
+            [self
+                matcherForPasswordDetailCellWithWebsites:
                     [NSString stringWithFormat:@"https://www%02d.example.com/",
                                                kRemoteIndex]]]
-         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, kJump)
-      onElementWithMatcher:PasswordDetailsTableViewMatcher()]
-      assertWithMatcher:grey_notNil()];
+           usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, kJump)
+        onElementWithMatcher:PasswordDetailsTableViewMatcher()]
+        assertWithMatcher:grey_notNil()];
+  }
 
   [[EarlGrey selectElementWithMatcher:NavigationBarBackButton()]
       performAction:grey_tap()];
@@ -1799,7 +1808,7 @@ void OpenPasswordManagerWidgetPromoInstructions() {
   CheckVisibilityOfElement(pinErrorTitleMatcher, /*is_visible=*/true);
 
   [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
                      IDS_IOS_PASSWORD_SETTINGS_UPDATE_PIN_ERROR_BUTTON)]
       performAction:grey_tap()];
   CheckVisibilityOfElement(pinErrorTitleMatcher, /*is_visible=*/false);
@@ -1835,17 +1844,17 @@ void OpenPasswordManagerWidgetPromoInstructions() {
   [[EarlGrey selectElementWithMatcher:ToolbarSettingsSubmenuButton()]
       performAction:grey_tap()];
 
-  [[[EarlGrey selectElementWithMatcher:
-                  grey_allOf(chrome_test_util::ButtonWithAccessibilityLabelId(
-                                 IDS_IOS_EXPORT_PASSWORDS),
-                             grey_sufficientlyVisible(), nil)]
+  [[[EarlGrey
+      selectElementWithMatcher:grey_allOf(ButtonWithAccessibilityLabelId(
+                                              IDS_IOS_EXPORT_PASSWORDS),
+                                          grey_sufficientlyVisible(), nil)]
          usingSearchAction:grey_scrollInDirection(kGREYDirectionDown,
                                                   kScrollAmount)
       onElementWithMatcher:grey_accessibilityID(kPasswordsTableViewID)]
       performAction:grey_tap()];
 
   [GetInteractionForPasswordsExportConfirmAlert(
-      chrome_test_util::ButtonWithAccessibilityLabelId(
+      chrome_test_util::AlertItemWithAccessibilityLabelId(
           IDS_IOS_EXPORT_PASSWORDS)) performAction:grey_tap()];
 
   // Wait until the alerts are dismissed.
@@ -1854,9 +1863,8 @@ void OpenPasswordManagerWidgetPromoInstructions() {
   id<GREYMatcher> exportButtonStatusMatcher =
       grey_accessibilityTrait(UIAccessibilityTraitNotEnabled);
 
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_EXPORT_PASSWORDS)]
+  [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabelId(
+                                          IDS_IOS_EXPORT_PASSWORDS)]
       assertWithMatcher:exportButtonStatusMatcher];
 
   [ChromeEarlGrey verifyActivitySheetVisible];
@@ -1866,9 +1874,9 @@ void OpenPasswordManagerWidgetPromoInstructions() {
   [ChromeEarlGreyUI waitForAppToIdle];
 
   // Check that export button is re-enabled.
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_EXPORT_PASSWORDS)]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_EXPORT_PASSWORDS)]
       assertWithMatcher:grey_not(grey_accessibilityTrait(
                             UIAccessibilityTraitNotEnabled))];
   [[EarlGrey
@@ -2840,7 +2848,15 @@ void OpenPasswordManagerWidgetPromoInstructions() {
 
 // Tests that the percentage of favicons for the password manager metric is
 // logged properly when there are passwords with a favicon.
-- (void)testLogFaviconsForPasswordsPercentageMetricWithPassword {
+// TODO(crbug.com/413072881): Test is flaky on device.
+#if !TARGET_OS_SIMULATOR
+#define MAYBE_testLogFaviconsForPasswordsPercentageMetricWithPassword \
+  DISABLED_testLogFaviconsForPasswordsPercentageMetricWithPassword
+#else
+#define MAYBE_testLogFaviconsForPasswordsPercentageMetricWithPassword \
+  testLogFaviconsForPasswordsPercentageMetricWithPassword
+#endif
+- (void)MAYBE_testLogFaviconsForPasswordsPercentageMetricWithPassword {
   // Sign-in and wait for fully active sync.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
@@ -3586,7 +3602,8 @@ void OpenPasswordManagerWidgetPromoInstructions() {
         selectElementWithMatcher:grey_accessibilityLabel(l10n_util::GetNSString(
                                      IDS_IOS_SETTINGS_SET_UP_SCREENLOCK_TITLE))]
         assertWithMatcher:grey_sufficientlyVisible()];
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::OKButton()]
+    [[EarlGrey selectElementWithMatcher:
+                   chrome_test_util::AlertItemWithAccessibilityLabelId(IDS_OK)]
         performAction:grey_tap()];
 
     // Check for the Settings page after Password Manager is gone.
@@ -3629,7 +3646,8 @@ void OpenPasswordManagerWidgetPromoInstructions() {
         selectElementWithMatcher:grey_accessibilityLabel(l10n_util::GetNSString(
                                      IDS_IOS_SETTINGS_SET_UP_SCREENLOCK_TITLE))]
         assertWithMatcher:grey_sufficientlyVisible()];
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::OKButton()]
+    [[EarlGrey selectElementWithMatcher:
+                   chrome_test_util::AlertItemWithAccessibilityLabelId(IDS_OK)]
         performAction:grey_tap()];
 
     // Check for the Settings page after Password Manager is gone.

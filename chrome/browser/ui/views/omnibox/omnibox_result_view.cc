@@ -65,6 +65,7 @@
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/controls/link.h"
+#include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/flex_layout.h"
@@ -173,6 +174,7 @@ OmniboxResultView::OmniboxResultView(OmniboxPopupViewViews* popup_view,
   //   selection_indicator_
   //   local_answer_header_and_suggestion_and_buttons_ (BoxLayout vertical)
   //     local_answer_header_ (added lazily)
+  //     divider_line_
   //     suggestion_and_buttons (FlexLayout horizontal)
   //       suggestion_and_button_row (FlexLayout horizontal)
   //         suggestion_view_
@@ -198,6 +200,11 @@ OmniboxResultView::OmniboxResultView(OmniboxPopupViewViews* popup_view,
   local_answer_header_and_suggestion_and_buttons_
       ->SetLayoutManager(std::make_unique<views::BoxLayout>())
       ->SetOrientation(views::LayoutOrientation::kVertical);
+
+  divider_line_ = local_answer_header_and_suggestion_and_buttons_->AddChildView(
+      std::make_unique<views::Separator>());
+  divider_line_->SetOrientation(views::Separator::Orientation::kHorizontal);
+  divider_line_->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(8, 0, 2, 0));
 
   auto* suggestion_and_buttons =
       local_answer_header_and_suggestion_and_buttons_->AddChildView(
@@ -364,9 +371,10 @@ void OmniboxResultView::SetMatch(const AutocompleteMatch& match) {
                                 gfx::Insets::TLBR(0, 0, 0, 0));
 
   suggestion_view_->OnMatchUpdate(this, match_);
+  UpdateDividerLineVisibility();
   UpdateFeedbackButtonsVisibility();
   UpdateRemoveSuggestionVisibility();
-  if (match_.IsIPHSuggestion()) {
+  if (match_.IsIphSuggestion()) {
     remove_suggestion_button_->SetTooltipText(
         l10n_util::GetStringUTF16(IDS_OMNIBOX_CLOSE_IPH_SUGGESTION));
     remove_suggestion_button_->GetViewAccessibility().SetName(
@@ -455,7 +463,6 @@ void OmniboxResultView::ApplyThemeAndRefreshIcons(bool force_reapply_styles) {
   // Note: if this is an extension icon or favicon then this can be done in
   //       SetMatch() once (rather than repeatedly, as happens here). There may
   //       be an optimization opportunity here.
-  // TODO(dschuyler): determine whether to optimize the color changes.
   auto icon = GetIcon();
   if (icon.IsEmpty()) {
     suggestion_view_->ClearIcon();
@@ -466,14 +473,16 @@ void OmniboxResultView::ApplyThemeAndRefreshIcons(bool force_reapply_styles) {
   // We must reapply colors for all the text fields here. If we don't, we can
   // break theme changes for ZeroSuggest. See https://crbug.com/1095205.
   //
-  // TODO(tommycli): We should finish migrating this logic to live entirely
-  // within OmniboxTextView, which should keep track of its own OmniboxPart.
+  // TODO(crbug.com/430318151): We should finish migrating this logic to live
+  // entirely within OmniboxTextView, which should keep track of its own
+  // OmniboxPart.
   bool prefers_contrast =
       GetNativeTheme() && GetNativeTheme()->UserHasContrastPreference();
   if (match_.type == AutocompleteMatchType::NULL_RESULT_MESSAGE) {
     suggestion_view_->content()->ApplyTextColor(
-        match_.IsIPHSuggestion() ? kColorOmniboxResultsTextDimmed
-                                 : kColorOmniboxText);
+        match_.IsIphSuggestion() || match_.IsToolbelt()
+            ? kColorOmniboxResultsTextDimmed
+            : kColorOmniboxText);
   } else if (prefers_contrast || force_reapply_styles) {
     // Normally, OmniboxTextView caches its appearance, but in high contrast,
     // selected-ness changes the text colors, so the styling of the text part of
@@ -506,6 +515,7 @@ void OmniboxResultView::ApplyThemeAndRefreshIcons(bool force_reapply_styles) {
 }
 
 void OmniboxResultView::OnSelectionStateChanged() {
+  UpdateDividerLineVisibility();
   UpdateFeedbackButtonsVisibility();
   UpdateRemoveSuggestionVisibility();
   UpdateAccessibleName();
@@ -559,7 +569,10 @@ OmniboxPartState OmniboxResultView::GetThemeState() const {
   // message. The selected and hovered states imply an action can be taken from
   // that suggestion, so do not allow those states for this result.
   if (match_.type == AutocompleteMatchType::NULL_RESULT_MESSAGE) {
-    return match_.IsIPHSuggestion() ? OmniboxPartState::IPH
+    if (match_.IsToolbelt()) {
+      return OmniboxPartState::TOOLBELT;
+    }
+    return match_.IsIphSuggestion() ? OmniboxPartState::IPH
                                     : OmniboxPartState::NORMAL;
   }
 
@@ -697,10 +710,22 @@ gfx::Image OmniboxResultView::GetIcon() const {
 }
 
 void OmniboxResultView::UpdateHoverState() {
+  UpdateDividerLineVisibility();
   UpdateFeedbackButtonsVisibility();
   UpdateRemoveSuggestionVisibility();
   ApplyThemeAndRefreshIcons();
   GetViewAccessibility().SetIsHovered(IsMouseHovered());
+}
+
+void OmniboxResultView::UpdateDividerLineVisibility() {
+  const bool old_visibility = divider_line_->GetVisible();
+  const bool new_visibility = match_.IsToolbelt();
+
+  divider_line_->SetVisible(new_visibility);
+
+  if (old_visibility != new_visibility) {
+    InvalidateLayout();
+  }
 }
 
 void OmniboxResultView::UpdateFeedbackButtonsVisibility() {

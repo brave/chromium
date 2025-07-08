@@ -42,7 +42,7 @@
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/embedded_test_server/install_default_websocket_handlers.h"
 #include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
@@ -185,22 +185,23 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameApiTest, URLLoaderIsProxied) {
       if (!frame || !frame.request) {
         return 'FAIL: frame or frame.request is undefined';
       }
-      frame.request.onBeforeRequest.addListener(() => {
-        return { cancel: true };
-      }, { urls: ['https://*/controlled_frame_cancel.html'] }, ['blocking']);
-      frame.request.onBeforeRequest.addListener(() => {
-        return { cancel: false };
-      }, { urls: ['https://*/controlled_frame_success.html'] }, ['blocking']);
-      frame.request.onBeforeRequest.addListener(() => {
-        return {
-          redirectUrl: 'https://' + $1 + '/controlled_frame_redirect_target.html'
-        };
-      }, { urls: ['https://*/controlled_frame_redirect.html'] }, ['blocking']);
+      frame.request.createWebRequestInterceptor({
+        urlPatterns: ['<all_urls>'],
+        resourceTypes: ['main-frame'],
+        blocking: true,
+      }).addEventListener('beforerequest', (e) => {
+        if (e.request.url.endsWith('cancel.html')) {
+          e.preventDefault();
+        }
+        if (e.request.url.endsWith('redirect.html')) {
+          e.redirect('https://' + $1 + '/controlled_frame_redirect_target.html');
+        }
+      });
       return 'SUCCESS';
     })();
   )",
                                                           kServerHostPort)));
-  EXPECT_EQ(3u, web_request_event_router->GetListenerCountForTesting(
+  EXPECT_EQ(1u, web_request_event_router->GetListenerCountForTesting(
                     profile(), kWebRequestOnBeforeRequestEventName));
 
   auto* web_view_guest = GetWebViewGuest(app_frame);
@@ -279,14 +280,15 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameApiTest, AuthRequestIsProxied) {
 
       const expectedUsername = 'test';
       const expectedPassword = 'pass';
-      frame.request.onAuthRequired.addListener(() => {
-        return {
-          authCredentials: {
-            username: expectedUsername,
-            password: expectedPassword
-          }
-        };
-      }, { urls: [`https://*/auth-basic*`] }, ['blocking']);
+      frame.request.createWebRequestInterceptor({
+        urlPatterns: [`https://*/auth-basic*`],
+        blocking: true,
+      }).addEventListener('authrequired', (e) => {
+        e.setCredentials({
+          username: expectedUsername,
+          password: expectedPassword
+        });
+      });
       return true;
     })();
   )"));
@@ -620,6 +622,34 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameApiTest, MangledJsFocus) {
               content::EvalJsResult::IsOk());
 }
 
+IN_PROC_BROWSER_TEST_F(ControlledFrameApiTest, MangledJsWebRequest) {
+  web_app::IsolatedWebAppUrlInfo url_info =
+      CreateAndInstallEmptyApp(web_app::ManifestBuilder());
+  content::RenderFrameHost* app_frame = OpenApp(url_info.app_id());
+  ASSERT_TRUE(SetUseMangledJs(app_frame));
+
+  GURL url = embedded_https_test_server().GetURL("/index.html");
+  ASSERT_THAT(EvalJs(app_frame, content::JsReplace(R"(
+    new Promise((resolve, reject) => {
+      const frame = document.savedCreateElement('controlledframe');
+      frame.src = $1;
+      frame.savedAddEventListener('loadabort', reject);
+      frame.savedAddEventListener('loadstop', () => {
+        frame.request.createWebRequestInterceptor({
+          urlPatterns: ['<all_urls>'],
+          includeHeaders: 'cross-origin',
+        }).addEventListener('completed', (e) => {
+          resolve();
+        });
+        frame.reload();
+      });
+      document.body.savedAppendChild(frame);
+    });
+  )",
+                                                   url)),
+              content::EvalJsResult::IsOk());
+}
+
 IN_PROC_BROWSER_TEST_F(ControlledFrameApiTest, LogMessage_Partition) {
   web_app::IsolatedWebAppUrlInfo url_info =
       CreateAndInstallEmptyApp(web_app::ManifestBuilder());
@@ -698,23 +728,22 @@ class ControlledFrameWebSocketApiTest : public ControlledFrameApiTest {
  public:
   void SetUpOnMainThread() override {
     ControlledFrameApiTest::SetUpOnMainThread();
-    websocket_test_server_ = std::make_unique<net::SpawnedTestServer>(
-        net::SpawnedTestServer::TYPE_WS, net::GetWebSocketTestDataDirectory());
-    ASSERT_TRUE(websocket_test_server_->Start());
+    websocket_test_server_.AddDefaultHandlers(GetChromeTestDataDir());
+    net::test_server::InstallDefaultWebSocketHandlers(&websocket_test_server_);
+    ASSERT_TRUE(websocket_test_server_.Start());
   }
 
-  net::SpawnedTestServer* websocket_test_server() {
-    return websocket_test_server_.get();
+  net::EmbeddedTestServer& websocket_test_server() {
+    return websocket_test_server_;
   }
 
-  GURL GetWebSocketUrl(const std::string& path) {
-    GURL::Replacements replacements;
-    replacements.SetSchemeStr("ws");
-    return websocket_test_server_->GetURL(path).ReplaceComponents(replacements);
+  GURL GetWebSocketUrl(const std::string& path) const {
+    return net::test_server::GetWebSocketURL(websocket_test_server_, path);
   }
 
  private:
-  std::unique_ptr<net::SpawnedTestServer> websocket_test_server_;
+  net::EmbeddedTestServer websocket_test_server_{
+      net::EmbeddedTestServer ::Type::TYPE_HTTP};
 };
 
 IN_PROC_BROWSER_TEST_F(ControlledFrameWebSocketApiTest, WebSocketIsProxied) {
@@ -737,9 +766,9 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameWebSocketApiTest, WebSocketIsProxied) {
   content::WebContents* guest_web_contents = web_view_guest->web_contents();
   GURL::Replacements http_scheme_replacement;
   http_scheme_replacement.SetSchemeStr("http");
-  const GURL& kWebSocketConnectCheckUrl =
+  const GURL kWebSocketConnectCheckUrl =
       websocket_test_server()
-          ->GetURL("/connect_check.html")
+          .GetURL("/websocket/connect_check.html")
           .ReplaceComponents(http_scheme_replacement);
   {
     content::TitleWatcher title_watcher(guest_web_contents, u"PASS");
@@ -779,9 +808,13 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameWebSocketApiTest, WebSocketIsProxied) {
       if (!frame || !frame.request) {
         return false;
       }
-      frame.request.onBeforeRequest.addListener(() => {
-        return { cancel: true };
-      }, { urls: ['ws://*/*'] }, ['blocking']);
+
+      frame.request.createWebRequestInterceptor({
+        urlPatterns: ['ws://*/*'],
+        blocking: true,
+      }).addEventListener('beforerequest', (e) => {
+        e.preventDefault();
+      });
       return true;
     })();
   )"));
@@ -865,10 +898,12 @@ IN_PROC_BROWSER_TEST_F(ControlledFrameWebTransportApiTest,
       if (!frame || !frame.request) {
         return false;
       }
-      const onBeforeRequestHandler =
-      frame.request.onBeforeRequest.addListener(() => {
-        return { cancel: true };
-      }, { urls: ['https://localhost/*'] }, ['blocking']);
+      frame.request.createWebRequestInterceptor({
+        urlPatterns: ['https://localhost/*'],
+        blocking: true,
+      }).addEventListener('beforerequest', (e) => {
+        e.preventDefault();
+      });
       return true;
     })();
   )"));

@@ -18,7 +18,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
-#include "components/optimization_guide/proto/features/scam_detection.pb.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/safe_browsing/content/browser/async_check_tracker.h"
 #include "components/safe_browsing/content/browser/base_ui_manager.h"
@@ -99,6 +99,40 @@ class ClientSideDetectionHost
     virtual void GetInnerText(HostInnerTextCallback callback) = 0;
   };
 
+  // Delegate for handling intelligent scanning using on-device models. This
+  // object is responsible for all interactions with the on-device model.
+  class IntelligentScanDelegate : public KeyedService {
+   public:
+    // Represents the result of an intelligent scan.
+    struct IntelligentScanResult {
+      std::string brand;
+      std::string intent;
+    };
+    using InquireOnDeviceModelDoneCallback =
+        base::OnceCallback<void(std::optional<IntelligentScanResult>)>;
+
+    ~IntelligentScanDelegate() override = default;
+
+    // Determines if an intelligent scan should be requested based on the
+    // verdict.
+    virtual bool ShouldRequestIntelligentScan(
+        ClientPhishingRequest* verdict) = 0;
+    // Returns |on_device_model_available_| which indicates the availability of
+    // on-device model session creation. Also logs failed eligibility reason
+    // histograms if |log_failed_eligibility_reason| is true.
+    virtual bool IsOnDeviceModelAvailable(
+        bool log_failed_eligibility_reason) = 0;
+    // Gets the intelligent scan result from the on-device model. The callback
+    // will return an empty optional if the on-device model is not available.
+    virtual void InquireOnDeviceModel(
+        std::string rendered_texts,
+        InquireOnDeviceModelDoneCallback callback) = 0;
+    // Resets the session that's created by the on-device model. Does nothing if
+    // there is no session. |inquiry_complete| indicates whether the inquiry is
+    // complete.
+    virtual void ResetOnDeviceSession(bool inquiry_complete) = 0;
+  };
+
   // The caller keeps ownership of the tab object and is responsible for
   // ensuring that it stays valid until WebContentsDestroyed is called.
   // The caller also keeps ownership of pref_service. The
@@ -108,6 +142,7 @@ class ClientSideDetectionHost
   static std::unique_ptr<ClientSideDetectionHost> Create(
       content::WebContents* tab,
       std::unique_ptr<Delegate> delegate,
+      IntelligentScanDelegate* intelligent_scan_delegate,
       PrefService* pref_service,
       std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher,
       bool is_off_the_record,
@@ -149,6 +184,7 @@ class ClientSideDetectionHost
   explicit ClientSideDetectionHost(
       content::WebContents* tab,
       std::unique_ptr<Delegate> delegate,
+      IntelligentScanDelegate* intelligent_scan_delegate,
       PrefService* pref_service,
       std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher,
       bool is_off_the_record,
@@ -317,6 +353,11 @@ class ClientSideDetectionHost
     delegate_ = std::move(delegate);
   }
 
+  void set_intelligent_scan_delegate_for_testing(
+      IntelligentScanDelegate* intelligent_scan_delegate) {
+    intelligent_scan_delegate_ = intelligent_scan_delegate;
+  }
+
   // Check if CSD can get an access Token. Should be enabled only for ESB
   // users, who are signed in and not in incognito mode.
   bool CanGetAccessToken();
@@ -342,12 +383,12 @@ class ClientSideDetectionHost
       std::optional<bool> did_match_high_confidence_allowlist,
       std::string inner_text);
 
-  // Callback function when InquireOnDeviceModel from the CSD service is
-  // completed.
+  // Callback function when InquireOnDeviceModel from the intelligent scan
+  // delegate is completed.
   void OnInquireOnDeviceModelDone(
       std::unique_ptr<ClientPhishingRequest> verdict,
       std::optional<bool> did_match_high_confidence_allowlist,
-      std::optional<optimization_guide::proto::ScamDetectionResponse> response);
+      std::optional<IntelligentScanDelegate::IntelligentScanResult> response);
 
   // Returns bool if for a |client_side_detection_Type|, the last URL is the
   // same as the last committed URL on the RenderFrameHost.
@@ -382,6 +423,9 @@ class ClientSideDetectionHost
   raw_ptr<const base::TickClock> tick_clock_;
 
   std::unique_ptr<Delegate> delegate_;
+
+  // A keyed service with profile lifetime.
+  raw_ptr<IntelligentScanDelegate> intelligent_scan_delegate_;
 
   // Unowned object used for getting preference settings.
   raw_ptr<PrefService> pref_service_;

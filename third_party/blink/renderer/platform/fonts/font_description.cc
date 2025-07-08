@@ -29,8 +29,11 @@
 
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 
+#include <set>
+
 #include "base/compiler_specific.h"
 #include "base/memory/values_equivalent.h"
+#include "base/notreached.h"
 #include "base/strings/to_string.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/platform/web_font_description.h"
@@ -55,8 +58,10 @@ struct SameSizeAsFontDescription {
   scoped_refptr<FontPalette> palette_;
   scoped_refptr<FontVariantAlternates> font_variant_alternates_;
   AtomicString locale;
-  float sizes[5];
+  float sizes[4];
+  Length letter_spacing;
   FontSizeAdjust size_adjust_;
+  ResolvedFontFeatures resolved_font_features_;
   FontSelectionRequest selection_request_;
   FieldsAsUnsignedType bitfields;
 };
@@ -82,7 +87,7 @@ FontDescription::FontDescription()
     : specified_size_(0),
       computed_size_(0),
       adjusted_size_(0),
-      letter_spacing_(0),
+      letter_spacing_(Length(0, Length::kFixed)),
       word_spacing_(0),
       font_selection_request_(kNormalWeightValue,
                               kNormalWidthValue,
@@ -189,6 +194,20 @@ FontDescription::Size FontDescription::SmallerSize(const Size& size) {
 
 FontSelectionRequest FontDescription::GetFontSelectionRequest() const {
   return font_selection_request_;
+}
+
+float FontDescription::LetterSpacing() const {
+  switch (letter_spacing_.GetType()) {
+    case Length::kFixed:
+      return letter_spacing_.Pixels();
+    case Length::kPercent:
+      return letter_spacing_.Percent() / 100 * computed_size_;
+    case Length::kCalculated:
+      return letter_spacing_.NonNanCalculatedValue(LayoutUnit(computed_size_),
+                                                   {});
+    default:
+      NOTREACHED();
+  }
 }
 
 FontDescription::VariantLigatures FontDescription::GetVariantLigatures() const {
@@ -329,7 +348,7 @@ void FontDescription::UpdateTypesettingFeatures() {
   // When the effective letter-spacing between two characters is not zero (due
   // to either justification or non-zero computed letter-spacing), user agents
   // should not apply optional ligatures.
-  if (letter_spacing_ == 0) {
+  if (letter_spacing_.IsZero()) {
     switch (CommonLigaturesState()) {
       case FontDescription::kDisabledLigaturesState:
         fields_.typesetting_features_ &= ~blink::kLigatures;
@@ -380,7 +399,7 @@ unsigned FontDescription::StyleHashWithoutFamilyList() const {
   WTF::AddFloatToHash(hash, specified_size_);
   WTF::AddFloatToHash(hash, computed_size_);
   WTF::AddFloatToHash(hash, adjusted_size_);
-  WTF::AddFloatToHash(hash, letter_spacing_);
+  WTF::AddIntToHash(hash, letter_spacing_.GetHash());
   WTF::AddFloatToHash(hash, word_spacing_);
   WTF::AddIntToHash(hash, fields_as_unsigned_.parts[0]);
   WTF::AddIntToHash(hash, fields_as_unsigned_.parts[1]);
@@ -521,10 +540,51 @@ int FontDescription::MinimumPrefixWidthToHyphenate() const {
 }
 
 ResolvedFontFeatures FontDescription::ResolveFontFeatures() const {
-  if (const FontVariantAlternates* alternates = GetFontVariantAlternates()) {
-    return alternates->GetResolvedFontFeatures();
+  if (const auto* alternates = GetFontVariantAlternates()) {
+    ResolvedFontFeatures features_with_description =
+        alternates->GetResolvedFontFeatures();
+    features_with_description.AppendVector(resolved_font_features_);
+    return features_with_description;
   }
-  return ResolvedFontFeatures();
+  return resolved_font_features_;
+}
+
+void FontDescription::MergeFontFeatureSettingsWithDescriptor(
+    const FontFeatureSettings* feature_settings_descriptor) {
+  ResolvedFontFeatures resolved_font_features =
+      ResolveFontFeatureSettingsDescriptor(FeatureSettings(),
+                                           feature_settings_descriptor);
+  SetResolvedFontFeatures(std::move(resolved_font_features));
+}
+
+void FontDescription::MergeFontVariationSettingsWithDescriptor(
+    const FontVariationSettings* variation_settings_descriptor) {
+  scoped_refptr<FontVariationSettings> font_variation_settings =
+      FontVariationSettings::Create();
+
+  if ((!variation_settings_ || variation_settings_->size() == 0) &&
+      (!variation_settings_descriptor ||
+       variation_settings_descriptor->size() == 0)) {
+    SetVariationSettings(font_variation_settings);
+    return;
+  }
+
+  std::set<uint32_t> existing_tags;
+  // Store the existing axis settings
+  if (variation_settings_) {
+    for (const FontVariationAxis& axis : *variation_settings_) {
+      existing_tags.insert(axis.Tag());
+      font_variation_settings->Append(axis);
+    }
+  }
+  for (const FontVariationAxis& axis : *variation_settings_descriptor) {
+    if (existing_tags.find(axis.Tag()) == existing_tags.end()) {
+      font_variation_settings->Append(
+          FontVariationAxis(axis.Tag(), axis.Value()));
+    }
+  }
+  std::sort(font_variation_settings->begin(), font_variation_settings->end());
+  SetVariationSettings(font_variation_settings);
 }
 
 String FontDescription::ToString(GenericFamilyType familyType) {
@@ -737,7 +797,7 @@ String FontDescription::ToString() const {
       // string method.
       (locale_ ? locale_->LocaleString().Ascii().c_str() : ""), specified_size_,
       computed_size_, adjusted_size_, size_adjust_.ToString().Ascii().c_str(),
-      letter_spacing_, word_spacing_,
+      LetterSpacing(), word_spacing_,
       font_selection_request_.ToString().Ascii().c_str(),
       blink::ToString(
           static_cast<TypesettingFeatures>(fields_.typesetting_features_))

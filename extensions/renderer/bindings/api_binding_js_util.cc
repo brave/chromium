@@ -24,7 +24,8 @@
 
 namespace extensions {
 
-gin::WrapperInfo APIBindingJSUtil::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo APIBindingJSUtil::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 APIBindingJSUtil::APIBindingJSUtil(APITypeReferenceMap* type_refs,
                                    APIRequestHandler* request_handler,
@@ -39,7 +40,8 @@ APIBindingJSUtil::~APIBindingJSUtil() = default;
 
 gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return Wrappable<APIBindingJSUtil>::GetObjectTemplateBuilder(isolate)
+  return DeprecatedWrappable<APIBindingJSUtil>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("sendRequest", &APIBindingJSUtil::SendRequest)
       .SetMethod("registerEventArgumentMassager",
                  &APIBindingJSUtil::RegisterEventArgumentMassager)
@@ -79,7 +81,7 @@ void APIBindingJSUtil::SendRequest(
       NOTREACHED();
     }
     v8::Local<v8::Object> options_obj = options.As<v8::Object>();
-    if (!options_obj->GetPrototype()->IsNull()) {
+    if (!options_obj->GetPrototypeV2()->IsNull()) {
       NOTREACHED();
     }
     gin::Dictionary options_dict(isolate, options_obj);

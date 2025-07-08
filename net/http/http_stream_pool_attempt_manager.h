@@ -44,7 +44,6 @@
 #include "net/spdy/multiplexed_session_creation_initiator.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
-#include "url/gurl.h"
 
 namespace net {
 
@@ -144,6 +143,8 @@ class HttpStreamPool::AttemptManager
   base::TimeTicks dns_resolution_end_time() const {
     return dns_resolution_end_time_;
   }
+
+  NextProtoSet allowed_alpns() const { return allowed_alpns_; }
 
   const NetLogWithSource& net_log();
 
@@ -319,8 +320,6 @@ class HttpStreamPool::AttemptManager
   InitialAttemptState CalculateInitialAttemptState();
 
   bool UsingTls() const;
-
-  bool RequiresHTTP11();
 
   void StartInternal(Job* job);
 

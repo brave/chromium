@@ -5,6 +5,7 @@
 #ifndef CC_TREES_LAYER_TREE_IMPL_H_
 #define CC_TREES_LAYER_TREE_IMPL_H_
 
+#include <array>
 #include <map>
 #include <memory>
 #include <set>
@@ -50,7 +51,6 @@ namespace cc {
 enum class ActivelyScrollingType;
 class DebugRectHistory;
 class ViewTransitionRequest;
-class DroppedFrameCounter;
 class GlobalStateThatImpactsTilePriority;
 class HeadsUpDisplayLayerImpl;
 class ImageDecodeCache;
@@ -132,7 +132,7 @@ class CC_EXPORT LayerTreeImpl {
   TileManager* tile_manager() const;
   ImageDecodeCache* image_decode_cache() const;
   ImageAnimationController* image_animation_controller() const;
-  DroppedFrameCounter* dropped_frame_counter() const;
+  FrameSorter* frame_sorter() const;
   MemoryHistory* memory_history() const;
   DebugRectHistory* debug_rect_history() const;
   const GlobalStateThatImpactsTilePriority& global_tile_state() const {
@@ -163,7 +163,6 @@ class CC_EXPORT LayerTreeImpl {
                                      float initial_opacity);
   void DidAnimateScrollOffset();
   bool use_gpu_rasterization() const;
-  bool create_low_res_tiling() const;
   bool RequiresHighResToDraw() const;
   bool SmoothnessTakesPriority() const;
   VideoFrameControllerClient* GetVideoFrameControllerClient() const;
@@ -414,6 +413,7 @@ class CC_EXPORT LayerTreeImpl {
   bool new_local_surface_id_request_for_testing() const {
     return new_local_surface_id_request_;
   }
+  bool TakeNewLocalSurfaceIdRequestForVizProcess();
 
   void SetScreenshotDestinationToken(base::UnguessableToken destination_token);
   base::UnguessableToken TakeScreenshotDestinationToken();
@@ -508,6 +508,9 @@ class CC_EXPORT LayerTreeImpl {
 
   void set_needs_update_draw_properties() {
     needs_update_draw_properties_ = true;
+  }
+  void clear_needs_update_draw_properties_for_testing() {
+    needs_update_draw_properties_ = false;
   }
   bool needs_update_draw_properties() const {
     return needs_update_draw_properties_;
@@ -665,6 +668,10 @@ class CC_EXPORT LayerTreeImpl {
   // Compute the current selection handle location and visbility with respect to
   // the viewport.
   void GetViewportSelection(viz::Selection<gfx::SelectionBound>* selection);
+
+  const BrowserControlsParams& browser_controls_params() const {
+    return browser_controls_params_;
+  }
 
   bool browser_controls_shrink_blink_size() const {
     return browser_controls_params_.browser_controls_shrink_blink_size;
@@ -826,6 +833,11 @@ class CC_EXPORT LayerTreeImpl {
   base::flat_set<blink::ViewTransitionToken> GetCaptureViewTransitionTokens()
       const;
 
+  const std::vector<std::unique_ptr<ViewTransitionRequest>>&
+  view_transition_requests() const {
+    return view_transition_requests_;
+  }
+
   void UpdateAllScrollbarGeometriesForTesting() {
     UpdateAllScrollbarGeometries();
   }
@@ -891,7 +903,7 @@ class CC_EXPORT LayerTreeImpl {
   viz::BeginFrameArgs created_begin_frame_args_;
   int source_frame_number_ = 0;
   BeginMainFrameTraceId trace_id_{0};
-  raw_ptr<HeadsUpDisplayLayerImpl, DanglingUntriaged> hud_layer_;
+  raw_ptr<HeadsUpDisplayLayerImpl> hud_layer_;
   PropertyTrees property_trees_;
   SkColor4f background_color_;
 
@@ -911,6 +923,10 @@ class CC_EXPORT LayerTreeImpl {
   viz::LocalSurfaceId local_surface_id_from_parent_;
 
   bool new_local_surface_id_request_ : 1 = false;
+
+  // This will be set when new_local_surface_id_request_ is set,
+  // but will only be cleared in VizLayerContext::UpdateDisplayTreeFrom().
+  bool new_local_surface_id_request_for_viz_process_ : 1 = false;
 
   bool needs_update_draw_properties_ : 1 = true;
 

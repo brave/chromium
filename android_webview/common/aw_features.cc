@@ -164,6 +164,18 @@ BASE_FEATURE(kWebViewSeparateResourceContext,
              "WebViewSeparateResourceContext",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// Whether to skip shouldInterceptRequest and other checks for prefetch
+// requests.
+BASE_FEATURE(kWebViewSkipInterceptsForPrefetch,
+             "WebViewSkipInterceptsForPrefetch",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Whether to skip `WebView::ContentsPreferredMinimumSize` within
+// `AwRenderViewExt::UpdateContentsSize`.
+BASE_FEATURE(kWebViewSkipPreferredSizeForContentsSize,
+             "WebViewSkipPreferredSizeForContentsSize",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Whether to use initial network state during initialization to speed up
 // startup.
 BASE_FEATURE(kWebViewUseInitialNetworkStateAtStartup,
@@ -188,11 +200,11 @@ BASE_FEATURE(kWebViewPreloadClasses,
 // Prefetches the native WebView code to memory during startup.
 BASE_FEATURE(kWebViewPrefetchNativeLibrary,
              "WebViewPrefetchNativeLibrary",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // A parameter to trigger the prefetch from the renderer instead of the browser.
 const base::FeatureParam<bool> kWebViewPrefetchFromRenderer{
-    &kWebViewPrefetchNativeLibrary, "WebViewPrefetchFromRenderer", false};
+    &kWebViewPrefetchNativeLibrary, "WebViewPrefetchFromRenderer", true};
 
 // Include system bars in safe-area-inset CSS environment values for WebViews
 // that take up the entire screen
@@ -292,4 +304,17 @@ const base::FeatureParam<int> kWebViewCacheSizeLimitMaximum{
 const base::FeatureParam<double> kWebViewCodeCacheSizeLimitMultiplier{
     &kWebViewCacheSizeLimitDerivedFromAppCacheQuota,
     "WebViewCodeCacheSizeLimitMultiplier", 0.5};
+
+// Connect to the non-embedded components provider from a background thread.
+BASE_FEATURE(kWebViewConnectToComponentProviderInBackground,
+             "WebViewConnectToComponentProviderInBackground",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables phase 2 of using startup tasks logic for webview chromium
+// initialization which starts browser processes asynchronously, when starting
+// webview asynchronously.
+BASE_FEATURE(kWebViewUseStartupTasksLogicP2,
+             "WebViewUseStartupTasksLogicP2",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 }  // namespace android_webview::features

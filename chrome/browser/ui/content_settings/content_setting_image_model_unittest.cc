@@ -39,7 +39,7 @@
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_request_manager.h"
-#include "components/permissions/permission_ui_selector.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "components/permissions/request_type.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "components/permissions/test/mock_permission_request.h"
@@ -90,6 +90,7 @@ class ContentSettingImageModelTest : public BrowserWithTestWindowTest {
         {features::kQuietNotificationPrompts,
 #if BUILDFLAG(IS_MAC)
          features::kAppShimNotificationAttribution,
+         features::kUseAdHocSigningForWebAppShims,
 #endif
          // Enable all sensors just to avoid hardcoding the expected messages
          // to the motion sensor-specific ones.

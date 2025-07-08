@@ -14,22 +14,22 @@ import android.widget.Button;
 import androidx.annotation.AnyThread;
 import androidx.annotation.IdRes;
 import androidx.annotation.MainThread;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.Promise;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.AccountsChangeObserver;
 import org.chromium.components.signin.Tribool;
 import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
-import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
+import org.chromium.google_apis.gaia.CoreAccountId;
+import org.chromium.google_apis.gaia.GaiaId;
 import org.chromium.google_apis.gaia.GoogleServiceAuthError;
 import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
 
@@ -58,19 +58,13 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
 
     private static final String TAG = "FakeAccountManager";
 
-    /**
-     * All the account names starting with this prefix will be considered as a child account in
-     * {@link FakeAccountManagerFacade}.
-     */
-    private static final String CHILD_ACCOUNT_NAME_PREFIX = "child.";
-
     /** An {@link Activity} stub to test add account flow. */
     public static final class AddAccountActivityStub extends Activity {
         public static final @IdRes int OK_BUTTON_ID = R.id.ok_button;
         public static final @IdRes int CANCEL_BUTTON_ID = R.id.cancel_button;
 
         @Override
-        public void onCreate(Bundle savedInstanceState) {
+        public void onCreate(@Nullable Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
 
             setContentView(R.layout.test_add_account_layout);
@@ -157,14 +151,14 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
         @Nullable AccountHolder accountHolder = getAccountHolder(coreAccountInfo.getId());
         if (accountHolder == null) {
             Log.w(TAG, "Cannot find account:" + coreAccountInfo.toString());
-            ThreadUtils.runOnUiThread(
+            ThreadUtils.postOnUiThread(
                     () ->
                             callback.onGetTokenFailure(
                                     new GoogleServiceAuthError(
                                             GoogleServiceAuthErrorState.USER_NOT_SIGNED_UP)));
             return;
         }
-        ThreadUtils.runOnUiThread(
+        ThreadUtils.postOnUiThread(
                 () -> callback.onGetTokenSuccess(accountHolder.getAccessTokenOrGenerateNew(scope)));
     }
 
@@ -186,16 +180,6 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     @Override
     public void waitForPendingTokenRequestsToComplete(Runnable requestsCompletedCallback) {
         throw new UnsupportedOperationException("Not implemented");
-    }
-
-    @Override
-    public void checkChildAccountStatus(
-            CoreAccountInfo coreAccountInfo, ChildAccountStatusListener listener) {
-        if (coreAccountInfo.getEmail().startsWith(CHILD_ACCOUNT_NAME_PREFIX)) {
-            listener.onStatusReady(true, coreAccountInfo);
-        } else {
-            listener.onStatusReady(false, /* childAccount= */ null);
-        }
     }
 
     @Override
@@ -352,15 +336,6 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     }
 
     /**
-     * Creates an email used to identify child accounts in tests. A child-specific prefix will be
-     * appended to the base name so that the created account will be considered a child account in
-     * {@link FakeAccountManagerFacade}.
-     */
-    public static String generateChildEmail(String baseEmail) {
-        return CHILD_ACCOUNT_NAME_PREFIX + baseEmail;
-    }
-
-    /**
      * Blocks updates to the account lists returned by and {@link #getAccounts}. After this method
      * is called, subsequent calls to {@link #getAccounts} will return promises that won't be
      * updated until the returned {@link AutoCloseable} is closed.
@@ -438,15 +413,19 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     }
 
     /**
-     * Replaces any capabilities that have been previously set with the given accountCapabilities.
-     * and notifies AccountsChangeObservers.
+     * Updates the previously set capabilities with the ones in accountCapabilities and notifies
+     * AccountsChangeObservers if there has been a change. New capabilities that were not already
+     * set are added and existing ones are updated with the new values.
      */
-    public void setAccountCapabilities(
+    public void updateAccountCapabilities(
             CoreAccountId accountId, AccountCapabilities accountCapabilities) {
         ThreadUtils.checkUiThread();
         assert accountId != null;
         AccountHolder accountHolder = getAccountHolder(accountId);
-        accountHolder.setAccountCapabilities(accountCapabilities);
-        fireOnAccountsChangedNotification();
+        boolean capabilitiesChanged =
+                accountHolder.getAccountCapabilities().updateWith(accountCapabilities);
+        if (capabilitiesChanged) {
+            fireOnAccountsChangedNotification();
+        }
     }
 }

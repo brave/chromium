@@ -90,9 +90,6 @@ std::optional<DeviceInfo::SharingInfo> SpecificsToSharingInfo(
     enabled_features.insert(specifics.sharing_fields().enabled_features(i));
   }
   return DeviceInfo::SharingInfo(
-      {specifics.sharing_fields().vapid_fcm_token(),
-       specifics.sharing_fields().vapid_p256dh(),
-       specifics.sharing_fields().vapid_auth_secret()},
       {specifics.sharing_fields().sender_id_fcm_token_v2(),
        specifics.sharing_fields().sender_id_p256dh_v2(),
        specifics.sharing_fields().sender_id_auth_secret_v2()},
@@ -264,11 +261,6 @@ std::unique_ptr<DeviceInfoSpecifics> MakeLocalDeviceSpecifics(
       info.sharing_info();
   if (sharing_info) {
     SharingSpecificFields* sharing_fields = specifics->mutable_sharing_fields();
-    sharing_fields->set_vapid_fcm_token(
-        sharing_info->vapid_target_info.fcm_token);
-    sharing_fields->set_vapid_p256dh(sharing_info->vapid_target_info.p256dh);
-    sharing_fields->set_vapid_auth_secret(
-        sharing_info->vapid_target_info.auth_secret);
     sharing_fields->set_sender_id_fcm_token_v2(
         sharing_info->sender_id_target_info.fcm_token);
     sharing_fields->set_sender_id_p256dh_v2(
@@ -674,7 +666,8 @@ std::optional<ModelError> DeviceInfoSyncBridge::ParseSpecificsOnBackendSequence(
   for (const Record& r : *record_list) {
     DeviceInfoSpecifics specifics;
     if (!specifics.ParseFromString(r.value)) {
-      return ModelError(FROM_HERE, "Failed to deserialize specifics.");
+      return ModelError(
+          FROM_HERE, ModelError::Type::kDeviceInfoDeserializeSpecificsFailed);
     }
 
     std::string cache_guid = specifics.cache_guid();
@@ -722,7 +715,8 @@ void DeviceInfoSyncBridge::OnStoreCreated(
     const std::optional<syncer::ModelError>& error,
     std::unique_ptr<DataTypeStore> store) {
   if (error) {
-    change_processor()->ReportError(*error);
+    change_processor()->ReportError(
+        {FROM_HERE, ModelError::Type::kDeviceInfoStoreCreationFailed});
     return;
   }
 

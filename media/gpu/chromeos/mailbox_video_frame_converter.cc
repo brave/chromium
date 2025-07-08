@@ -30,7 +30,7 @@
 #include "media/gpu/macros.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace {
@@ -289,7 +289,7 @@ void MailboxVideoFrameConverter::WrapSharedImageAndVideoFrameAndOutput(
       frame->format(), shared_image, shared_image_sync_token,
       std::move(release_mailbox_cb), coded_size, frame->visible_rect(),
       frame->natural_size(), frame->timestamp());
-  mailbox_frame->set_color_space(frame->ColorSpace());
+  mailbox_frame->set_color_space(shared_image->color_space());
   mailbox_frame->set_hdr_metadata(frame->hdr_metadata());
   mailbox_frame->set_metadata(frame->metadata());
   mailbox_frame->metadata().read_lock_fences_enabled = true;
@@ -397,9 +397,11 @@ bool MailboxVideoFrameConverter::GenerateSharedImage(
   }
 
   // The allocated SharedImages should be usable for the (Display) compositor
-  // and, potentially, for overlays (Scanout).
+  // and, potentially, for overlays (Scanout). The shared image can be copied to
+  // GL texture over WebGL either directly or over raster interface.
   gpu::SharedImageUsageSet shared_image_usage =
-      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT |
+      gpu::SHARED_IMAGE_USAGE_GLES2_READ | gpu::SHARED_IMAGE_USAGE_RASTER_READ;
 
   // These SharedImages might also be used for zero-copy import into WebGPU to
   // serve as the sources of WebGPU reads (e.g., for video effects processing).

@@ -20,6 +20,10 @@ namespace content {
 class WebContents;
 }  // namespace content
 
+namespace tab_groups {
+struct TabGroupInfo;
+}  // namespace tab_groups
+
 namespace ash {
 
 // Abstraction of the `Browser` class from chrome/browser/ui/browser.h for use
@@ -63,8 +67,14 @@ class BrowserDelegate {
   // Returns whether the browser is in the process of being closed and deleted.
   virtual bool IsClosing() const = 0;
 
+  // Returns whether the browser window is active.
+  virtual bool IsActive() const = 0;
+
   // Shows the browser window, or activates it if it's already visible.
   virtual void Show() = 0;
+
+  // Activates the browser window.
+  virtual void Activate() = 0;
 
   // Minimizes the browser window.
   virtual void Minimize() = 0;
@@ -89,6 +99,9 @@ class BrowserDelegate {
   enum class TabPinning { kYes, kNo };
   virtual content::WebContents* NavigateWebApp(const GURL& url,
                                                TabPinning pin_tab) = 0;
+
+  // Creates the specified tab group.
+  virtual void CreateTabGroup(const tab_groups::TabGroupInfo& tab_group) = 0;
 
  protected:
   ~BrowserDelegate() = default;

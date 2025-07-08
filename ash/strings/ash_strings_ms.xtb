@@ -606,7 +606,6 @@ Jika tidak, pad sentuh terbina dalam akan didayakan semula selepas <ph name="TIM
 <translation id="3033545621352269033">Dihidupkan</translation>
 <translation id="3033912566804961911">Gabung dengan <ph name="DESK_NAME" /></translation>
 <translation id="3036649622769666520">Buka Fail</translation>
-<translation id="3038571455154067151">Untuk log masuk, masukkan kod akses ibu bapa Family Link anda</translation>
 <translation id="3039939407102840004">Paras cas bateri stilus <ph name="PERCENTAGE" /> peratus.</translation>
 <translation id="304097922505898963">Buka apl Pintasan Kekunci</translation>
 <translation id="304417730895741346">Apl anda yang disematkan dan dibuka berada pada rak. Untuk menyematkan apl pada rak, klik kanan apl atau ketik pad sentuh menggunakan dua jari.</translation>
@@ -1014,6 +1013,7 @@ Semua pengguna mesti log keluar untuk meneruskan.</translation>
 <translation id="4305817255990598646">Tukar</translation>
 <translation id="4307713728991152670">Menyediakan pemaparan foto, media dan apl terbaharu telefon anda</translation>
 <translation id="4312840429157639164">Kamera diautojajar ke penjuru kanan sebelah atas. Bercanggah dengan permukaan sistem.</translation>
+<translation id="4312935606722154789">Kumpulkan atau nyahkumpulkan dua tetingkap bersebelahan</translation>
 <translation id="4316910396681052118">SEMUA APL</translation>
 <translation id="4321179778687042513">ctrl</translation>
 <translation id="4322385711258710213">Sembunyikan semua cadangan Penyemak Imbas Chrome</translation>
@@ -1582,7 +1582,6 @@ Tiada peranti disambungkan.</translation>
 <translation id="6095425951508823973">Tambahkan sambungan dengan <ph name="PROVIDER" /></translation>
 <translation id="6099678161144790572">Diedit dalam bulan lepas</translation>
 <translation id="6103838137565245112">sistem</translation>
-<translation id="610395411842312282">Kumpulkan dua tetingkap bersebelahan</translation>
 <translation id="6108952804512516814">Buat dengan AI</translation>
 <translation id="6114505516289286752">Fail pertuturan <ph name="LANGUAGE" /> dimuat turun</translation>
 <translation id="6119360623251949462"><ph name="CHARGING_STATE" />. <ph name="BATTERY_SAVER_STATE" /></translation>

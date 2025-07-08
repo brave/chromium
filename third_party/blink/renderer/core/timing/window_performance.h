@@ -48,7 +48,6 @@
 #include "third_party/blink/renderer/core/timing/performance_event_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_navigation.h"
 #include "third_party/blink/renderer/core/timing/performance_timing.h"
-#include "third_party/blink/renderer/core/timing/performance_timing_for_reporting.h"
 #include "third_party/blink/renderer/core/timing/responsiveness_metrics.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
@@ -60,6 +59,8 @@ struct FrameTimingDetails;
 namespace blink {
 
 class AnimationFrameTimingInfo;
+class InteractiveDetector;
+class PerformanceTimingForReporting;
 
 class CORE_EXPORT WindowPerformance final : public Performance,
                                             public PerformanceMonitor::Client,
@@ -141,12 +142,10 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   void QueueLongAnimationFrameTiming(
       AnimationFrameTimingInfo*,
       std::optional<DOMPaintTimingInfo> paint_timing_info = std::nullopt);
-  void AddFirstPaintTiming(const DOMPaintTimingInfo& paint_timing_info,
-                           bool is_triggered_by_soft_navigation);
+  void AddFirstPaintTiming(const DOMPaintTimingInfo& paint_timing_info);
 
   void AddFirstContentfulPaintTiming(
-      const DOMPaintTimingInfo& paint_timing_info,
-      bool is_triggered_by_soft_navigation);
+      const DOMPaintTimingInfo& paint_timing_info);
 
   // PerformanceMonitor::Client implementation.
   void ReportLongTask(base::TimeTicks start_time,
@@ -157,7 +156,8 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   void AddLayoutShiftEntry(LayoutShift*);
   void AddVisibilityStateEntry(bool is_visible, base::TimeTicks start_time);
   void AddSoftNavigationEntry(const AtomicString& name,
-                              base::TimeTicks start_time);
+                              base::TimeTicks start_time,
+                              const DOMPaintTimingInfo& paint_timing_info);
 
   // PageVisibilityObserver
   void PageVisibilityChanged() override;
@@ -170,8 +170,14 @@ class CORE_EXPORT WindowPerformance final : public Performance,
       base::TimeTicks load_time,
       const AtomicString& id,
       const String& url,
-      Element*,
-      bool is_triggered_by_soft_navigation);
+      Element*);
+  void OnInteractionContentfulPaintUpdated(
+      std::optional<DOMPaintTimingInfo> paint_timing_info,
+      uint64_t paint_size,
+      base::TimeTicks load_time,
+      const AtomicString& id,
+      const String& url,
+      Element*);
 
   void Trace(Visitor*) const override;
 

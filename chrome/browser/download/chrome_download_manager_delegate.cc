@@ -64,6 +64,7 @@
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_item_rename_handler.h"
 #include "components/download/public/common/download_stats.h"
+#include "components/enterprise/connectors/core/reporting_utils.h"
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "components/pdf/common/constants.h"
 #include "components/pdf/common/pdf_util.h"
@@ -73,6 +74,7 @@
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/buildflags.h"
+#include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_search_api/safe_search_util.h"
@@ -343,6 +345,8 @@ void OnDownloadDialogClosed(
       std::move(callback).Run(DownloadConfirmationResult::CANCELED,
                               ui::SelectedFileInfo());
       break;
+    case DownloadLocationDialogResult::CONFIRMED_WITHOUT_USER_INPUT:
+      [[fallthrough]];
     case DownloadLocationDialogResult::DUPLICATE_DIALOG:
       // TODO(xingliu): Figure out the dialog behavior on multiple downloads.
       // Currently we just let other downloads continue, which doesn't make
@@ -461,11 +465,18 @@ void MaybeReportDangerousDownloadBlocked(
     if (download->GetState() == DownloadItem::DownloadState::COMPLETE) {
       raw_digest_sha256 = download->GetHash();
     }
+    google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+        referrer_chain;
+    if (base::FeatureList::IsEnabled(safe_browsing::kEnhancedFieldsForSecOps)) {
+      referrer_chain =
+          safe_browsing::GetOrIdentifyReferrerChainForEnterprise(*download);
+    }
+
     router->OnDangerousDownloadEvent(
         download->GetURL(), download->GetTabUrl(), download_path,
         base::HexEncode(raw_digest_sha256), danger_type,
         download->GetMimeType(), /*scan_id*/ "", download->GetTotalBytes(),
-        enterprise_connectors::EventResult::BLOCKED);
+        referrer_chain, enterprise_connectors::EventResult::BLOCKED);
   }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 #endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
@@ -681,6 +692,10 @@ bool ChromeDownloadManagerDelegate::DetermineDownloadTarget(
   DownloadPathReservationTracker::FilenameConflictAction action =
       kDefaultPlatformConflictAction;
 #if BUILDFLAG(IS_ANDROID)
+  if (base::android::BuildInfo::GetInstance()->is_desktop()) {
+    action = DownloadPathReservationTracker::UNIQUIFY;
+  }
+
   if (download->IsTransient()) {
     if (download_path.empty() && download->GetMimeType() == pdf::kPDFMimeType &&
         !download->IsMustDownload()) {

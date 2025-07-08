@@ -16,6 +16,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/enterprise/connectors/core/common.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,6 +28,7 @@ namespace {
 constexpr char kAnalysisUrl[] = "https://scan.com/";
 constexpr char kUrl[] = "https://bar.com/";
 constexpr char kSourceUrl[] = "https://baz.com/";
+constexpr char kSourceEmail[] = "test-user@gmail.com";
 constexpr char kTabTitle[] = "tab_title";
 constexpr char kMessage[] = "message";
 constexpr char kMethod[] = "METHOD";
@@ -157,9 +159,9 @@ TEST_F(ClipboardRequestHandlerTest, Text) {
 
   auto handler = ClipboardRequestHandler::Create(
       &info, &binary_upload_service_, profile_.get(), GURL(kUrl),
-      ClipboardRequestHandler::Type::kText,
-      safe_browsing::DeepScanAccessPoint::PASTE, GetSource(), kMethod,
-      CreateTestData(kMaxSize), base::BindOnce([](RequestHandlerResult result) {
+      ClipboardRequestHandler::Type::kText, DeepScanAccessPoint::PASTE,
+      GetSource(), kSourceEmail, kMethod, CreateTestData(kMaxSize),
+      base::BindOnce([](RequestHandlerResult result) {
         EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
         EXPECT_EQ(result.complies, false);
         EXPECT_EQ(result.custom_rule_message.message_segments_size(), 1);
@@ -229,9 +231,9 @@ TEST_F(ClipboardRequestHandlerTest, Image) {
 
   auto handler = ClipboardRequestHandler::Create(
       &info, &binary_upload_service_, profile_.get(), GURL(kUrl),
-      ClipboardRequestHandler::Type::kImage,
-      safe_browsing::DeepScanAccessPoint::DRAG_AND_DROP, GetSource(), kMethod,
-      CreateTestData(kMaxSize), base::BindOnce([](RequestHandlerResult result) {
+      ClipboardRequestHandler::Type::kImage, DeepScanAccessPoint::DRAG_AND_DROP,
+      GetSource(), kSourceEmail, kMethod, CreateTestData(kMaxSize),
+      base::BindOnce([](RequestHandlerResult result) {
         EXPECT_EQ(result.final_result, FinalContentAnalysisResult::FAILURE);
         EXPECT_EQ(result.complies, false);
         EXPECT_EQ(result.custom_rule_message.message_segments_size(), 1);

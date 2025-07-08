@@ -51,6 +51,7 @@ static_library("safe_browsing") {
     "//components/safe_browsing/content/browser/notification_content_detection:notification_content_detection",
     "//components/safe_browsing/content/browser/triggers:suspicious_site_trigger",
     "//components/safe_browsing/content/browser/web_ui",
+    "//components/safe_browsing/content/browser/web_ui:local_state_delegate",
     "//components/safe_browsing/core/browser",
     "//components/safe_browsing/core/browser:download_check_result",
     "//components/safe_browsing/core/browser:referrer_chain_provider",
@@ -71,6 +72,7 @@ static_library("safe_browsing") {
     "//components/vector_icons:vector_icons",
     "//mojo/public/cpp/platform",
     "//mojo/public/cpp/system",
+    "//services/metrics/public/cpp:ukm_builders",
     "//services/preferences/public/cpp",
   ]
 
@@ -136,6 +138,8 @@ static_library("safe_browsing") {
       "chrome_user_population_helper.h",
       "chrome_v4_protocol_config_provider.cc",
       "chrome_v4_protocol_config_provider.h",
+      "client_side_detection_intelligent_scan_delegate_factory.cc",
+      "client_side_detection_intelligent_scan_delegate_factory.h",
       "client_side_detection_service_factory.cc",
       "client_side_detection_service_factory.h",
       "delayed_warning_navigation_throttle.cc",
@@ -166,8 +170,6 @@ static_library("safe_browsing") {
       "download_protection/file_analyzer.h",
       "download_protection/file_system_access_metadata.cc",
       "download_protection/file_system_access_metadata.h",
-      "download_protection/ppapi_download_request.cc",
-      "download_protection/ppapi_download_request.h",
       "external_app_redirect_checking.cc",
       "external_app_redirect_checking.h",
       "network_context_service.cc",
@@ -211,6 +213,17 @@ static_library("safe_browsing") {
       "user_interaction_observer.cc",
       "user_interaction_observer.h",
     ]
+    if (is_android) {
+      sources += [
+        "android/client_side_detection_intelligent_scan_delegate_android.cc",
+        "android/client_side_detection_intelligent_scan_delegate_android.h",
+      ]
+    } else {
+      sources += [
+        "client_side_detection_intelligent_scan_delegate_desktop.cc",
+        "client_side_detection_intelligent_scan_delegate_desktop.h",
+      ]
+    }
     deps += [
       ":advanced_protection",
       ":metrics_collector",
@@ -494,6 +507,8 @@ static_library("safe_browsing") {
         "android/services_delegate_android.h",
         "download_protection/download_protection_delegate_android.cc",
         "download_protection/download_protection_delegate_android.h",
+        "download_protection/rate_limiting_key_manager.cc",
+        "download_protection/rate_limiting_key_manager.h",
         "tailored_security/consented_message_android.cc",
         "tailored_security/consented_message_android.h",
         "tailored_security/unconsented_message_android.cc",

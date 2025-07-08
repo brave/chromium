@@ -41,8 +41,6 @@ import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
-import org.chromium.base.task.PostTask;
-import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.app.feed.FeedActionDelegateImpl;
 import org.chromium.chrome.browser.back_press.BackPressMetrics;
@@ -69,7 +67,6 @@ import org.chromium.chrome.browser.magic_stack.HomeModulesMetricsUtils;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegateHost;
 import org.chromium.chrome.browser.magic_stack.ModuleRegistry;
 import org.chromium.chrome.browser.metrics.StartupMetricsTracker;
-import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator;
 import org.chromium.chrome.browser.omnibox.OmniboxFocusReason;
 import org.chromium.chrome.browser.omnibox.OmniboxStub;
@@ -112,6 +109,7 @@ import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -136,6 +134,10 @@ public class NewTabPage
     // Key for the scroll position data that may be stored in a navigation entry.
     public static final String CONTEXT_MENU_USER_ACTION_PREFIX = "Suggestions";
 
+    // This is to count simultaneous NTP for the "NewTabPage.Count" UMA metric. This is
+    // incremented/decremented on the UI thread.
+    private static int sTotalCount;
+
     protected final Tab mTab;
     private final Supplier<Tab> mActivityTabProvider;
     private final ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
@@ -149,7 +151,6 @@ public class NewTabPage
     protected final TileGroup.Delegate mTileGroupDelegate;
     private final boolean mIsTablet;
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
-    private final ContextMenuManager mContextMenuManager;
     private final ObserverList<MostVisitedTileClickObserver> mMostVisitedTileClickObservers;
     private final BottomSheetController mBottomSheetController;
     private FeedSurfaceProvider mFeedSurfaceProvider;
@@ -158,6 +159,7 @@ public class NewTabPage
     private TabObserver mTabObserver;
     private LifecycleObserver mLifecycleObserver;
     protected boolean mSearchProviderHasLogo;
+    protected boolean mIsDefaultSearchEngineGoogle;
 
     protected OmniboxStub mOmniboxStub;
     private VoiceRecognitionHandler mVoiceRecognitionHandler;
@@ -240,7 +242,7 @@ public class NewTabPage
 
             // Fallback added for metric records only.
             restoringState.addObserver(
-                    new Callback<Integer>() {
+                    new Callback<>() {
                         long mStart;
 
                         @Override
@@ -595,7 +597,7 @@ public class NewTabPage
                 };
         mActivityLifecycleDispatcher.register(mLifecycleObserver);
 
-        updateSearchProviderHasLogo();
+        updateSearchProvider();
         initializeMainView(
                 activity,
                 windowAndroid,
@@ -634,22 +636,12 @@ public class NewTabPage
 
         NewTabPageUma.recordContentSuggestionsDisplayStatus(profile);
 
-        // TODO(twellington): Move this somewhere it can be shared with NewTabPageView?
-        Runnable closeContextMenuCallback = activity::closeContextMenu;
-        mContextMenuManager =
-                new ContextMenuManager(
-                        mNewTabPageManager.getNavigationDelegate(),
-                        mFeedSurfaceProvider.getTouchEnabledDelegate(),
-                        closeContextMenuCallback,
-                        NewTabPage.CONTEXT_MENU_USER_ACTION_PREFIX);
-        windowAndroid.addContextMenuCloseListener(mContextMenuManager);
-
         mNewTabPageLayout.initialize(
                 mNewTabPageManager,
                 activity,
                 mTileGroupDelegate,
                 mSearchProviderHasLogo,
-                mTemplateUrlService.isDefaultSearchEngineGoogle(),
+                mIsDefaultSearchEngineGoogle,
                 mFeedSurfaceProvider.getScrollDelegate(),
                 mFeedSurfaceProvider.getTouchEnabledDelegate(),
                 mFeedSurfaceProvider.getUiConfig(),
@@ -657,10 +649,13 @@ public class NewTabPage
                 mTab.getProfile(),
                 windowAndroid,
                 mIsTablet,
-                mTabStripHeightSupplier);
+                mTabStripHeightSupplier,
+                () -> mTemplateUrlService.getComposeplateUrl());
 
-        mNewTabPageLayout.updateSearchBoxHintText();
         initializeHomeModules();
+
+        sTotalCount++;
+        NewTabPageUma.recordSimultaneousNtpCount(sTotalCount);
 
         TraceEvent.end(TAG);
     }
@@ -774,7 +769,10 @@ public class NewTabPage
      *     NTP.
      */
     public static boolean isInSingleUrlBarMode(boolean isTablet, boolean searchProviderHasLogo) {
-        return !isTablet && searchProviderHasLogo;
+        return !isTablet
+                && (searchProviderHasLogo
+                        || (OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled()
+                                && OmniboxFeatures.sOmniboxMobileParityUpdateV2.isEnabled()));
     }
 
     /**
@@ -843,34 +841,24 @@ public class NewTabPage
         return isInSingleUrlBarMode(mIsTablet, mSearchProviderHasLogo);
     }
 
-    private void updateSearchProviderHasLogo() {
+    private void updateSearchProvider() {
         mSearchProviderHasLogo = mTemplateUrlService.doesDefaultSearchEngineHaveLogo();
+        mIsDefaultSearchEngineGoogle = mTemplateUrlService.isDefaultSearchEngineGoogle();
     }
 
     private void onSearchEngineUpdated() {
-        updateSearchProviderHasLogo();
+        updateSearchProvider();
 
-        PostTask.postTask(TaskTraits.UI_DEFAULT, mNewTabPageLayout::updateSearchBoxHintText);
-        setSearchProviderInfoOnView(
-                mSearchProviderHasLogo, mTemplateUrlService.isDefaultSearchEngineGoogle());
+        mNewTabPageLayout.setSearchProviderInfo(
+                mSearchProviderHasLogo, mIsDefaultSearchEngineGoogle);
         // TODO(crbug.com/40226731): Remove this call when the Feed position experiment is
         // cleaned up.
         updateMargins();
     }
 
     /**
-     * Set the search provider info on the main child view, so that it can change layouts if needed.
-     *
-     * @param hasLogo Whether the search provider has a logo.
-     * @param isGoogle Whether the search provider is Google.
-     */
-    private void setSearchProviderInfoOnView(boolean hasLogo, boolean isGoogle) {
-        mNewTabPageLayout.setSearchProviderInfo(hasLogo, isGoogle);
-    }
-
-    /**
-     * Specifies the percentage the URL is focused during an animation.  1.0 specifies that the URL
-     * bar has focus and has completed the focus animation.  0 is when the URL bar is does not have
+     * Specifies the percentage the URL is focused during an animation. 1.0 specifies that the URL
+     * bar has focus and has completed the focus animation. 0 is when the URL bar is does not have
      * any focus.
      *
      * @param percent The percentage of the URL bar focus animation.
@@ -1065,7 +1053,6 @@ public class NewTabPage
             mOmniboxStub.removeUrlFocusChangeListener(feedReliabilityLogger);
         }
         mFeedSurfaceProvider.destroy();
-        mTab.getWindowAndroid().removeContextMenuCloseListener(mContextMenuManager);
         if (mVoiceRecognitionHandler != null) {
             mVoiceRecognitionHandler.removeObserver(this);
         }
@@ -1078,6 +1065,7 @@ public class NewTabPage
         if (mHomeModulesCoordinator != null) {
             mHomeModulesCoordinator.destroy();
         }
+        sTotalCount--;
         mIsDestroyed = true;
     }
 
@@ -1348,7 +1336,7 @@ public class NewTabPage
         return mHomeModulesContainer.getVisibility() == View.VISIBLE;
     }
 
-    /* Destroy the single tab card on the {@link NewTabPageLayout}. */
+    /** Destroy the single tab card on the {@link NewTabPageLayout}. */
     @VisibleForTesting
     void destroySingleTabCard() {
         mSingleTabCardContainer.removeAllViews();

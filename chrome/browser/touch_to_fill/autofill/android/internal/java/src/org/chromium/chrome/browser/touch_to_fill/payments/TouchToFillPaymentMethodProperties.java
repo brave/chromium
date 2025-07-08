@@ -10,6 +10,7 @@ import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.touch_to_fill.common.FillableItemCollectionInfo;
+import org.chromium.components.autofill.LoyaltyCard;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -22,12 +23,44 @@ import java.util.Objects;
 class TouchToFillPaymentMethodProperties {
     static final PropertyModel.WritableBooleanPropertyKey VISIBLE =
             new PropertyModel.WritableBooleanPropertyKey("visible");
-    public static final PropertyModel.ReadableObjectPropertyKey<ModelList> SHEET_ITEMS =
-            new PropertyModel.ReadableObjectPropertyKey("sheet_items");
+    static final PropertyModel.WritableIntPropertyKey CURRENT_SCREEN =
+            new PropertyModel.WritableIntPropertyKey("current_screen");
+    public static final PropertyModel.WritableObjectPropertyKey<ModelList> SHEET_ITEMS =
+            new PropertyModel.WritableObjectPropertyKey("sheet_items");
+    static final PropertyModel.ReadableObjectPropertyKey<Runnable> BACK_PRESS_HANDLER =
+            new PropertyModel.ReadableObjectPropertyKey<>("back_press_handler");
     static final PropertyModel.ReadableObjectPropertyKey<Callback<Integer>> DISMISS_HANDLER =
             new PropertyModel.ReadableObjectPropertyKey<>("dismiss_handler");
+    static final PropertyModel.WritableIntPropertyKey SHEET_CONTENT_DESCRIPTION_ID =
+            new PropertyModel.WritableIntPropertyKey("sheet_content_description_id");
+    static final PropertyModel.WritableIntPropertyKey SHEET_HALF_HEIGHT_DESCRIPTION_ID =
+            new PropertyModel.WritableIntPropertyKey("sheet_half_height_description_id");
+    static final PropertyModel.WritableIntPropertyKey SHEET_FULL_HEIGHT_DESCRIPTION_ID =
+            new PropertyModel.WritableIntPropertyKey("sheet_full_height_description_id");
+    static final PropertyModel.WritableIntPropertyKey SHEET_CLOSED_DESCRIPTION_ID =
+            new PropertyModel.WritableIntPropertyKey("sheet_closed_description_id");
 
-    static final PropertyKey[] ALL_KEYS = {VISIBLE, SHEET_ITEMS, DISMISS_HANDLER};
+    static final PropertyKey[] ALL_KEYS = {
+        VISIBLE,
+        CURRENT_SCREEN,
+        SHEET_ITEMS,
+        BACK_PRESS_HANDLER,
+        DISMISS_HANDLER,
+        SHEET_CONTENT_DESCRIPTION_ID,
+        SHEET_HALF_HEIGHT_DESCRIPTION_ID,
+        SHEET_FULL_HEIGHT_DESCRIPTION_ID,
+        SHEET_CLOSED_DESCRIPTION_ID
+    };
+
+    // Identifies different screens that can be dynamically displayed by the payments TTF bottom
+    // sheet.
+    @interface ScreenId {
+        // The initial bottom sheet screen which offers the user to fill data into the form.
+        int HOME_SCREEN = 0;
+
+        // The screen displaying all loyalty cards of a user.
+        int ALL_LOYALTY_CARDS_SCREEN = 1;
+    }
 
     @interface ItemType {
         // The header at the top of the touch to fill sheet.
@@ -42,15 +75,21 @@ class TouchToFillPaymentMethodProperties {
         // A section containing the loyalty card data.
         int LOYALTY_CARD = 3;
 
+        // An item which displays all user's loyalty cards upon click.
+        int ALL_LOYALTY_CARDS = 4;
+
         // A "Continue" button, which is shown when there is only one payment
         // method available.
-        int FILL_BUTTON = 4;
+        int FILL_BUTTON = 5;
+
+        // A button that redirects the user to the Wallet settings in Chrome.
+        int WALLET_SETTINGS_BUTTON = 6;
 
         // A footer section containing additional actions.
-        int FOOTER = 5;
+        int FOOTER = 7;
 
         // A section with a terms label is present when card benefits are available.
-        int TERMS_LABEL = 6;
+        int TERMS_LABEL = 8;
     }
 
     /** Metadata associated with a card's image. */
@@ -131,7 +170,7 @@ class TouchToFillPaymentMethodProperties {
                 new PropertyModel.ReadableObjectPropertyKey<>("loyalty_card_number");
         static final PropertyModel.ReadableObjectPropertyKey<String> MERCHANT_NAME =
                 new PropertyModel.ReadableObjectPropertyKey<>("merchant_name");
-        static final PropertyModel.ReadableTransformingObjectPropertyKey<GURL, Drawable>
+        static final PropertyModel.ReadableTransformingObjectPropertyKey<LoyaltyCard, Drawable>
                 LOYALTY_CARD_ICON =
                         new PropertyModel.ReadableTransformingObjectPropertyKey<>(
                                 "loyalty_card_icon");
@@ -145,6 +184,16 @@ class TouchToFillPaymentMethodProperties {
         };
 
         private LoyaltyCardProperties() {}
+    }
+
+    /** Properties for the "All your loyalty cards" item in the TouchToFill sheet for payments. */
+    static class AllLoyaltyCardsItemProperties {
+        static final PropertyModel.ReadableObjectPropertyKey<Runnable> ON_CLICK_ACTION =
+                new PropertyModel.ReadableObjectPropertyKey<>("all_loyalty_cards_on_click_action");
+
+        static final PropertyKey[] ALL_KEYS = {ON_CLICK_ACTION};
+
+        private AllLoyaltyCardsItemProperties() {}
     }
 
     /**
@@ -169,10 +218,27 @@ class TouchToFillPaymentMethodProperties {
                 new PropertyModel.ReadableIntPropertyKey("image_drawable_id");
         static final PropertyModel.ReadableIntPropertyKey TITLE_ID =
                 new PropertyModel.ReadableIntPropertyKey("title_id");
+        static final PropertyModel.ReadableIntPropertyKey SUBTITLE_ID =
+                new PropertyModel.ReadableIntPropertyKey("subtitle_id");
 
-        static final PropertyKey[] ALL_KEYS = {IMAGE_DRAWABLE_ID, TITLE_ID};
+        static final PropertyKey[] ALL_KEYS = {IMAGE_DRAWABLE_ID, TITLE_ID, SUBTITLE_ID};
 
         private HeaderProperties() {}
+    }
+
+    /**
+     * Properties defined here reflect the visible state of a button in the TouchToFill sheet for
+     * payments.
+     */
+    static class ButtonProperties {
+        static final PropertyModel.ReadableIntPropertyKey TEXT_ID =
+                new PropertyModel.ReadableIntPropertyKey("text_id");
+        static final PropertyModel.ReadableObjectPropertyKey<Runnable> ON_CLICK_ACTION =
+                new ReadableObjectPropertyKey<>("open_click_action");
+
+        static final PropertyKey[] ALL_KEYS = {TEXT_ID, ON_CLICK_ACTION};
+
+        private ButtonProperties() {}
     }
 
     /**

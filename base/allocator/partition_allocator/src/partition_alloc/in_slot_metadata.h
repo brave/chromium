@@ -320,23 +320,14 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) InSlotMetadata {
 
   // Request to quarantine this allocation. The request might be ignored if
   // the allocation is already freed.
-  // TODO(crbug.com/329027914) This is an unused function. Start using it in
-  // tests and/or in production code.
   PA_ALWAYS_INLINE void SetQuarantineRequest() {
-    CountType old_count =
-        count_.fetch_or(kRequestQuarantineBit, std::memory_order_relaxed);
-    // This bit cannot be used after the memory is freed.
-    PA_DCHECK(old_count & kMemoryHeldByAllocatorBit);
+    count_.fetch_or(kRequestQuarantineBit, std::memory_order_relaxed);
   }
 
   // Get and clear out quarantine request.
-  // TODO(crbug.com/329027914) This is an unused function. Start using it in
-  // tests and/or in production code.
   PA_ALWAYS_INLINE bool PopQuarantineRequest() {
     CountType old_count =
         count_.fetch_and(~kRequestQuarantineBit, std::memory_order_acq_rel);
-    // This bit cannot be used after the memory is freed.
-    PA_DCHECK(old_count & kMemoryHeldByAllocatorBit);
     return old_count & kRequestQuarantineBit;
   }
 
@@ -363,6 +354,11 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) InSlotMetadata {
   }
   PA_ALWAYS_INLINE uint32_t requested_size() const { return requested_size_; }
 #endif  // PA_CONFIG(IN_SLOT_METADATA_STORE_REQUESTED_SIZE)
+
+  // The function here is called right before crashing with
+  // `DoubleFreeOrCorruptionDetected()`. We provide an address for the slot
+  // start to the function, and it may use that for debugging purpose.
+  static void SetCorruptionDetectedFn(void (*fn)(uintptr_t));
 
  private:
   // If there are some dangling raw_ptr<>. Turn on the error flag, and
@@ -446,10 +442,13 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) InSlotMetadata {
   }
 #endif  // PA_CONFIG(IN_SLOT_METADATA_CHECK_COOKIE)
 
-  [[noreturn]] PA_NOINLINE PA_NOT_TAIL_CALLED static void
-  DoubleFreeOrCorruptionDetected(CountType count,
-                                 uintptr_t slot_start,
-                                 SlotSpanMetadata<MetadataKind::kReadOnly>*);
+#if !PA_BUILDFLAG(IS_IOS)
+  [[noreturn]]
+#endif  // !PA_BUILDFLAG(IS_IOS)
+  PA_NOINLINE PA_NOT_TAIL_CALLED static void DoubleFreeOrCorruptionDetected(
+      CountType count,
+      uintptr_t slot_start,
+      SlotSpanMetadata<MetadataKind::kReadOnly>*);
 
   // Note that in free slots, this is overwritten by encoded freelist
   // pointer(s). The way the pointers are encoded on 64-bit little-endian
@@ -572,6 +571,13 @@ static inline constexpr size_t kInSlotMetadataSizeAdjustment =
 #else
     0ul;
 #endif
+
+#if PA_BUILDFLAG(IS_IOS)
+// Once called, all detected double frees are just ignored.
+void SuppressDoubleFreeDetectedCrash();
+// Once called, all corruptions detected are just ignored.
+void SuppressCorruptionDetectedCrash();
+#endif  // PA_BUILDFLAG(IS_IOS)
 
 }  // namespace partition_alloc::internal
 

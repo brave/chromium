@@ -18,11 +18,11 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "media/base/media_switches.h"
 #include "media/parsers/h264_level_limits.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace media {
 namespace {
@@ -1043,6 +1043,18 @@ bool H264Decoder::FinishPicture(scoped_refptr<H264Picture> pic) {
     recovery_frame_cnt_.reset();
   }
 
+  if (pic->idr && recovery_frame_num_) {
+    // The pictures after the IDR picture in decode order is guaranteed to be
+    // correct. We don't recover at the recovery frame even if it's before the
+    // IDR picture (i.e. dropping correct frames before the IDR frame) for
+    // simplifying the implementation.
+    // As the frames in |dpb_| will not be output so we drop them here. It's
+    // safe to clear DPB because IDR and later frames don't reference frames
+    // before IDR.
+    recovery_frame_num_.reset();
+    dpb_.Clear();
+  }
+
   // The ownership of pic will either be transferred to DPB - if the picture is
   // still needed (for output and/or reference) - or we will release it
   // immediately if we manage to output it here and won't have to store it for
@@ -1717,7 +1729,7 @@ H264Decoder::DecodeResult H264Decoder::Decode() {
 
         for (const auto& sei_msg : sei.msgs) {
           if (!std::visit(
-                  base::Overloaded{
+                  absl::Overload{
                       [this](const H264SEIRecoveryPoint& recovery_point) {
                         // If we are after reset, we can also resume from a SEI
                         // recovery point (spec D.2.8) if one is present.

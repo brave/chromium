@@ -34,6 +34,7 @@
 #include "base/strings/pattern.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/trace_event/trace_event.h"
@@ -45,17 +46,14 @@
 #include "components/variations/active_field_trials.h"
 #include "components/variations/entropy_provider.h"
 #include "components/variations/field_trial_config/field_trial_util.h"
-#include "components/variations/limited_entropy_mode_gate.h"
 #include "components/variations/platform_field_trials.h"
 #include "components/variations/pref_names.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "components/variations/service/buildflags.h"
 #include "components/variations/service/limited_entropy_randomization.h"
-#include "components/variations/service/limited_entropy_synthetic_trial.h"
 #include "components/variations/service/safe_seed_manager.h"
 #include "components/variations/service/variations_service_client.h"
 #include "components/variations/service/variations_service_utils.h"
-#include "components/variations/synthetic_trial_registry.h"
 #include "components/variations/variations_ids_provider.h"
 #include "components/variations/variations_layers.h"
 #include "components/variations/variations_seed_processor.h"
@@ -180,16 +178,6 @@ void MaybeExtendVariationsSafeMode(
       /*is_extended_safe_mode=*/true);
 }
 
-// Returns true iff the given seed contains a layer with LIMITED entropy mode.
-bool ContainsLimitedEntropyLayer(const VariationsSeed& seed) {
-  for (const Layer& layer_proto : seed.layers()) {
-    if (layer_proto.entropy_mode() == Layer::LIMITED) {
-      return true;
-    }
-  }
-  return false;
-}
-
 }  // namespace
 
 BASE_FEATURE(kForceFieldTrialSetupCrashForTesting,
@@ -216,15 +204,11 @@ Study::Channel ConvertProductChannelToStudyChannel(
 VariationsFieldTrialCreatorBase::VariationsFieldTrialCreatorBase(
     VariationsServiceClient* client,
     std::unique_ptr<VariationsSeedStore> seed_store,
-    base::OnceCallback<std::string(PrefService*)> locale_cb,
-    LimitedEntropySyntheticTrial* limited_entropy_synthetic_trial)
+    base::OnceCallback<std::string(PrefService*)> locale_cb)
     : client_(client),
       seed_store_(std::move(seed_store)),
-      create_trials_from_seed_called_(false),
-      application_locale_(std::move(locale_cb).Run(seed_store_->local_state())),
-      has_platform_override_(false),
-      platform_override_(Study::PLATFORM_WINDOWS),
-      limited_entropy_synthetic_trial_(limited_entropy_synthetic_trial) {}
+      application_locale_(
+          std::move(locale_cb).Run(seed_store_->local_state())) {}
 
 VariationsFieldTrialCreatorBase::~VariationsFieldTrialCreatorBase() = default;
 
@@ -234,7 +218,7 @@ std::string VariationsFieldTrialCreatorBase::GetLatestCountry() const {
           switches::kVariationsOverrideCountry));
   return !override_country.empty()
              ? override_country
-             : local_state()->GetString(prefs::kVariationsCountry);
+             : std::string(seed_store_->GetLatestCountry());
 }
 
 bool VariationsFieldTrialCreatorBase::SetUpFieldTrials(
@@ -243,7 +227,6 @@ bool VariationsFieldTrialCreatorBase::SetUpFieldTrials(
     const std::vector<base::FeatureList::FeatureOverrideInfo>& extra_overrides,
     std::unique_ptr<base::FeatureList> feature_list,
     metrics::MetricsStateManager* metrics_state_manager,
-    SyntheticTrialRegistry* synthetic_trial_registry,
     PlatformFieldTrials* platform_field_trials,
     SafeSeedManagerBase* safe_seed_manager,
     bool add_entropy_source_to_variations_ids,
@@ -332,15 +315,15 @@ bool VariationsFieldTrialCreatorBase::SetUpFieldTrials(
         GetClientFilterableStateForVersion(current_version);
   }
 
-  bool used_seed = false;
+  CreateTrialsResult create_trials_result = {.applied_seed = false};
   if (!used_testing_config && client_filterable_state) {
-    used_seed = CreateTrialsFromSeed(
+    create_trials_result = CreateTrialsFromSeed(
         entropy_providers, feature_list.get(), safe_seed_manager,
-        synthetic_trial_registry, std::move(client_filterable_state));
+        std::move(client_filterable_state));
   }
 
   platform_field_trials->SetUpClientSideFieldTrials(
-      used_seed, entropy_providers, feature_list.get());
+      create_trials_result.applied_seed, entropy_providers, feature_list.get());
 
   platform_field_trials->RegisterFeatureOverrides(feature_list.get());
 
@@ -358,7 +341,7 @@ bool VariationsFieldTrialCreatorBase::SetUpFieldTrials(
 
   VLOG(1) << "VariationsSetupComplete";
 
-  return used_seed;
+  return create_trials_result.applied_seed;
 }
 
 std::unique_ptr<ClientFilterableState>
@@ -426,35 +409,34 @@ std::string VariationsFieldTrialCreatorBase::LoadPermanentConsistencyCountry(
     return permanent_overridden_country;
   }
 
-  const base::Value::List& list_value =
-      local_state()->GetList(prefs::kVariationsPermanentConsistencyCountry);
-  const std::string* stored_version_string = nullptr;
-  const std::string* stored_country = nullptr;
-
-  // Determine if the saved pref value is present and valid.
-  const bool is_pref_empty = list_value.empty();
-  const bool is_pref_valid =
-      list_value.size() == 2 &&
-      (stored_version_string = list_value[0].GetIfString()) &&
-      (stored_country = list_value[1].GetIfString()) &&
-      base::Version(*stored_version_string).IsValid();
+  const std::string stored_version_string =
+      seed_store_->GetPermanentConsistencyVersion();
+  const std::string stored_country =
+      seed_store_->GetPermanentConsistencyCountry();
+  const bool is_stored_info_emtpy =
+      stored_version_string.empty() && stored_country.empty();
+  const base::Version stored_version(stored_version_string);
+  const bool is_stored_info_valid = !stored_version_string.empty() &&
+                                    !stored_country.empty() &&
+                                    stored_version.IsValid();
 
   // Determine if the version from the saved pref matches |version|.
   const bool does_version_match =
-      is_pref_valid && version == base::Version(*stored_version_string);
+      is_stored_info_valid && version == stored_version;
 
   // Determine if the country in the saved pref matches the country in
   // |latest_country|.
-  const bool does_country_match = is_pref_valid && !latest_country.empty() &&
-                                  *stored_country == latest_country;
+  const bool does_country_match = is_stored_info_valid &&
+                                  !latest_country.empty() &&
+                                  stored_country == latest_country;
 
   // Record a histogram for how the saved pref value compares to the current
   // version and the country code in the variations seed.
   LoadPermanentConsistencyCountryResult result;
-  if (is_pref_empty) {
+  if (is_stored_info_emtpy) {
     result = !latest_country.empty() ? LOAD_COUNTRY_NO_PREF_HAS_SEED
                                      : LOAD_COUNTRY_NO_PREF_NO_SEED;
-  } else if (!is_pref_valid) {
+  } else if (!is_stored_info_valid) {
     result = !latest_country.empty() ? LOAD_COUNTRY_INVALID_PREF_HAS_SEED
                                      : LOAD_COUNTRY_INVALID_PREF_NO_SEED;
   } else if (latest_country.empty()) {
@@ -473,12 +455,12 @@ std::string VariationsFieldTrialCreatorBase::LoadPermanentConsistencyCountry(
   // Use the stored country if one is available and was fetched since the last
   // time Chrome was updated.
   if (does_version_match) {
-    return *stored_country;
+    return stored_country;
   }
 
   if (latest_country.empty()) {
-    if (!is_pref_valid) {
-      local_state()->ClearPref(prefs::kVariationsPermanentConsistencyCountry);
+    if (!is_stored_info_valid) {
+      seed_store_->ClearPermanentConsistencyCountryAndVersion();
     }
     // If we've never received a country code from the server, use an empty
     // country so that it won't pass any filters that specifically include
@@ -503,11 +485,8 @@ std::string VariationsFieldTrialCreatorBase::GetPermanentConsistencyCountry()
 void VariationsFieldTrialCreatorBase::StorePermanentCountry(
     const base::Version& version,
     const std::string& country) {
-  base::Value::List new_list_value;
-  new_list_value.Append(version.GetString());
-  new_list_value.Append(country);
-  local_state()->SetList(prefs::kVariationsPermanentConsistencyCountry,
-                         std::move(new_list_value));
+  seed_store_->SetPermanentConsistencyCountryAndVersion(country,
+                                                        version.GetString());
 }
 
 void VariationsFieldTrialCreatorBase::StoreVariationsOverriddenCountry(
@@ -520,13 +499,12 @@ void VariationsFieldTrialCreatorBase::StoreVariationsOverriddenCountry(
 
 void VariationsFieldTrialCreatorBase::OverrideVariationsPlatform(
     Study::Platform platform_override) {
-  has_platform_override_ = true;
   platform_override_ = platform_override;
 }
 
 Study::Platform VariationsFieldTrialCreatorBase::GetPlatform() {
-  if (has_platform_override_) {
-    return platform_override_;
+  if (platform_override_.has_value()) {
+    return platform_override_.value();
   }
   return ClientFilterableState::GetCurrentPlatform();
 }
@@ -548,16 +526,16 @@ void VariationsFieldTrialCreatorBase::ApplyFieldTrialTestingConfig(
 }
 #endif  // BUILDFLAG(FIELDTRIAL_TESTING_ENABLED)
 
-base::Time VariationsFieldTrialCreatorBase::CalculateSeedFreshness() {
+base::Time VariationsFieldTrialCreatorBase::GetSeedFetchTime() {
   // TODO(crbug.com/40274989): Consider comparing the server-provided fetch time
   // with the network time.
   return seed_type_ == SeedType::kSafeSeed
              ? GetSeedStore()->GetSafeSeedFetchTime()
-             : GetSeedStore()->GetLastFetchTime();
+             : GetSeedStore()->GetLatestSeedFetchTime();
 }
 
 bool VariationsFieldTrialCreatorBase::HasSeedExpired() {
-  const base::Time fetch_time = CalculateSeedFreshness();
+  const base::Time fetch_time = GetSeedFetchTime();
   // If the fetch time is null, skip the expiry check. If the seed is a regular
   // seed (i.e. not a safe seed) and the fetch time is missing, then this must
   // be the first run of Chrome. If the seed is a safe seed, the fetch time may
@@ -631,27 +609,10 @@ VariationsFieldTrialCreatorBase::GetGoogleGroupsFromPrefs() {
   return groups;
 }
 
-bool VariationsFieldTrialCreatorBase::
-    ShouldActivateLimitedEntropySyntheticTrial(const VariationsSeed& seed) {
-  return limited_entropy_synthetic_trial_ &&
-         IsLimitedEntropyModeEnabled(client_->GetChannelForVariations()) &&
-         ContainsLimitedEntropyLayer(seed);
-}
-
-void VariationsFieldTrialCreatorBase::
-    RegisterLimitedEntropySyntheticTrialIfNeeded(
-        const VariationsSeed& seed,
-        SyntheticTrialRegistry* synthetic_trial_registry) {
-  if (ShouldActivateLimitedEntropySyntheticTrial(seed)) {
-    limited_entropy_synthetic_trial_->Register(*synthetic_trial_registry);
-  }
-}
-
-bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
+CreateTrialsResult VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
     const EntropyProviders& entropy_providers,
     base::FeatureList* feature_list,
     SafeSeedManagerBase* safe_seed_manager,
-    SyntheticTrialRegistry* synthetic_trial_registry,
     std::unique_ptr<ClientFilterableState> client_state) {
   // This histogram name uses "VariationsFieldTrialCreator" rather than
   // "VariationsFieldTrialCreatorBase" for consistency with historical data
@@ -671,7 +632,7 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
   // If we have tried safe seed and we still get crashes, try null seed.
   if (seed_type_ == SeedType::kNullSeed) {
     RecordVariationsSeedUsage(SeedUsage::kNullSeedUsed);
-    return false;
+    return CreateTrialsResult{.applied_seed = false};
   }
 
   VariationsSeed seed;
@@ -689,25 +650,24 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
     RecordVariationsSeedUsage(run_in_safe_mode
                                   ? SeedUsage::kUnloadableSafeSeedNotUsed
                                   : SeedUsage::kUnloadableRegularSeedNotUsed);
-    return false;
+    return CreateTrialsResult{.applied_seed = false};
   }
   if (HasSeedExpired()) {
     RecordVariationsSeedUsage(run_in_safe_mode
                                   ? SeedUsage::kExpiredSafeSeedNotUsed
                                   : SeedUsage::kExpiredRegularSeedNotUsed);
-    return false;
+    return CreateTrialsResult{.applied_seed = false};
   }
   if (IsSeedForFutureMilestone(/*is_safe_seed=*/run_in_safe_mode)) {
     RecordVariationsSeedUsage(
         run_in_safe_mode ? SeedUsage::kSafeSeedForFutureMilestoneNotUsed
                          : SeedUsage::kRegularSeedForFutureMilestoneNotUsed);
-    return false;
+    return CreateTrialsResult{.applied_seed = false};
   }
   RecordVariationsSeedUsage(run_in_safe_mode ? SeedUsage::kSafeSeedUsed
                                              : SeedUsage::kRegularSeedUsed);
   SetSeedVersion(seed.version());
 
-  RegisterLimitedEntropySyntheticTrialIfNeeded(seed, synthetic_trial_registry);
   VariationsLayers layers(seed, entropy_providers);
 
   // The server is not expected to send a seed with misconfigured entropy. Just
@@ -716,16 +676,16 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
   // Also, generate a crash report, so that the misconfigured seed can be
   // identified and rolled back.
   //
-  // Checking `IsLimitedEntropyModeEnabled()` is a safety measure, but is
-  // redundant given that `VariationsLayers` ensures that no layer with
-  // `EntropyMode.LIMITED` is marked as active for clients without a limited
-  // entropy provider (i.e. have limited entropy mode disabled, see
-  // `IsLimitedEntropyRandomizationSourceEnabled()`). For such clients,
-  // `SeedHasMisconfiguredEntropy()` will always be false.
-  if (IsLimitedEntropyModeEnabled(client_->GetChannelForVariations()) &&
-      SeedHasMisconfiguredEntropy(layers, seed)) {
+  // Note that `VariationsLayers` ensures that no limited-entropy-mode layer
+  // is marked as active for clients without a limited entropy provider, which
+  // is the case for clients on platforms, like Android WebView, that do not
+  // support limited entropy randomization. For such clients,
+  // `SeedHasMisconfiguredEntropy()`is always false.
+  if (SeedHasMisconfiguredEntropy(layers, seed)) {
     base::debug::DumpWithoutCrashing();
-    return false;
+    return CreateTrialsResult{
+        .applied_seed = false,
+        .seed_has_limited_layer = layers.seed_has_limited_layer()};
   }
 
   // Note that passing base::Unretained(this) below is safe because the callback
@@ -750,7 +710,7 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
     safe_seed_manager->SetActiveSeedState(
         seed_data, base64_seed_signature,
         local_state()->GetInteger(prefs::kVariationsSeedMilestone),
-        std::move(client_state), seed_store_->GetLastFetchTime());
+        std::move(client_state), seed_store_->GetLatestSeedFetchTime());
   }
 
   base::UmaHistogramCounts1M("Variations.AppliedSeed.Size", seed_data.size());
@@ -760,7 +720,9 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
 #endif  // BUILDFLAG(IS_WIN)
   base::UmaHistogramTimes("Variations.SeedProcessingTime",
                           base::TimeTicks::Now() - start_time);
-  return true;
+  return CreateTrialsResult{
+      .applied_seed = true,
+      .seed_has_limited_layer = layers.seed_has_limited_layer()};
 }
 
 void VariationsFieldTrialCreatorBase::LoadSeedFromJsonFile(
@@ -820,19 +782,8 @@ VariationsSeedStore* VariationsFieldTrialCreatorBase::GetSeedStore() {
   return seed_store_.get();
 }
 
-// static
-bool VariationsFieldTrialCreatorBase::
-    IsLimitedEntropyRandomizationSourceEnabled(
-        version_info::Channel channel,
-        LimitedEntropySyntheticTrial* trial) {
-  // Channel gated clients should not generate a limited entropy randomization
-  // source.
-  if (!IsLimitedEntropyModeEnabled(channel)) {
-    return false;
-  }
-  // Only clients in the enabled group of the limited entropy synthetic trial
-  // should have a limited entropy randomization source.
-  return trial && trial->IsEnabled();
+base::Time VariationsFieldTrialCreatorBase::GetLatestSeedFetchTime() {
+  return GetSeedStore()->GetLatestSeedFetchTime();
 }
 
 }  // namespace variations

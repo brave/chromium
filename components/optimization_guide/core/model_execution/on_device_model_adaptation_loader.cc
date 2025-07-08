@@ -4,9 +4,13 @@
 
 #include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
 
+#include <utility>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/task/thread_pool.h"
+#include "base/types/optional_util.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/model_execution/model_execution_util.h"
@@ -14,7 +18,6 @@
 #include "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/models.pb.h"
@@ -103,6 +106,11 @@ OnDeviceModelAdaptationMetadata::~OnDeviceModelAdaptationMetadata() = default;
 bool OnDeviceModelAdaptationMetadata::operator==(
     const OnDeviceModelAdaptationMetadata& other) const {
   return version_ == other.version_ && asset_paths_ == other.asset_paths_;
+}
+
+const on_device_model::AdaptationAssetPaths*
+OnDeviceModelAdaptationMetadata::asset_paths() const {
+  return base::OptionalToPtr(asset_paths_);
 }
 
 OnDeviceModelAdaptationLoader::OnDeviceModelAdaptationLoader(

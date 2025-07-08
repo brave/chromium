@@ -284,6 +284,12 @@ struct PasswordForm {
   // no prior call to this method, the URL is empty.
   GURL app_icon_url;
 
+  // The change password URL for a website on which this password is saved. The
+  // field is filled out when the PasswordStore injects affiliation and branding
+  // information, i.e. in InjectAffiliationAndBrandingInformation. If there was
+  // no prior call to this method, the URL is empty.
+  GURL change_password_url;
+
   // The name of the submit button used. Optional; only used in scoring
   // of PasswordForm results from the database to make matches as tight as
   // possible.
@@ -355,13 +361,20 @@ struct PasswordForm {
   // The new password. Optional, and not persisted.
   std::u16string new_password_value;
 
-  // When the login was last used by the user to login to the site. Defaults to
-  // |date_created|, except for passwords that were migrated from the now
-  // deprecated |preferred| flag. Their default is set when migrating the login
-  // database to have the "date_last_used" column.
+  // When the login was last used by the user to login to the site (updated
+  // after a successful form submission). Defaults to |date_created|, except for
+  // passwords that were migrated from the now deprecated |preferred| flag.
+  // Their default is set when migrating the login database to have the
+  // "date_last_used" column.
   //
   // When parsing an HTML form, this is not used.
   base::Time date_last_used;
+
+  // When the login was filled into a site (regardless of whether the form was
+  // submitted successfully.)
+  //
+  // When parsing an HTML form, this is not used.
+  base::Time date_last_filled;
 
   // When the password value was last changed. The date can be unset on the old
   // credentials because the passwords wasn't modified yet. The code must keep
@@ -555,9 +568,8 @@ struct PasswordForm {
   void SetNoteWithEmptyUniqueDisplayName(const std::u16string& new_note_value);
 
   // Returns the value of the note with a password change backup specific
-  // `unique_display_name`.
-  // returns an empty string if none exists.
-  std::u16string GetPasswordBackupNote() const;
+  // `unique_display_name` if it exists and is not empty.
+  std::optional<std::u16string> GetPasswordBackup() const;
 
   // Updates the note with a password change backup specific
   // `unique_display_name`.

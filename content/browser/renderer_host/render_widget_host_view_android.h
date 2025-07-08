@@ -84,6 +84,8 @@ class TouchSelectionControllerClientManagerAndroid;
 class WebContentsAccessibilityAndroid;
 struct ContextMenuParams;
 
+BASE_FEATURE(kTooltips, "Tooltips", base::FEATURE_ENABLED_BY_DEFAULT);
+
 // -----------------------------------------------------------------------------
 // See comments in render_widget_host_view.h about this class and its members.
 // -----------------------------------------------------------------------------
@@ -179,6 +181,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   uint32_t GetCaptureSequenceNumber() const override;
   int GetMouseWheelMinimumGranularity() const override;
   void UpdateCursor(const ui::Cursor& cursor) override;
+  input::CursorManager* GetCursorManager() override;
   void SetIsLoading(bool is_loading) override;
   void FocusedNodeChanged(bool is_editable_node,
                           const gfx::Rect& node_bounds_in_screen) override;
@@ -191,6 +194,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   void ShowWithVisibility(PageVisibilityState page_visibility) final;
   void Destroy() override;
   void UpdateTooltipUnderCursor(const std::u16string& tooltip_text) override;
+  void UpdateTooltip(const std::u16string& tooltip_text) override;
   void UpdateTooltipFromKeyboard(const std::u16string& tooltip_text,
                                  const gfx::Rect& bounds) override;
   void ClearKeyboardTriggeredTooltip() override;
@@ -427,34 +431,25 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   bool IsMojoRIRDelegateConnectionSetup() override;
 
   // Methods called from Java
-  bool IsReady(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  bool IsReady(JNIEnv* env);
 
-  void DismissTextHandles(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj);
+  void DismissTextHandles(JNIEnv* env);
 
   // Returns an int equivalent to an Optional<SKColor>, with a value of 0
   // indicating SKTransparent for not set.
-  jint GetBackgroundColor(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj);
+  jint GetBackgroundColor(JNIEnv* env);
 
-  void ShowContextMenuAtTouchHandle(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jint x,
-      jint y);
+  void ShowContextMenuAtTouchHandle(JNIEnv* env, jint x, jint y);
 
   // Notifies that the Visual Viewport's inset bottom has changed.
-  void OnViewportInsetBottomChanged(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  void OnViewportInsetBottomChanged(JNIEnv* env);
 
   void WriteContentBitmapToDiskAsync(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       jint width,
       jint height,
-      const base::android::JavaParamRef<jstring>& jpath,
-      const base::android::JavaParamRef<jobject>& jcallback);
+      const jni_zero::JavaParamRef<jstring>& jpath,
+      const jni_zero::JavaParamRef<jobject>& jcallback);
 
   // Notifies that the parent activity has moved into the foreground.
   void OnResume(JNIEnv* env);
@@ -587,8 +582,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   void OnDidUpdateVisualPropertiesComplete(
       const cc::RenderFrameMetadata& metadata);
 
-  void OnFinishGetContentBitmap(const base::android::JavaRef<jobject>& obj,
-                                const base::android::JavaRef<jobject>& callback,
+  void OnFinishGetContentBitmap(const base::android::JavaRef<jobject>& callback,
                                 const std::string& path,
                                 const SkBitmap& bitmap);
 
@@ -727,6 +721,9 @@ class CONTENT_EXPORT RenderWidgetHostViewAndroid
   bool observing_root_window_;
 
   bool controls_initialized_ = false;
+
+  std::unique_ptr<input::CursorManager> cursor_manager_;
+  std::u16string tooltip_text_;
 
   float prev_top_shown_pix_;
   float prev_top_controls_pix_;

@@ -52,10 +52,6 @@ WebGPUBlocklistReason GetWebGPUAdapterBlocklistReason(
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  if (info.backendType == wgpu::BackendType::OpenGLES) {
-    reason = reason | WebGPUBlocklistReason::AndroidGLES;
-  }
-
   constexpr uint32_t kARMVendorID = 0x13B5;
   constexpr uint32_t kQualcommVendorID = 0x5143;
   constexpr uint32_t kIntelVendorID = 0x8086;
@@ -66,16 +62,27 @@ WebGPUBlocklistReason GetWebGPUAdapterBlocklistReason(
     case kARMVendorID:
     case kQualcommVendorID:
     case kIntelVendorID:
-      // ARM, Qualcomm, and Intel GPUs are supported on Android 12+
-      if (build_info->sdk_int() < base::android::android_info::SDK_VERSION_S) {
+      // ARM, Qualcomm, and Intel GPUs are supported on Android 12+ on Vulkan
+      if (info.backendType == wgpu::BackendType::Vulkan &&
+          (build_info->sdk_int() <
+           base::android::android_info::SDK_VERSION_S)) {
         reason = reason | WebGPUBlocklistReason::AndroidLimitedSupport;
       }
+      // and Android 10+ on OpenGLES (currently Chrome's minimum, so no version
+      // check here)
       break;
 
     case kImgTecVendorID:
-      // Imagination GPUs are supported on Android 16+
-      if (build_info->sdk_int() <
-          base::android::android_info::SDK_VERSION_BAKLAVA) {
+      // Imagination GPUs are supported on Android 16+ on Vulkan
+      if (info.backendType == wgpu::BackendType::Vulkan &&
+          (build_info->sdk_int() <
+           base::android::android_info::SDK_VERSION_BAKLAVA)) {
+        reason = reason | WebGPUBlocklistReason::AndroidLimitedSupport;
+      }
+      // and Android 13+ on OpenGLES
+      if (info.backendType == wgpu::BackendType::OpenGLES &&
+          (build_info->sdk_int() <
+           base::android::android_info::SDK_VERSION_T)) {
         reason = reason | WebGPUBlocklistReason::AndroidLimitedSupport;
       }
       break;
@@ -180,8 +187,6 @@ std::string BlocklistReasonToString(WebGPUBlocklistReason reason) {
           {WebGPUBlocklistReason::AndroidLimitedSupport,
            "crbug.com/40643150: Limited support / testing currently "
            "available on Android."},
-          {WebGPUBlocklistReason::AndroidGLES,
-           "crbug.com/333858788: OpenGLES not fully supported on Android."},
           {WebGPUBlocklistReason::WindowsARM,
            "crbug.com/42242119: Not supported on Windows arm yet."},
           {WebGPUBlocklistReason::IndirectComputeRootConstants,

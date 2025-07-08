@@ -291,10 +291,6 @@ namespace diagnostics {
 class DiagnosticsLogController;
 }  // namespace diagnostics
 
-namespace federated {
-class FederatedServiceControllerImpl;
-}  // namespace federated
-
 namespace quick_pair {
 class Mediator;
 }  // namespace quick_pair
@@ -569,10 +565,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   EventClientImpl* event_client() { return event_client_.get(); }
   EventTransformationHandler* event_transformation_handler() {
     return event_transformation_handler_.get();
-  }
-
-  federated::FederatedServiceControllerImpl* federated_service_controller() {
-    return federated_service_controller_.get();
   }
 
   FirmwareUpdateNotificationController*
@@ -981,6 +973,9 @@ class ASH_EXPORT Shell : public SessionObserver,
   // Initializes the root window so that it can host browser windows.
   void InitRootWindow(aura::Window* root_window);
 
+  // Close All windows that are considered application windows.
+  void CloseAllAppWindows();
+
   // Destroys all child windows including widgets across all roots.
   void CloseAllRootWindowChildWindows();
 
@@ -1302,9 +1297,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   std::unique_ptr<OcclusionTrackerPauser> occlusion_tracker_pauser_;
 
   std::unique_ptr<MultiCaptureService> multi_capture_service_;
-
-  std::unique_ptr<federated::FederatedServiceControllerImpl>
-      federated_service_controller_;
 
   std::unique_ptr<quick_pair::Mediator> quick_pair_mediator_;
 

@@ -11,8 +11,6 @@ import android.os.Build;
 import android.view.View;
 import android.view.View.OnClickListener;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.PluralsRes;
 import androidx.core.util.Pair;
 
@@ -26,6 +24,8 @@ import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -65,6 +65,7 @@ import java.util.List;
 import java.util.function.DoubleConsumer;
 
 /** A {@link Pane} representing the regular tab switcher. */
+@NullMarked
 public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherDrawable.Observer {
     private static final int ON_CREATION_IPH_DELAY = 100;
 
@@ -99,9 +100,9 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
 
     private final Callback<Boolean> mScrollingObserver = this::onScrollingChanged;
     private final Callback<Boolean> mVisibilityObserver = this::onVisibilityChanged;
-    private final @NonNull SharedPreferences mSharedPreferences;
-    private final @NonNull Supplier<TabGroupModelFilter> mTabGroupModelFilterSupplier;
-    private final @NonNull TabSwitcherPaneDrawableCoordinator mTabSwitcherPaneDrawableCoordinator;
+    private final SharedPreferences mSharedPreferences;
+    private final Supplier<TabGroupModelFilter> mTabGroupModelFilterSupplier;
+    private final TabSwitcherPaneDrawableCoordinator mTabSwitcherPaneDrawableCoordinator;
     private final ObservableSupplierImpl<Boolean> mHubSearchEnabledStateSupplier =
             new ObservableSupplierImpl<>();
     private @Nullable OnSharedPreferenceChangeListener mPriceAnnotationsPrefListener;
@@ -123,21 +124,24 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
      * @param compositorViewHolderSupplier Supplier to the {@link CompositorViewHolder} instance.
      * @param tabGroupCreationUiDelegate Orchestrates the tab group creation UI flow.
      * @param archivedTabsAutoDeletePromoManager Manager for Archived Tabs Auto Delete Promo.
+     * @param xrSpaceModeObservableSupplier Supplies current XR space mode status. True for XR full
+     *     space mode, false otherwise.
      */
     TabSwitcherPane(
-            @NonNull Context context,
-            @NonNull SharedPreferences sharedPreferences,
-            @NonNull OneshotSupplier<ProfileProvider> profileProviderSupplier,
-            @NonNull TabSwitcherPaneCoordinatorFactory factory,
-            @NonNull Supplier<TabGroupModelFilter> tabGroupModelFilterSupplier,
-            @NonNull OnClickListener newTabButtonClickListener,
-            @NonNull TabSwitcherPaneDrawableCoordinator tabSwitcherDrawableCoordinator,
-            @NonNull DoubleConsumer onToolbarAlphaChange,
-            @NonNull UserEducationHelper userEducationHelper,
-            @NonNull ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier,
-            @NonNull ObservableSupplier<CompositorViewHolder> compositorViewHolderSupplier,
-            @NonNull TabGroupCreationUiDelegate tabGroupCreationUiDelegate,
-            @Nullable ArchivedTabsAutoDeletePromoManager archivedTabsAutoDeletePromoManager) {
+            Context context,
+            SharedPreferences sharedPreferences,
+            OneshotSupplier<ProfileProvider> profileProviderSupplier,
+            TabSwitcherPaneCoordinatorFactory factory,
+            Supplier<TabGroupModelFilter> tabGroupModelFilterSupplier,
+            OnClickListener newTabButtonClickListener,
+            TabSwitcherPaneDrawableCoordinator tabSwitcherDrawableCoordinator,
+            DoubleConsumer onToolbarAlphaChange,
+            UserEducationHelper userEducationHelper,
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier,
+            ObservableSupplier<CompositorViewHolder> compositorViewHolderSupplier,
+            TabGroupCreationUiDelegate tabGroupCreationUiDelegate,
+            @Nullable ArchivedTabsAutoDeletePromoManager archivedTabsAutoDeletePromoManager,
+            @Nullable ObservableSupplier<Boolean> xrSpaceModeObservableSupplier) {
         super(
                 context,
                 factory,
@@ -146,7 +150,8 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
                 userEducationHelper,
                 edgeToEdgeSupplier,
                 compositorViewHolderSupplier,
-                tabGroupCreationUiDelegate);
+                tabGroupCreationUiDelegate,
+                xrSpaceModeObservableSupplier);
         mSharedPreferences = sharedPreferences;
         mTabGroupModelFilterSupplier = tabGroupModelFilterSupplier;
         mTabSwitcherPaneDrawableCoordinator = tabSwitcherDrawableCoordinator;
@@ -292,7 +297,7 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
         }
     }
 
-    private void onProfileProviderAvailable(@NonNull ProfileProvider profileProvider) {
+    private void onProfileProviderAvailable(ProfileProvider profileProvider) {
         Profile profile = profileProvider.getOriginalProfile();
         mTabGroupSyncService = TabGroupSyncServiceFactory.getForProfile(profile);
 
@@ -480,7 +485,7 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
     }
 
     @Override
-    public @NonNull ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier() {
+    public ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier() {
         return mHubSearchEnabledStateSupplier;
     }
 }

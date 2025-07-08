@@ -33,7 +33,6 @@ class MODULES_EXPORT ImageBitmapRenderingContextBase
 
   void Trace(Visitor*) const override;
 
-  bool CanCreateCanvas2dResourceProvider() const;
   V8UnionHTMLCanvasElementOrOffscreenCanvas* getHTMLOrOffscreenCanvas() const;
 
   void PageVisibilityChanged() override {}
@@ -53,6 +52,7 @@ class MODULES_EXPORT ImageBitmapRenderingContextBase
     return gfx::ColorSpace::CreateSRGB();
   }
   bool IsComposited() const final { return true; }
+  bool IsAccelerated() const final;
   bool PushFrame() override;
 
   cc::Layer* CcLayer() const final;
@@ -62,6 +62,10 @@ class MODULES_EXPORT ImageBitmapRenderingContextBase
   void Reset() override;
 
   void Stop() override;
+
+  scoped_refptr<StaticBitmapImage> PaintRenderingResultsToSnapshot(
+      SourceDrawingBuffer source_buffer,
+      FlushReason reason) override;
 
   bool IsPaintable() const final;
 
@@ -76,7 +80,11 @@ class MODULES_EXPORT ImageBitmapRenderingContextBase
   scoped_refptr<StaticBitmapImage> GetImageAndResetInternal();
 
  private:
+  CanvasResourceProvider* GetOrCreateResourceProviderForOffscreenCanvas();
   void ResetInternalBitmapToBlackTransparent(int width, int height);
+
+  std::unique_ptr<CanvasResourceProvider>
+      resource_provider_for_offscreen_canvas_;
 };
 
 }  // namespace blink

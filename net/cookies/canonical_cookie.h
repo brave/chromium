@@ -5,13 +5,13 @@
 #ifndef NET_COOKIES_CANONICAL_COOKIE_H_
 #define NET_COOKIES_CANONICAL_COOKIE_H_
 
+#include <compare>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "base/rand_util.h"
 #include "base/types/pass_key.h"
 #include "crypto/process_bound_string.h"
 #include "net/base/net_export.h"
@@ -157,7 +157,7 @@ class NET_EXPORT CanonicalCookie : public CookieBase {
   static std::unique_ptr<CanonicalCookie> Create(
       const GURL& url,
       std::string_view cookie_line,
-      const base::Time& creation_time,
+      base::Time creation_time,
       std::optional<base::Time> server_time,
       std::optional<CookiePartitionKey> cookie_partition_key,
       CookieSourceType source_type,
@@ -223,10 +223,10 @@ class NET_EXPORT CanonicalCookie : public CookieBase {
       const std::string& value,
       const std::string& domain,
       const std::string& path,
-      const base::Time& creation,
-      const base::Time& expiration,
-      const base::Time& last_access,
-      const base::Time& last_update,
+      base::Time creation,
+      base::Time expiration,
+      base::Time last_access,
+      base::Time last_update,
       bool secure,
       bool httponly,
       CookieSameSite same_site,
@@ -240,32 +240,34 @@ class NET_EXPORT CanonicalCookie : public CookieBase {
   static std::unique_ptr<CanonicalCookie> CreateForTesting(
       const GURL& url,
       const std::string& cookie_line,
-      const base::Time& creation_time,
+      base::Time creation_time,
       std::optional<base::Time> server_time = std::nullopt,
       std::optional<CookiePartitionKey> cookie_partition_key = std::nullopt,
       CookieSourceType source_type = CookieSourceType::kUnknown,
       CookieInclusionStatus* status = nullptr);
 
-  bool operator<(const CanonicalCookie& other) const {
+  friend auto operator<=>(const CanonicalCookie& left,
+                          const CanonicalCookie& right) {
     // Use the cookie properties that uniquely identify a cookie to determine
     // ordering.
-    return RefUniqueKey() < other.RefUniqueKey();
+    return left.RefUniqueKey() <=> right.RefUniqueKey();
   }
 
-  bool operator==(const CanonicalCookie& other) const {
-    return IsEquivalent(other);
+  friend bool operator==(const CanonicalCookie& left,
+                         const CanonicalCookie& right) {
+    return left.RefUniqueKey() == right.RefUniqueKey();
   }
 
   // See CookieBase for other accessors.
   std::string Value() const;
-  const base::Time& ExpiryDate() const { return expiry_date_; }
-  const base::Time& LastAccessDate() const { return last_access_date_; }
-  const base::Time& LastUpdateDate() const { return last_update_date_; }
+  base::Time ExpiryDate() const { return expiry_date_; }
+  base::Time LastAccessDate() const { return last_access_date_; }
+  base::Time LastUpdateDate() const { return last_update_date_; }
   bool IsPersistent() const { return !expiry_date_.is_null(); }
   CookiePriority Priority() const { return priority_; }
   CookieSourceType SourceType() const { return source_type_; }
 
-  bool IsExpired(const base::Time& current) const {
+  bool IsExpired(base::Time current) const {
     return !expiry_date_.is_null() && current >= expiry_date_;
   }
 
@@ -285,24 +287,7 @@ class NET_EXPORT CanonicalCookie : public CookieBase {
   bool IsEquivalent(const CanonicalCookie& ecc) const {
     // It seems like it would make sense to take secure, httponly, and samesite
     // into account, but the RFC doesn't specify this.
-    return IsEquivalent(RefUniqueKey(), ecc);
-  }
-
-  // This function exists to help optimize the case of when a single cookie is
-  // being compared multiple times against other cookies. E.x.:
-  //
-  // cookie1.IsEquivalent(cookie2), cookie1.IsEquivalent(cookie3),
-  // cookie1.IsEquivalent(cookie4), etc.
-  //
-  // Doing the above re-computes cookie1's UniqueKey each time.
-  //
-  // The function allows the caller to cache cookie1's UniqueKey and reuse it
-  // as `this_key`. This function is preferable to manually comparing cookie's
-  // `UniqueKey` as it helps keep the comparison logic in one place.
-  bool IsEquivalent(const RefUniqueCookieKey& this_key,
-                    const CanonicalCookie& ecc) const {
-    DCHECK(this_key == RefUniqueKey());
-    return this_key == ecc.RefUniqueKey();
+    return RefUniqueKey() == ecc.RefUniqueKey();
   }
 
   // Checks a looser set of equivalency rules than 'IsEquivalent()' in order
@@ -359,21 +344,19 @@ class NET_EXPORT CanonicalCookie : public CookieBase {
   // change subscribers such as the CookieStore API or service workers.
   bool IsWebEquivalentTo(const CanonicalCookie& other) const;
 
-  void SetLastAccessDate(const base::Time& date) {
-    last_access_date_ = date;
-  }
+  void SetLastAccessDate(base::Time date) { last_access_date_ = date; }
 
   std::string DebugString() const;
 
   // Returns a "null" time if expiration was unspecified or invalid.
   static base::Time ParseExpiration(const ParsedCookie& pc,
-                                    const base::Time& current,
-                                    const base::Time& server_time);
+                                    base::Time current,
+                                    base::Time server_time);
 
   // Per rfc6265bis the maximum expiry date is no further than 400 days in the
   // future.
-  static base::Time ValidateAndAdjustExpiryDate(const base::Time& expiry_date,
-                                                const base::Time& creation_date,
+  static base::Time ValidateAndAdjustExpiryDate(base::Time expiry_date,
+                                                base::Time creation_date,
                                                 net::CookieSourceScheme scheme);
 
   // Return whether this object is a valid CanonicalCookie(). If the object is

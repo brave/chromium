@@ -9,9 +9,11 @@
 #include <utility>
 
 #include "base/check_is_test.h"
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
@@ -314,6 +316,8 @@ DCLayerTree::DCLayerTree(bool disable_nv12_dynamic_textures,
       force_dcomp_triple_buffer_video_swap_chain_(
           force_dcomp_triple_buffer_video_swap_chain),
       no_downscaled_overlay_promotion_(no_downscaled_overlay_promotion),
+      tint_video_layer_(base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kTintDcLayer)),
       ink_renderer_(std::make_unique<DelegatedInkRenderer>()) {}
 
 DCLayerTree::~DCLayerTree() = default;
@@ -907,12 +911,12 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
 
   IDCompositionVisual2* left_sibling_visual = nullptr;
 
-  base::flat_set<gfx::OverlayLayerId::SharedQuadStateLayerId>
+  base::flat_set<std::optional<gfx::OverlayLayerId::SharedQuadStateLayerId>>
       layers_with_multiple_overlays;
   for (size_t i = 1; i < overlays.size(); i++) {
-    const gfx::OverlayLayerId::SharedQuadStateLayerId sqs_layer_id =
+    const decltype(layers_with_multiple_overlays)::key_type sqs_layer_id =
         overlays[i].layer_id.shared_quad_state_layer_id();
-    if (sqs_layer_id == gfx::OverlayLayerId::SharedQuadStateLayerId()) {
+    if (sqs_layer_id == decltype(layers_with_multiple_overlays)::key_type()) {
       // A default layer ID implies no explicit layer, which should be treated
       // as different from every other layer ID, including itself.
       continue;
@@ -923,6 +927,8 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
       layers_with_multiple_overlays.emplace(sqs_layer_id);
     }
   }
+
+  size_t num_layers_modified = 0;
 
   // This loop walks the overlays and builds or updates the visual subtree for
   // each overlay. |left_sibling_visual| is required to properly stack visual
@@ -978,7 +984,7 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
     const bool allow_antialiasing = !layers_with_multiple_overlays.contains(
         overlays[i].layer_id.shared_quad_state_layer_id());
 
-    needs_commit |= visual_subtrees[i]->Update(
+    const bool visual_needs_commit = visual_subtrees[i]->Update(
         dc_layer_tree_->dcomp_device_.Get(), dcomp_visual_content,
         dcomp_surface_serial, image_size, overlays[i].content_rect,
         background_color_surface,
@@ -991,9 +997,13 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
       HRESULT hr = dc_layer_tree_->dcomp_root_visual_.Get()->AddVisual(
           visual_subtree->container_visual(), TRUE, left_sibling_visual);
       CHECK_EQ(hr, S_OK);
-      needs_commit = true;
     }
     left_sibling_visual = visual_subtree->container_visual();
+
+    if (visual_needs_commit || !subtree_attached_to_root) {
+      num_layers_modified++;
+      needs_commit = true;
+    }
 
     layer_ids_for_testing.push_back(overlays[i].layer_id);
   }
@@ -1002,6 +1012,9 @@ base::expected<void, CommitError> DCLayerTree::VisualTree::BuildTree(
   subtree_map_ = std::move(subtree_map);
   visual_subtrees_ = std::move(visual_subtrees);
   layer_ids_for_testing_ = std::move(layer_ids_for_testing);
+
+  UMA_HISTOGRAM_COUNTS("GPU.OsCompositor.NumLayersModified",
+                       num_layers_modified);
 
   if (needs_commit) {
     TRACE_EVENT0("gpu", "DCLayerTree::CommitAndClearPendingOverlays::Commit");
@@ -1186,6 +1199,10 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
   TRACE_EVENT1("gpu", "DCLayerTree::CommitAndClearPendingOverlays",
                "num_overlays", overlays.size());
 
+  base::ScopedUmaHistogramTimer scoped_timer(
+      "GPU.DirectComposition.CommitAndClearPendingOverlaysDuration",
+      base::ScopedUmaHistogramTimer::ScopedHistogramTiming::kMicrosecondTimes);
+
   // If delegated ink metadata exists for this frame, attempt to make an overlay
   // so that a visual subtree can be created for a delegated ink visual.
   // TODO(crbug.com/335553727) Consider clearing ink_renderer_ when there's no
@@ -1247,7 +1264,8 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
   }
 
   // Populate |overlays| with information required to build dcomp visual tree.
-  for (auto& overlay : overlays) {
+  for (auto it = overlays.begin(); it != overlays.end(); it++) {
+    auto& overlay = *it;
     if (NeedSwapChainPresenter(overlay)) {
       // Present to swap chain and update the overlay with transform, clip
       // and content.
@@ -1283,6 +1301,36 @@ base::expected<void, CommitError> DCLayerTree::CommitAndClearPendingOverlays(
       overlay.overlay_image = DCLayerOverlayImage(
           video_swap_chain->content_size(), video_swap_chain->content());
       overlay.content_rect = gfx::RectF(video_swap_chain->content_size());
+
+      if (tint_video_layer_) {
+        SkColor4f tint_color;
+        switch (video_swap_chain->GetLastPresentationMode()) {
+          case SwapChainPresenter::PresentationMode::kDecodeSwapChain:
+            tint_color = SkColors::kBlue;
+            break;
+          case SwapChainPresenter::PresentationMode::kVpBlt:
+            tint_color = SkColors::kMagenta;
+            break;
+          case SwapChainPresenter::PresentationMode::kVpBltWithStagingTexture:
+            tint_color = SkColor4f(1.0, 0.5, 0.0, 1.0);
+            break;
+          case SwapChainPresenter::PresentationMode::kMfSurfaceProxy:
+            tint_color = SkColors::kGreen;
+            break;
+        }
+
+        DCLayerOverlayParams tint_overlay;
+        tint_overlay.quad_rect = it->quad_rect;
+        tint_overlay.transform = it->transform;
+        tint_overlay.clip_rect = it->clip_rect;
+        tint_overlay.rounded_corner_bounds = it->rounded_corner_bounds;
+        tint_overlay.opacity = 0.25;
+        tint_overlay.background_color = tint_color;
+        tint_overlay.layer_id =
+            it->layer_id.MakeForChildOfSharedQuadStateLayer(1);
+        it = overlays.insert(std::next(it), std::move(tint_overlay));
+        // Do not access `overlay` after this point since it is invalidated.
+      }
     }
   }
 

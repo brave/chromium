@@ -67,10 +67,10 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule;
+import org.chromium.ui.widget.Toast;
+import org.chromium.ui.widget.ToastManager;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
@@ -140,7 +140,7 @@ public class AppMenuTest {
 
     private void setUpTestOnUiThread() {
         mLifecycleDispatcher = new TestActivityLifecycleDispatcher();
-        mDelegate = new TestAppMenuDelegate();
+        mDelegate = new TestAppMenuDelegate(sActivity);
         mTestMenuButtonDelegate = () -> sActivity.findViewById(R.id.top_button);
 
         mAppMenuCoordinator =
@@ -333,35 +333,23 @@ public class AppMenuTest {
 
     @Test
     @MediumTest
-    public void testClickMenuItem_UsingPosition() throws TimeoutException {
-        showMenuAndAssert();
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> mAppMenuHandler.getAppMenu().onItemClick(null, null, 0, 0));
-
-        mDelegate.itemSelectedCallbackHelper.waitForCallback(0);
-        Assert.assertEquals(
-                "Incorrect id for last selected item.",
-                R.id.menu_item_one,
-                mDelegate.lastSelectedItemId);
-    }
-
-    @Test
-    @MediumTest
     public void testLongClickMenuItem_Title() throws TimeoutException {
         mPropertiesDelegate.enableAppIconRow = true;
         showMenuAndAssert();
-        AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
+
+        ToastManager toastManager = Mockito.mock(ToastManager.class);
+        ToastManager.setInstanceForTesting(toastManager);
 
         View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    spiedMenu.onItemLongClick(
-                            mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_one),
-                            testView);
+                    AppMenuTestSupport.callOnItemLongClick(
+                            mAppMenuCoordinator, R.id.icon_one, testView);
                 });
 
-        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("Icon One", testView);
+        ArgumentCaptor<Toast> toastCaptor = ArgumentCaptor.forClass(Toast.class);
+        Mockito.verify(toastManager, Mockito.times(1)).requestShow(toastCaptor.capture());
+        Assert.assertEquals("Icon One", toastCaptor.getValue().getText());
     }
 
     @Test
@@ -369,17 +357,20 @@ public class AppMenuTest {
     public void testLongClickMenuItem_TitleCondensed() throws TimeoutException {
         mPropertiesDelegate.enableAppIconRow = true;
         showMenuAndAssert();
-        AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
+
+        ToastManager toastManager = Mockito.mock(ToastManager.class);
+        ToastManager.setInstanceForTesting(toastManager);
 
         View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    spiedMenu.onItemLongClick(
-                            mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_two),
-                            testView);
+                    AppMenuTestSupport.callOnItemLongClick(
+                            mAppMenuCoordinator, R.id.icon_two, testView);
                 });
 
-        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("2", testView);
+        ArgumentCaptor<Toast> toastCaptor = ArgumentCaptor.forClass(Toast.class);
+        Mockito.verify(toastManager, Mockito.times(1)).requestShow(toastCaptor.capture());
+        Assert.assertEquals("2", toastCaptor.getValue().getText());
     }
 
     @Test
@@ -387,18 +378,18 @@ public class AppMenuTest {
     public void testLongClickMenuItem_Disabled() throws TimeoutException {
         mPropertiesDelegate.enableAppIconRow = true;
         showMenuAndAssert();
-        AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
+
+        ToastManager toastManager = Mockito.mock(ToastManager.class);
+        ToastManager.setInstanceForTesting(toastManager);
 
         View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    spiedMenu.onItemLongClick(
-                            mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_three),
-                            testView);
+                    AppMenuTestSupport.callOnItemLongClick(
+                            mAppMenuCoordinator, R.id.icon_three, testView);
                 });
 
-        Mockito.verify(spiedMenu, Mockito.times(0))
-                .showToastForItem(Mockito.any(CharSequence.class), Mockito.any(View.class));
+        Mockito.verify(toastManager, Mockito.times(0)).requestShow(Mockito.any(Toast.class));
     }
 
     @Test
@@ -459,7 +450,6 @@ public class AppMenuTest {
         Assert.assertTrue(mMenuObserver.menuHighlighting);
 
         showMenuAndAssert();
-        mPropertiesDelegate.footerInflatedCallback.waitForCallback(0);
 
         ChipView chipView =
                 (ChipView)
@@ -506,33 +496,6 @@ public class AppMenuTest {
 
     @Test
     @MediumTest
-    public void testMenuItemContentChanged() throws TimeoutException {
-        showMenuAndAssert();
-        View itemView = getViewAtPosition(1);
-        Assert.assertEquals(
-                "Menu item text incorrect",
-                "Menu Item Two",
-                ((TextView) itemView.findViewById(R.id.menu_item_text)).getText());
-
-        String newText = "Test!";
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    mAppMenuHandler
-                            .getAppMenu()
-                            .getMenuItemPropertyModel(R.id.menu_item_two)
-                            .set(AppMenuItemProperties.TITLE, newText);
-                    mAppMenuHandler.menuItemContentChanged(R.id.menu_item_two);
-                });
-
-        itemView = getViewAtPosition(1);
-        Assert.assertEquals(
-                "Menu item text incorrect",
-                newText,
-                ((TextView) itemView.findViewById(R.id.menu_item_text)).getText());
-    }
-
-    @Test
-    @MediumTest
     public void testMenuItemRemoved() throws TimeoutException, ExecutionException {
         showMenuAndAssert();
         Assert.assertEquals(3, mAppMenuHandler.getModelListForTesting().size());
@@ -554,16 +517,14 @@ public class AppMenuTest {
                 () -> {
                     Assert.assertEquals(
                             0,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_one)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_one)
                                     .get(AppMenuItemProperties.POSITION));
 
                     Assert.assertEquals(
                             1,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_three)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_three)
                                     .get(AppMenuItemProperties.POSITION));
                 });
     }
@@ -592,9 +553,8 @@ public class AppMenuTest {
                 () -> {
                     Assert.assertEquals(
                             0,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_three)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_three)
                                     .get(AppMenuItemProperties.POSITION));
                 });
     }
@@ -621,32 +581,27 @@ public class AppMenuTest {
                             .getModelListForTesting()
                             .add(0, new MVCListAdapter.ListItem(AppMenuItemType.STANDARD, model));
                 });
-        // ensure clicking on the newly added item doesn't break anything
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> mAppMenuHandler.getAppMenu().onItemClick(null, null, 0, 0));
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    PropertyModel m = mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(13);
+                    PropertyModel m =
+                            AppMenuTestSupport.getMenuItemPropertyModel(mAppMenuCoordinator, 13);
                     Assert.assertNotNull(m.get(AppMenuItemProperties.CLICK_HANDLER));
                     Assert.assertEquals(0, m.get(AppMenuItemProperties.POSITION));
                     Assert.assertEquals(
                             1,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_one)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_one)
                                     .get(AppMenuItemProperties.POSITION));
                     Assert.assertEquals(
                             2,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_two)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_two)
                                     .get(AppMenuItemProperties.POSITION));
                     Assert.assertEquals(
                             3,
-                            mAppMenuHandler
-                                    .getAppMenu()
-                                    .getMenuItemPropertyModel(R.id.menu_item_three)
+                            AppMenuTestSupport.getMenuItemPropertyModel(
+                                            mAppMenuCoordinator, R.id.menu_item_three)
                                     .get(AppMenuItemProperties.POSITION));
                 });
     }
@@ -657,9 +612,6 @@ public class AppMenuTest {
         mPropertiesDelegate.headerResourceId = R.layout.test_menu_header;
         mPropertiesDelegate.footerResourceId = R.layout.test_menu_footer;
         showMenuAndAssert();
-
-        mPropertiesDelegate.headerInflatedCallback.waitForCallback(0);
-        mPropertiesDelegate.footerInflatedCallback.waitForCallback(0);
 
         Assert.assertEquals(
                 "Incorrect number of header views",
@@ -921,7 +873,7 @@ public class AppMenuTest {
 
     @Test
     @MediumTest
-    @DisableIf.Device(DeviceFormFactor.TABLET)
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET)
     @DisabledTest(message = "crbug.com/1186468")
     public void testDragHelper_ClickItem() throws Exception {
         AppMenuButtonHelperImpl buttonHelper =
@@ -965,44 +917,42 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_enoughSpace() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[3];
+        boolean[] canBeLastList = new boolean[3];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ -1,
-                                /* screenSpaceForItems= */ 35);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 35);
         Assert.assertEquals(30, height);
     }
 
     @Test
     @SmallTest
     public void testCalculateHeightForItems_notEnoughSpaceForOneItem() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[3];
+        boolean[] canBeLastList = new boolean[3];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ -1,
-                                /* screenSpaceForItems= */ 26);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 26);
         // The space only can fit the 1st and 2nd items and the partial 3rd item.
         Assert.assertEquals(25, height);
     }
@@ -1010,22 +960,21 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_notEnoughSpaceForTwoItem() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[3];
+        boolean[] canBeLastList = new boolean[3];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ -1,
-                                /* screenSpaceForItems= */ 24);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 24);
         // The space only can fit the full 1st item, the full 2nd items and the partial 3rd item.
         // The space for the 3rd item is 4, but since the menu is small enough, we show the maximum
         // available height instead of switching to the partial 3rd item.
@@ -1035,23 +984,24 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_notEnoughSpaceForThreeItem() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[4];
+        boolean[] canBeLastList = new boolean[4];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 3, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
+
+        heightList[3] = 10;
+        canBeLastList[3] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ -1,
-                                /* screenSpaceForItems= */ 34);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 34);
         // The space only can fit the full 1st item, the full 2nd item, the full 3rd item, and the
         // partial 4th item. But the space for 4th item is 4, which is not enough to show partial
         // 3rd item(5 = LAST_ITEM_SHOW_FRACTION * 10), we show the partial 3rd item instead.
@@ -1061,24 +1011,27 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_notEnoughSpaceForDivider() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[5];
+        boolean[] canBeLastList = new boolean[5];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 3, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 4, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
+
+        heightList[3] = 10;
+        canBeLastList[3] = false;
+
+        heightList[4] = 10;
+        canBeLastList[4] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ 3,
-                                /* screenSpaceForItems= */ 36);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 36);
         // The space only can fit the 1st, 2nd, 3rd, and partial 4th item. But the 4th item is a
         // divider line, so we show only the partial 3rd item.
         Assert.assertEquals(25, height);
@@ -1087,23 +1040,24 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_showPartialDivider() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[4];
+        boolean[] canBeLastList = new boolean[4];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 3, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = false;
+
+        heightList[3] = 10;
+        canBeLastList[3] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ 2,
-                                /* screenSpaceForItems= */ 26);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 26);
         // The space only can fit the 1st, 2nd and the partial 3rd item. The third item
         // is a divider line, and the menu is small enough that we still want to use all available
         // space.
@@ -1114,23 +1068,24 @@ public class AppMenuTest {
     @SmallTest
     public void testCalculateHeightForItems_notEnoughSpaceForItemShowPartialDivider()
             throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[4];
+        boolean[] canBeLastList = new boolean[4];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 3, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = false;
+
+        heightList[3] = 10;
+        canBeLastList[3] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ 2,
-                                /* screenSpaceForItems= */ 34);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 34);
         // The space only can fit the full 1st, 2nd and 3rd item and the partial 4th item.
         // But the space for 4th item is 4, which is not enough to show partial 4th item(5 =
         // LAST_ITEM_SHOW_FRACTION * 10), so we should show the partial 3rd item instead. The third
@@ -1142,22 +1097,21 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_minimalHight() throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[3];
+        boolean[] canBeLastList = new boolean[3];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = true;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ -1,
-                                /* screenSpaceForItems= */ 4);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 4);
         // The space is not enough for any item, but we still show 1 and half items at least.
         Assert.assertEquals(15, height);
     }
@@ -1166,22 +1120,21 @@ public class AppMenuTest {
     @SmallTest
     public void testCalculateHeightForItems_minimalHight_notEnoughSpaceForDivider()
             throws Exception {
-        showMenuAndAssert();
+        int[] heightList = new int[3];
+        boolean[] canBeLastList = new boolean[3];
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-        createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
-        createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
+        heightList[0] = 10;
+        canBeLastList[0] = true;
+
+        heightList[1] = 10;
+        canBeLastList[1] = false;
+
+        heightList[2] = 10;
+        canBeLastList[2] = true;
 
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ 1,
-                                /* screenSpaceForItems= */ 6);
+                AppMenu.calculateHeightForItems(
+                        heightList, canBeLastList, /* screenSpaceForItems= */ 6);
         // The space is not enough for any item, but we still show 1 and half items at least.
         Assert.assertEquals(15, height);
     }
@@ -1189,19 +1142,9 @@ public class AppMenuTest {
     @Test
     @SmallTest
     public void testCalculateHeightForItems_nagativeSpaceForZeroItems() throws Exception {
-        showMenuAndAssert();
-
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
-
         int height =
-                mAppMenuHandler
-                        .getAppMenu()
-                        .calculateHeightForItems(
-                                menuItemIds,
-                                heightList,
-                                /* groupDividerResourceId= */ 1,
-                                /* screenSpaceForItems= */ -1);
+                AppMenu.calculateHeightForItems(
+                        new int[0], new boolean[0], /* screenSpaceForItems= */ -1);
         // Make sure there are no crashes.
         Assert.assertEquals(0, height);
     }
@@ -1246,12 +1189,6 @@ public class AppMenuTest {
         showMenuAndAssert();
         mRenderTestRule.render(
                 mAppMenuHandler.getAppMenu().getPopup().getContentView(), "app_menu_low_end_dark");
-    }
-
-    private void createMenuItem(
-            List<Integer> menuItemIds, List<Integer> heightList, int id, int height) {
-        menuItemIds.add(id);
-        heightList.add(height);
     }
 
     private void showMenuAndAssert() throws TimeoutException {

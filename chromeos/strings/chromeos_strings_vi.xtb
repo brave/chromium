@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Hiện tại, các kết quả về con người sẽ không hiển thị. Hãy thử một câu lệnh khác.</translation>
 <translation id="1815850098929213707">Phím được chọn là <ph name="KEYS" />. Nhấn vào nút này để chỉnh sửa chế độ điều khiển</translation>
 <translation id="1818174214124933000">Khi bạn chọn "Gửi", nội dung và ý kiến phản hồi của bạn (như hiển thị bên dưới) sẽ được gửi đến Google, trải qua quy trình đánh giá do con người thực hiện, dùng để đào tạo hoặc cải thiện các sản phẩm cũng như dịch vụ của chúng tôi theo <ph name="LINK_POLICY_BEGIN" />Chính sách quyền riêng tư<ph name="LINK_POLICY_END" /> và <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Điều khoản dịch vụ của Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Giáo viên của bạn đã gửi một tài nguyên không được hỗ trợ. Hãy báo cho giáo viên.</translation>
 <translation id="1823120442877418684">Chủ đề</translation>
 <translation id="1827738518074806965">Phòng tranh</translation>
 <translation id="183287940576828840">Phản cảm/Không an toàn</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Chuyển bố cục</translation>
 <translation id="224421911978987610">phơi sáng lâu</translation>
 <translation id="2244834438220057800">xanh lục</translation>
+<translation id="2248689665683494517">tranh tĩnh vật tối giản vẽ một chiếc bình thuỷ tinh cắm vài bông hoa anh túc trên nền đen</translation>
 <translation id="225692081236532131">Trạng thái kích hoạt</translation>
 <translation id="2267285889943769271">Thêm ảnh chụp màn hình</translation>
 <translation id="2268044343513325586">Tinh chỉnh</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">vải voan</translation>
 <translation id="4310735698903592804">Các hình nền mới dựa trên công nghệ AI của Google</translation>
 <translation id="4320904097188876154">hồng neon</translation>
+<translation id="432961742358282111">Nhấp chuột phải hoặc nhấn và giữ để xem định nghĩa, bản dịch hoặc chuyển đổi đơn vị. Dùng phím mũi tên Trái hoặc Phải để quản lý tính năng này.</translation>
 <translation id="4333390807948134856">Đã nhấn phím <ph name="KEY_NAME" /></translation>
 <translation id="4334293042716981313">Bạn cũng có thể <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />viết câu lệnh của riêng mình<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">phím</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Hỏi chuyên gia trong diễn đàn trợ giúp Chromebook</translation>
-<translation id="7309823890857024809">tranh tĩnh vật tối giản với một vài cành hoa anh túc trong bình thuỷ tinh trên nền đen</translation>
 <translation id="7311368985037279727">màu bàn phím</translation>
 <translation id="7317831949569936035">Đăng ký học</translation>
 <translation id="7319430975418800333">A3</translation>

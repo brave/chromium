@@ -12,9 +12,9 @@
 
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/pickle.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/web_applications/generated_icon_fix_util.h"
@@ -49,6 +49,7 @@
 #include "components/webapps/isolated_web_apps/update_channel.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/permissions_policy/policy_helper_public.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
@@ -364,7 +365,7 @@ template <typename T>
 void IsolationDataLocationToProto(const IsolatedWebAppStorageLocation& location,
                                   T* proto) {
   std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&proto](const IwaStorageOwnedBundle& bundle) {
             proto->mutable_owned_bundle()->set_dir_name_ascii(
                 bundle.dir_name_ascii());
@@ -1358,6 +1359,22 @@ std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto) {
   }
   web_app->SetRelatedApplications(std::move(related_applications));
 
+  if (proto.has_pending_update_info()) {
+    if (!proto.pending_update_info().has_name() &&
+        !proto.pending_update_info().has_short_name() &&
+        proto.pending_update_info().manifest_icons().empty()) {
+      return nullptr;
+    }
+    if (!proto.pending_update_info().manifest_icons().empty()) {
+      for (const auto& icon : proto.pending_update_info().manifest_icons()) {
+        if (!icon.has_url() || !icon.has_size_in_px() || !icon.has_purpose()) {
+          return nullptr;
+        }
+      }
+    }
+    web_app->SetPendingUpdateInfo(proto.pending_update_info());
+  }
+
   return web_app;
 }
 
@@ -1874,6 +1891,18 @@ std::unique_ptr<proto::WebApp> WebAppToProto(const WebApp& web_app) {
       related_application_proto->set_id(
           base::UTF16ToUTF8(related_application.id.value()));
     }
+  }
+
+  if (web_app.pending_update_info().has_value()) {
+    CHECK(web_app.pending_update_info()->has_name() ||
+          web_app.pending_update_info()->has_short_name() ||
+          !web_app.pending_update_info()->manifest_icons().empty());
+    if (!web_app.pending_update_info()->manifest_icons().empty()) {
+      for (const auto& icon : web_app.pending_update_info()->manifest_icons()) {
+        CHECK(icon.has_url() && icon.has_size_in_px() && icon.has_purpose());
+      }
+    }
+    *local_data->mutable_pending_update_info() = *web_app.pending_update_info();
   }
 
   return local_data;

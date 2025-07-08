@@ -49,7 +49,6 @@
 #include "cc/layers/painted_scrollbar_layer.h"
 #include "cc/metrics/ukm_dropped_frames_data.h"
 #include "cc/metrics/ukm_manager.h"
-#include "cc/metrics/ukm_smoothness_data.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
 #include "cc/resources/ui_resource_manager.h"
 #include "cc/tiles/raster_dark_mode_filter.h"
@@ -1994,18 +1993,6 @@ void LayerTreeHost::SetSourceURL(ukm::SourceId source_id, const GURL& url) {
 }
 
 base::ReadOnlySharedMemoryRegion
-LayerTreeHost::CreateSharedMemoryForSmoothnessUkm() {
-  DCHECK(IsMainThread());
-  const auto size = sizeof(UkmSmoothnessDataShared);
-  auto ukm_smoothness_mapping = base::ReadOnlySharedMemoryRegion::Create(size);
-  if (!ukm_smoothness_mapping.IsValid())
-    return {};
-  proxy_->SetUkmSmoothnessDestination(
-      std::move(ukm_smoothness_mapping.mapping));
-  return std::move(ukm_smoothness_mapping.region);
-}
-
-base::ReadOnlySharedMemoryRegion
 LayerTreeHost::CreateSharedMemoryForDroppedFramesUkm() {
   DCHECK(IsMainThread());
   const auto size = sizeof(UkmDroppedFramesDataShared);
@@ -2041,9 +2028,9 @@ LayerTreeHost::TakeViewTransitionCallbacksForTesting() {
   return result;
 }
 
-double LayerTreeHost::GetPercentDroppedFrames() const {
+double LayerTreeHost::GetAverageThroughput() const {
   DCHECK(IsMainThread());
-  return proxy_->GetPercentDroppedFrames();
+  return proxy_->GetAverageThroughput();
 }
 
 void LayerTreeHost::DropActiveScrollDeltaNextCommit(ElementId scroll_element) {

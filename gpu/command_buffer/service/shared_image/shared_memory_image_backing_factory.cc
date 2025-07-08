@@ -12,12 +12,14 @@
 #include "gpu/command_buffer/service/shared_image/shared_memory_image_backing.h"
 #include "gpu/command_buffer/service/shared_memory_region_wrapper.h"
 #include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 
 SharedMemoryImageBackingFactory::SharedMemoryImageBackingFactory()
-    : SharedImageBackingFactory(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY) {}
+    : SharedImageBackingFactory(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
+                                SHARED_IMAGE_USAGE_CPU_READ |
+                                SHARED_IMAGE_USAGE_RASTER_COPY_SOURCE) {}
 
 SharedMemoryImageBackingFactory::~SharedMemoryImageBackingFactory() = default;
 
@@ -58,7 +60,7 @@ SharedMemoryImageBackingFactory::CreateSharedImage(
     gfx::BufferUsage buffer_usage) {
   auto buffer_format = ToBufferFormat(format);
   auto handle = GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
-      gfx::GpuMemoryBufferId(0), size, buffer_format, buffer_usage);
+      size, buffer_format, buffer_usage);
   SharedMemoryRegionWrapper shm_wrapper;
   if (!shm_wrapper.Initialize(handle, size, buffer_format)) {
     return nullptr;
@@ -79,10 +81,6 @@ bool SharedMemoryImageBackingFactory::IsSupported(
     GrContextType gr_context_type,
     base::span<const uint8_t> pixel_data) {
   if (gmb_type != gfx::SHARED_MEMORY_BUFFER) {
-    return false;
-  }
-
-  if (usage != SharedImageUsageSet(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY)) {
     return false;
   }
 

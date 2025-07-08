@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/blob/testing/fake_blob_registry.h"
 
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -16,7 +17,7 @@ namespace mojob = ::blink::mojom::blink;
 class DataElementReader {
  public:
   DataElementReader(mojo::PendingReceiver<mojob::Blob> blob,
-                    const String& uuid,
+                    const blink::String& uuid,
                     Vector<mojob::DataElementPtr> elements)
       : blob_(std::move(blob)),
         uuid_(uuid),
@@ -90,7 +91,7 @@ class DataElementReader {
   };
 
   mojo::PendingReceiver<mojob::Blob> blob_;
-  String uuid_;
+  blink::String uuid_;
   Vector<mojob::DataElementPtr> elements_;
 
   Vector<mojob::DataElementPtr>::iterator elements_index_;

@@ -126,6 +126,8 @@ static_library("autofill") {
     sources += [
       "autofill_field_classification_model_service_factory.cc",
       "autofill_field_classification_model_service_factory.h",
+      "ml_log_router_factory.cc",
+      "ml_log_router_factory.h",
     ]
   }
 }
@@ -220,6 +222,7 @@ if (!is_android) {
       "//chrome/browser/ui/autofill",
       "//chrome/browser/ui/autofill:test_support",
       "//chrome/browser/ui/tabs:tab_strip",
+      "//chrome/browser/ui/translate",
       "//chrome/test:test_support",
       "//chrome/test:test_support",
       "//chrome/test:test_support_ui",
@@ -245,6 +248,7 @@ if (!is_android) {
       "//chrome/browser/ui",
       "//chrome/browser/ui/autofill",
       "//chrome/browser/ui/tabs:tab_strip",
+      "//chrome/browser/ui/translate",
       "//chrome/common:chrome_features",
       "//chrome/common:non_code_constants",
       "//chrome/test:test_support",

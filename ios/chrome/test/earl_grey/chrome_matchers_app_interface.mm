@@ -125,6 +125,10 @@ NSString* IdentifierForRecentActivityLogCellAtIndex(unsigned int index) {
       stringWithFormat:@"%@%u", kRecentActivityLogCellIdentifierPrefix, index];
 }
 
+bool IsIPad() {
+  return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad;
+}
+
 id<GREYMatcher> TableViewSwitchIsToggledOn(BOOL is_toggled_on) {
   GREYMatchesBlock matches = ^BOOL(id element) {
     TableViewSwitchCell* switch_cell =
@@ -284,6 +288,30 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
   return [ChromeMatchersAppInterface
       contextMenuItemWithAccessibilityLabel:l10n_util::GetNSStringWithFixup(
                                                 messageID)];
+}
+
++ (id<GREYMatcher>)actionSheetItemWithAccessibilityLabel:(NSString*)label {
+  return grey_allOf(
+      [ChromeMatchersAppInterface buttonWithAccessibilityLabel:label],
+      grey_ancestor(grey_kindOfClassName(
+          @"_UIInterfaceActionCustomViewRepresentationView")),
+      grey_minimumVisiblePercent(0.5), nil);
+}
+
++ (id<GREYMatcher>)actionSheetItemWithAccessibilityLabelID:(int)messageID {
+  return grey_allOf(
+      [ChromeMatchersAppInterface buttonWithAccessibilityLabelID:(messageID)],
+      grey_ancestor(grey_kindOfClassName(
+          @"_UIInterfaceActionCustomViewRepresentationView")),
+      grey_minimumVisiblePercent(0.5), nil);
+}
+
++ (id<GREYMatcher>)alertItemWithAccessibilityLabelId:(int)messageID {
+  return grey_allOf(
+      [ChromeMatchersAppInterface buttonWithAccessibilityLabelID:(messageID)],
+      grey_ancestor(grey_kindOfClassName(
+          @"_UIInterfaceActionCustomViewRepresentationView")),
+      grey_minimumVisiblePercent(0.5), nil);
 }
 
 + (id<GREYMatcher>)imageViewWithImageNamed:(NSString*)imageName {
@@ -727,7 +755,10 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)settingsDoneButton {
-  return grey_accessibilityID(kSettingsDoneButtonId);
+  return grey_allOf(
+      grey_ancestor([ChromeMatchersAppInterface settingsNavigationBar]),
+      grey_accessibilityID(kSettingsDoneButtonId), grey_sufficientlyVisible(),
+      nil);
 }
 
 + (id<GREYMatcher>)autofillCreditCardEditTableView {
@@ -892,12 +923,25 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)settingsMenuBackButton:(NSString*)buttonTitle {
-  return grey_allOf(
-      grey_anyOf(grey_accessibilityLabel(buttonTitle),
-                 grey_accessibilityLabel(@"Back"), grey_buttonTitle(@"Back"),
-                 grey_descendant(grey_buttonTitle(buttonTitle)), nil),
-      grey_kindOfClassName(@"_UIButtonBarButton"),
-      grey_ancestor(grey_kindOfClass([UINavigationBar class])), nil);
+  if (@available(iOS 26, *)) {
+    return grey_allOf(
+        grey_anyOf(grey_accessibilityLabel(buttonTitle),
+                   grey_accessibilityLabel(@"Back"), grey_buttonTitle(@"Back"),
+                   grey_descendant(grey_buttonTitle(buttonTitle)), nil),
+        grey_anyOf(grey_kindOfClassName(@"_UIButtonBarButton"),
+                   grey_kindOfClassName(
+                       @"_TtCC5UIKit29ButtonBarButtonVisualProviderP33_"
+                       @"A98CD29F4F6ECA17AFECE41BBB264E596Button"),
+                   nil),
+        grey_ancestor(grey_kindOfClass([UINavigationBar class])), nil);
+  } else {
+    return grey_allOf(
+        grey_anyOf(grey_accessibilityLabel(buttonTitle),
+                   grey_accessibilityLabel(@"Back"), grey_buttonTitle(@"Back"),
+                   grey_descendant(grey_buttonTitle(buttonTitle)), nil),
+        grey_kindOfClassName(@"_UIButtonBarButton"),
+        grey_ancestor(grey_kindOfClass([UINavigationBar class])), nil);
+  }
 }
 
 + (id<GREYMatcher>)settingsMenuBackButton {
@@ -1107,9 +1151,11 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)NTPOmnibox {
-  return grey_allOf(
-      grey_accessibilityLabel(l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT)),
-      grey_minimumVisiblePercent(0.2), nil);
+  if (IsIPad()) {
+    return [self defocusedLocationView];
+  } else {
+    return grey_accessibilityID(kNTPFakeOmniboxAccessibilityButton);
+  }
 }
 
 + (id<GREYMatcher>)fakeOmnibox {
@@ -1628,7 +1674,7 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 #pragma mark - Tab Grid Selection Mode
 
 + (id<GREYMatcher>)tabGridEditButton {
-  return grey_accessibilityID(kTabGridEditButtonIdentifier);
+  return grey_allOf(grey_accessibilityID(kTabGridEditButtonIdentifier), nil);
 }
 
 + (id<GREYMatcher>)tabGridEditMenuCloseAllButton {
@@ -1789,10 +1835,8 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)ungroupConfirmationButton {
-  return grey_allOf(grey_accessibilityID(
-                        [l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_UNGROUP)
-                            stringByAppendingString:@"AlertAction"]),
-                    grey_interactable(), nil);
+  return [ChromeMatchersAppInterface
+      actionSheetItemWithAccessibilityLabelID:IDS_IOS_CONTENT_CONTEXT_UNGROUP];
 }
 
 + (id<GREYMatcher>)deleteGroupButton {
@@ -1801,10 +1845,8 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)deleteGroupConfirmationButton {
-  return grey_allOf(grey_accessibilityID([l10n_util::GetNSString(
-                        IDS_IOS_CONTENT_CONTEXT_DELETEGROUP)
-                        stringByAppendingString:@"AlertAction"]),
-                    grey_interactable(), nil);
+  return [ChromeMatchersAppInterface actionSheetItemWithAccessibilityLabelID:
+                                         IDS_IOS_CONTENT_CONTEXT_DELETEGROUP];
 }
 
 + (id<GREYMatcher>)closeGroupButton {
@@ -1837,10 +1879,9 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)leaveSharedGroupConfirmationButton {
-  return grey_allOf(grey_accessibilityID([l10n_util::GetNSString(
-                        IDS_IOS_CONTENT_CONTEXT_LEAVESHAREDGROUP)
-                        stringByAppendingString:@"AlertAction"]),
-                    grey_interactable(), nil);
+  return
+      [ChromeMatchersAppInterface actionSheetItemWithAccessibilityLabelID:
+                                      IDS_IOS_CONTENT_CONTEXT_LEAVESHAREDGROUP];
 }
 
 + (id<GREYMatcher>)deleteSharedGroupButton {
@@ -1850,17 +1891,15 @@ UIWindow* WindowWithAccessibilityIdentifier(NSString* accessibility_id) {
 }
 
 + (id<GREYMatcher>)deleteSharedConfirmationButton {
-  return grey_allOf(grey_accessibilityID([l10n_util::GetNSString(
-                        IDS_IOS_CONTENT_CONTEXT_DELETESHAREDGROUP)
-                        stringByAppendingString:@"AlertAction"]),
-                    grey_interactable(), nil);
+  return [ChromeMatchersAppInterface
+      actionSheetItemWithAccessibilityLabelID:
+          IDS_IOS_CONTENT_CONTEXT_DELETESHAREDGROUP];
 }
 
 + (id<GREYMatcher>)keepSharedConfirmationButton {
-  return grey_allOf(grey_accessibilityID([l10n_util::GetNSString(
-                        IDS_IOS_CONTENT_CONTEXT_KEEPSHAREDGROUP)
-                        stringByAppendingString:@"AlertAction"]),
-                    grey_interactable(), nil);
+  return
+      [ChromeMatchersAppInterface actionSheetItemWithAccessibilityLabelID:
+                                      IDS_IOS_CONTENT_CONTEXT_KEEPSHAREDGROUP];
 }
 
 + (id<GREYMatcher>)fakeShareFlowView {

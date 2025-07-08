@@ -4,11 +4,11 @@
 
 #include "ui/gl/gl_switches.h"
 
+#include "base/trace_event/trace_event.h"
 #include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_display_manager.h"
-#include "ui/gl/startup_trace.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
@@ -159,6 +159,17 @@ const char kEnableUnsafeSwiftShader[] = "enable-unsafe-swiftshader";
 const char kDirectCompositionVideoSwapChainFormat[] =
     "direct-composition-video-swap-chain-format";
 
+// Tint `SwapChainPresenter` with the following colors:
+//
+// - Decode swap chain: blue
+// - VP blit: magenta
+// - VP blit w/ staging texture: orange
+// - MF proxy surface: green
+//
+// This is similar to `HKLM\Software\Microsoft\Windows\DWM` `OverlayTestMode=1`
+// in DWM, but to help understand `SwapChainPresenter` state.
+const char kTintDcLayer[] = "tint-dc-layer";
+
 // This is the list of switches passed from this file that are passed from the
 // GpuProcessHost to the GPU Process. Add your switch to this list if you need
 // to read it in the GPU process, else don't add it.
@@ -176,6 +187,7 @@ const char* const kGLSwitchesCopiedFromGpuProcessHost[] = {
     kDisableDirectComposition,
     kEnableDirectCompositionVideoOverlays,
     kDirectCompositionVideoSwapChainFormat,
+    kTintDcLayer,
     kEnableUnsafeSwiftShader,
 };
 const size_t kGLSwitchesCopiedFromGpuProcessHostNumSwitches =
@@ -226,6 +238,14 @@ BASE_FEATURE(kDirectCompositionSoftwareOverlays,
 BASE_FEATURE(kDirectCompositionLetterboxVideoOptimization,
              "DirectCompositionLetterboxVideoOptimization",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Remove the topmost desktop plane for Media Foundation full screen
+// letterboxing. This is a kill switch for the desktop plane removal
+// optimization for Media Foundation Renderer, which should be enabled by
+// default when crbug.com/406175378 is resolved.
+BASE_FEATURE(kDesktopPlaneRemovalForMFFullScreenLetterbox,
+             "DesktopPlaneRemovalForMFFullScreenLetterbox",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Do not consider hardware YUV overlay count when promoting quads to DComp
 // visuals. If there are more videos than hardware overlay planes, there may be
@@ -326,7 +346,7 @@ bool IsDefaultANGLEVulkan() {
     (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
   angle::SystemInfo system_info;
   {
-    GPU_STARTUP_TRACE_EVENT("angle::GetSystemInfoVulkan");
+    TRACE_EVENT("gpu,startup", "angle::GetSystemInfoVulkan");
     if (!angle::GetSystemInfoVulkan(&system_info)) {
       return false;
     }
@@ -349,9 +369,22 @@ bool IsDefaultANGLEVulkan() {
     return false;
 
 #if BUILDFLAG(IS_ANDROID)
+  // Samsung GPUs already use ANGLE as the GLES driver.  Always choose
+  // ANGLE/Vulkan on these GPUs to avoid the inefficiencies of translating
+  // over ANGLE twice.  This is not done if the feature is explicitly disabled
+  // (from command line, or by webview).
+  if (active_gpu.driverId == VK_DRIVER_ID_SAMSUNG_PROPRIETARY) {
+    if (!(feature_list && feature_list->IsFeatureOverriddenFromCommandLine(
+                              features::kDefaultANGLEVulkan.name,
+                              base::FeatureList::OVERRIDE_DISABLE_FEATURE))) {
+      return true;
+    }
+  }
+
   // Exclude SwiftShader-based Android emulators for now.
-  if (active_gpu.driverId == VK_DRIVER_ID_GOOGLE_SWIFTSHADER)
+  if (active_gpu.driverId == VK_DRIVER_ID_GOOGLE_SWIFTSHADER) {
     return false;
+  }
 
   // Encountered bugs with older Imagination drivers.  New drivers seem fixed,
   // but disabled for the sake of experiment for now. crbug.com/371512561

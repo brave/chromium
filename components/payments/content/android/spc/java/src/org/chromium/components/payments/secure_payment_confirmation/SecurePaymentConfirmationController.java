@@ -10,7 +10,6 @@ import android.content.Context;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.text.SpannableString;
-import android.util.Pair;
 import android.view.View;
 
 import androidx.annotation.IntDef;
@@ -21,7 +20,11 @@ import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerProvider;
+import org.chromium.components.payments.PaymentApp.PaymentEntityLogo;
 import org.chromium.components.payments.R;
+import org.chromium.components.payments.SPCTransactionMode;
+import org.chromium.components.payments.secure_payment_confirmation.SecurePaymentConfirmationBottomSheetObserver.ControllerDelegate;
+import org.chromium.components.payments.secure_payment_confirmation.SecurePaymentConfirmationProperties.ItemProperties;
 import org.chromium.components.payments.ui.CurrencyFormatter;
 import org.chromium.components.payments.ui.InputProtector;
 import org.chromium.components.url_formatter.SchemeDisplay;
@@ -29,8 +32,11 @@ import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.payments.mojom.PaymentItem;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
+import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
+import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
@@ -38,7 +44,9 @@ import org.chromium.url.Origin;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * The controller of the SecurePaymentConfirmation UI, which owns the component overall, i.e.,
@@ -47,8 +55,10 @@ import java.util.Locale;
  * component that needs to interact with another component does that through this controller.
  */
 @NullMarked
-public class SecurePaymentConfirmationController
-        implements SecurePaymentConfirmationBottomSheetObserver.ControllerDelegate {
+public class SecurePaymentConfirmationController implements ControllerDelegate {
+    /** There is only a single model/view for SPC items so only a single item type is needed. */
+    private static final int SPC_ITEM_TYPE = 0;
+
     @IntDef({
         SpcResponseStatus.UNKNOWN,
         SpcResponseStatus.ACCEPT,
@@ -70,8 +80,9 @@ public class SecurePaymentConfirmationController
     private final SecurePaymentConfirmationView mView;
     private final PropertyModel mModel;
     private final BottomSheetController mBottomSheetController;
-    private final Callback<Integer> mResponseCallback;
     private final Boolean mInformOnly;
+    private final Callback<Integer> mResponseCallback;
+    private final @SPCTransactionMode int mTransactionMode;
     private SecurePaymentConfirmationBottomSheetObserver mBottomSheetObserver;
     private InputProtector mInputProtector = new InputProtector();
 
@@ -81,8 +92,8 @@ public class SecurePaymentConfirmationController
      * @param window The WindowAndroid of the merchant.
      * @param payeeName The name of the payee, or null if not specified.
      * @param payeeOrigin The origin of the payee, or null if not specified.
-     * @param paymentInstrumentLabel The label to display for the payment instrument.
-     * @param total The total amount of the transaction.
+     * @param paymentInstrumentLabelPrimary The label to display for the payment instrument.
+     * @param paymentItem The payment item of the transaction containing total payment information.
      * @param paymentIcon The icon of the payment instrument.
      * @param issuerIcon The icon of the issuer.
      * @param networkIcon The icon of the network.
@@ -90,41 +101,121 @@ public class SecurePaymentConfirmationController
      * @param showOptOut Whether to show the opt out UX to the user.
      * @param informOnly Whether to show the inform-only UX.
      * @param responseCallback The function to call on sheet dismiss; called with SpcResponseStatus.
+     * @param transactionMode The automation transaction mode; NONE when not under automation.
      */
     public SecurePaymentConfirmationController(
             WindowAndroid window,
+            List<PaymentEntityLogo> paymentEntityLogos,
             @Nullable String payeeName,
             @Nullable Origin payeeOrigin,
-            String paymentInstrumentLabel,
-            PaymentItem total,
+            String paymentInstrumentLabelPrimary,
+            @Nullable String paymentInstrumentLabelSecondary,
+            PaymentItem paymentItem,
             Drawable paymentIcon,
-            @Nullable Drawable issuerIcon,
-            @Nullable Drawable networkIcon,
             String relyingPartyId,
             boolean showOptOut,
             boolean informOnly,
-            Callback<Integer> responseCallback) {
-        Context context = window.getContext().get();
-        assertNonNull(context);
-        BottomSheetController bottomSheetController = BottomSheetControllerProvider.from(window);
-        assertNonNull(bottomSheetController);
+            Callback<Integer> responseCallback,
+            @SPCTransactionMode int transactionMode) {
+        Context context = assertNonNull(window.getContext().get());
+        BottomSheetController bottomSheetController =
+                assertNonNull(BottomSheetControllerProvider.from(window));
 
         mBottomSheetController = bottomSheetController;
         mInformOnly = informOnly;
         mResponseCallback = responseCallback;
+        mTransactionMode = transactionMode;
         mInputProtector.markShowTime();
+
+        ModelList itemList = new ModelList();
+        // Set the store primary and secondary text accordingly (whether only one or both are
+        // populated). Note that at least one of these must be non-null in SPC; this should be
+        // enforced by PaymentRequestService.isValidSecurePaymentConfirmationRequest().
+        assertNonNull(payeeName != null ? payeeName : payeeOrigin);
+        String storePrimaryText;
+        String storeSecondaryText = null;
+        if (payeeName == null || payeeName.isEmpty()) {
+            storePrimaryText =
+                    UrlFormatter.formatOriginForSecurityDisplay(
+                            Objects.requireNonNull(payeeOrigin), SchemeDisplay.OMIT_HTTP_AND_HTTPS);
+        } else {
+            storePrimaryText = payeeName;
+            if (payeeOrigin != null) {
+                storeSecondaryText =
+                        UrlFormatter.formatOriginForSecurityDisplay(
+                                payeeOrigin, SchemeDisplay.OMIT_HTTP_AND_HTTPS);
+            }
+        }
+        // Add the store row.
+        itemList.add(
+                new ListItem(
+                        SPC_ITEM_TYPE,
+                        new PropertyModel.Builder(ItemProperties.ALL_KEYS)
+                                .with(
+                                        ItemProperties.ICON,
+                                        ResourcesCompat.getDrawable(
+                                                context.getResources(),
+                                                R.drawable.storefront_icon,
+                                                context.getTheme()))
+                                .with(
+                                        ItemProperties.ICON_LABEL,
+                                        context.getString(
+                                                R.string.secure_payment_confirmation_store_label))
+                                .with(ItemProperties.PRIMARY_TEXT, storePrimaryText)
+                                .with(ItemProperties.SECONDARY_TEXT, storeSecondaryText)
+                                .build()));
 
         // The instrument icon may be empty, if it couldn't be downloaded/decoded and
         // iconMustBeShown was set to false. In that case, use a default icon. The actual display
         // color is set based on the theme in OnThemeChanged.
-        boolean usingDefaultIcon = false;
         assert paymentIcon instanceof BitmapDrawable;
         if (((BitmapDrawable) paymentIcon).getBitmap() == null) {
             paymentIcon =
                     ResourcesCompat.getDrawable(
                             context.getResources(), R.drawable.credit_card, context.getTheme());
-            usingDefaultIcon = true;
         }
+        // Add the payment row.
+        itemList.add(
+                new ListItem(
+                        SPC_ITEM_TYPE,
+                        new PropertyModel.Builder(ItemProperties.ALL_KEYS)
+                                .with(ItemProperties.ICON, paymentIcon)
+                                .with(ItemProperties.PRIMARY_TEXT, paymentInstrumentLabelPrimary)
+                                .with(
+                                        ItemProperties.SECONDARY_TEXT,
+                                        paymentInstrumentLabelSecondary)
+                                .build()));
+
+        // Convert the total value to the local currency amount.
+        CurrencyFormatter currencyFormatter =
+                new CurrencyFormatter(paymentItem.amount.currency, Locale.getDefault());
+        String totalValue = currencyFormatter.format(paymentItem.amount.value);
+        currencyFormatter.destroy();
+        // Add the total row.
+        itemList.add(
+                new ListItem(
+                        SPC_ITEM_TYPE,
+                        new PropertyModel.Builder(ItemProperties.ALL_KEYS)
+                                .with(
+                                        ItemProperties.ICON,
+                                        ResourcesCompat.getDrawable(
+                                                context.getResources(),
+                                                R.drawable.payments_icon,
+                                                context.getTheme()))
+                                .with(
+                                        ItemProperties.ICON_LABEL,
+                                        context.getString(
+                                                R.string.secure_payment_confirmation_total_label))
+                                .with(
+                                        ItemProperties.PRIMARY_TEXT,
+                                        String.format(
+                                                "%s %s", paymentItem.amount.currency, totalValue))
+                                .build()));
+        SimpleRecyclerViewAdapter itemListAdapter = new SimpleRecyclerViewAdapter(itemList);
+        itemListAdapter.registerType(
+                SPC_ITEM_TYPE,
+                SecurePaymentConfirmationView::createItemView,
+                SecurePaymentConfirmationViewBinder::bindItem);
 
         SpannableString optOutText = null;
         if (showOptOut) {
@@ -148,8 +239,6 @@ public class SecurePaymentConfirmationController
                                     new ChromeClickableSpan(context, (widget) -> onOptOut())));
         }
 
-        boolean showsIssuerNetworkIcons = issuerIcon != null && networkIcon != null;
-
         SpannableString footnote = null;
         if (!mInformOnly) {
             footnote =
@@ -165,11 +254,7 @@ public class SecurePaymentConfirmationController
         mView = new SecurePaymentConfirmationView(context);
         mModel =
                 new PropertyModel.Builder(SecurePaymentConfirmationProperties.ALL_KEYS)
-                        .with(
-                                SecurePaymentConfirmationProperties.SHOWS_ISSUER_NETWORK_ICONS,
-                                showsIssuerNetworkIcons)
-                        .with(SecurePaymentConfirmationProperties.ISSUER_ICON, issuerIcon)
-                        .with(SecurePaymentConfirmationProperties.NETWORK_ICON, networkIcon)
+                        .with(SecurePaymentConfirmationProperties.HEADER_LOGOS, paymentEntityLogos)
                         .with(
                                 SecurePaymentConfirmationProperties.TITLE,
                                 mInformOnly
@@ -177,36 +262,25 @@ public class SecurePaymentConfirmationController
                                                 R.string
                                                         .secure_payment_confirmation_inform_only_title)
                                         : context.getString(
-                                                R.string
-                                                        .secure_payment_confirmation_verify_purchase))
+                                                R.string.secure_payment_confirmation_title))
                         .with(
-                                SecurePaymentConfirmationProperties.STORE_LABEL,
-                                getStoreLabel(payeeName, payeeOrigin))
-                        .with(
-                                SecurePaymentConfirmationProperties.PAYMENT_ICON,
-                                Pair.create(paymentIcon, usingDefaultIcon))
-                        .with(
-                                SecurePaymentConfirmationProperties.PAYMENT_INSTRUMENT_LABEL,
-                                paymentInstrumentLabel)
-                        .with(SecurePaymentConfirmationProperties.CURRENCY, total.amount.currency)
-                        .with(SecurePaymentConfirmationProperties.TOTAL, formatPaymentItem(total))
+                                SecurePaymentConfirmationProperties.ITEM_LIST_ADAPTER,
+                                itemListAdapter)
                         .with(SecurePaymentConfirmationProperties.OPT_OUT_TEXT, optOutText)
                         .with(SecurePaymentConfirmationProperties.FOOTNOTE, footnote)
                         .with(
                                 SecurePaymentConfirmationProperties.CONTINUE_BUTTON_LABEL,
                                 mInformOnly
                                         ? context.getString(R.string.payments_confirm_button)
-                                        : context.getString(R.string.payments_continue_button))
+                                        : context.getString(
+                                                R.string
+                                                        .secure_payment_confirmation_verify_button_label))
                         .build();
         PropertyModelChangeProcessor.create(
                 mModel, mView, SecurePaymentConfirmationViewBinder::bind);
         mView.mContinueButton.setOnClickListener(
                 (View button) -> {
                     onContinue();
-                });
-        mView.mCancelButton.setOnClickListener(
-                (View button) -> {
-                    onCancel();
                 });
 
         mContent =
@@ -220,6 +294,34 @@ public class SecurePaymentConfirmationController
     public boolean show() {
         if (mBottomSheetController.requestShowContent(mContent, /* animate= */ true)) {
             mBottomSheetObserver.begin(this);
+
+            // For browser automation use-cases (such as WebDriver), SPC can be placed in
+            // transaction mode where it will immediately take some action on the dialog without
+            // user interaction.  We deliberately wait until after the dialog is created and shown
+            // to handle this, in order to keep the automation codepath close to the real one.
+            //
+            // https://w3c.github.io/secure-payment-confirmation/#sctn-transaction-ux-test-automation
+            switch (mTransactionMode) {
+                case SPCTransactionMode.AUTOACCEPT:
+                    onContinue();
+                    break;
+                case SPCTransactionMode.AUTOAUTHANOTHERWAY:
+                    // To best mimic the underlying dialog, in mInformOnly mode we still click on
+                    // the 'Continue' button.
+                    if (mInformOnly) {
+                        onContinue();
+                    } else {
+                        onVerifyAnotherWay();
+                    }
+                    break;
+                case SPCTransactionMode.AUTOOPTOUT:
+                    onOptOut();
+                    break;
+                case SPCTransactionMode.AUTOREJECT:
+                    onCancel();
+                    break;
+            }
+
             return true;
         }
         return false;
@@ -232,7 +334,11 @@ public class SecurePaymentConfirmationController
     }
 
     private void onContinue() {
-        if (!mInputProtector.shouldInputBeProcessed()) return;
+        if (!mInputProtector.shouldInputBeProcessed()
+                && mTransactionMode == SPCTransactionMode.NONE) {
+            return;
+        }
+
         hide();
         if (mInformOnly) {
             mResponseCallback.onResult(SpcResponseStatus.ANOTHER_WAY);
@@ -243,42 +349,30 @@ public class SecurePaymentConfirmationController
 
     @Override
     public void onCancel() {
-        if (!mInputProtector.shouldInputBeProcessed()) return;
+        if (!mInputProtector.shouldInputBeProcessed()
+                && mTransactionMode == SPCTransactionMode.NONE) {
+            return;
+        }
         hide();
         mResponseCallback.onResult(SpcResponseStatus.CANCEL);
     }
 
     private void onVerifyAnotherWay() {
-        if (!mInputProtector.shouldInputBeProcessed()) return;
+        if (!mInputProtector.shouldInputBeProcessed()
+                && mTransactionMode == SPCTransactionMode.NONE) {
+            return;
+        }
         hide();
         mResponseCallback.onResult(SpcResponseStatus.ANOTHER_WAY);
     }
 
     private void onOptOut() {
-        if (!mInputProtector.shouldInputBeProcessed()) return;
+        if (!mInputProtector.shouldInputBeProcessed()
+                && mTransactionMode == SPCTransactionMode.NONE) {
+            return;
+        }
         hide();
         mResponseCallback.onResult(SpcResponseStatus.OPT_OUT);
-    }
-
-    private String getStoreLabel(@Nullable String payeeName, @Nullable Origin payeeOrigin) {
-        // At least one of the payeeName and payeeOrigin must be non-null in SPC; this should be
-        // enforced by PaymentRequestService.isValidSecurePaymentConfirmationRequest.
-        assert payeeName != null || payeeOrigin != null;
-
-        if (payeeOrigin == null) return assertNonNull(payeeName);
-
-        String origin =
-                UrlFormatter.formatOriginForSecurityDisplay(
-                        payeeOrigin, SchemeDisplay.OMIT_HTTP_AND_HTTPS);
-        return payeeName == null ? origin : String.format("%s (%s)", payeeName, origin);
-    }
-
-    private String formatPaymentItem(PaymentItem paymentItem) {
-        CurrencyFormatter formatter =
-                new CurrencyFormatter(paymentItem.amount.currency, Locale.getDefault());
-        String result = formatter.format(paymentItem.amount.value);
-        formatter.destroy();
-        return result;
     }
 
     /*package*/ SecurePaymentConfirmationView getViewForTesting() {

@@ -58,7 +58,7 @@ inline constexpr char kSearchEngineChoiceRepromptWildcardHistogram[] =
 inline constexpr char kSearchEngineChoiceRepromptSpecificCountryHistogram[] =
     "Search.ChoiceReprompt.SpecificCountry";
 inline constexpr char kSearchEngineChoiceCompletedOnMonthHistogram[] =
-    "Search.ChoiceCompletedOnMonth.OnProfileLoad";
+    "Search.ChoiceCompletedOnMonth.OnProfileLoad2";
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -156,8 +156,9 @@ enum class SearchEngineChoiceWipeReason {
   kCommandLineFlag = 4,
   kDeviceRestored = 5,
   kInvalidMetadata = 6,
+  kMissingDefaultSearchEngine = 7,
 
-  kMaxValue = kInvalidMetadata,
+  kMaxValue = kMissingDefaultSearchEngine,
 };
 
 // Exposed for testing.
@@ -245,14 +246,6 @@ class ChoiceScreenData {
   const ChoiceScreenDisplayState display_state_;
 };
 
-// Records the specified choice screen condition at profile initialization.
-void RecordChoiceScreenProfileInitCondition(
-    SearchEngineChoiceScreenConditions event);
-
-// Records the specified choice screen condition for relevant navigations.
-void RecordChoiceScreenNavigationCondition(
-    SearchEngineChoiceScreenConditions condition);
-
 // Records the specified choice screen event.
 void RecordChoiceScreenEvent(SearchEngineChoiceScreenEvents event);
 
@@ -295,7 +288,8 @@ struct ChoiceCompletionMetadata {
     kAbsent,
     kMissingVersion,
     kInvalidVersion,
-    kOther,
+    kMissingTimestamp,
+    kNullTimestamp,
   };
 
   base::Time timestamp;

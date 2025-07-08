@@ -18,6 +18,9 @@
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/page_content_annotations/page_content_annotations_service_factory.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_service.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_service_factory.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_types.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -27,11 +30,10 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/test/history_service_test_util.h"
 #include "components/network_session_configurator/common/network_switches.h"
-#include "components/optimization_guide/core/execution_status.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/inference/execution_status.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_guide_test_util.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
 #include "components/optimization_guide/proto/page_entities_metadata.pb.h"
 #include "components/page_content_annotations/core/page_content_annotations_enums.h"
@@ -1149,14 +1151,14 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceBatchVisitTest,
 class PageContentAnnotationsServiceContentExtractionTest
     : public InProcessBrowserTest {
  public:
-  virtual void InitializeFeaureList() {
+  virtual void InitializeFeatureList() {
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
         features::kAnnotatedPageContentExtraction,
         {{"capture_delay", "0s"}, {"include_inner_text", "true"}});
   }
 
   void SetUp() override {
-    InitializeFeaureList();
+    InitializeFeatureList();
     InProcessBrowserTest::SetUp();
   }
 
@@ -1259,7 +1261,7 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionTest,
 class PageContentAnnotationsServiceContentExtractionPdfTest
     : public PageContentAnnotationsServiceContentExtractionTest {
  public:
-  void InitializeFeaureList() override {
+  void InitializeFeatureList() override {
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
         features::kAnnotatedPageContentExtraction, {{"capture_delay", "4s"}});
   }
@@ -1330,5 +1332,58 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionPdfTest,
 }
 
 #endif  // BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+
+class PageContentAnnotationsServiceContentExtractionTestNoFeatureFlag
+    : public PageContentAnnotationsServiceContentExtractionTest {
+ public:
+  void InitializeFeatureList() override {}
+};
+
+class FakeExtractionServiceObserver
+    : public PageContentExtractionService::Observer {
+ public:
+  void OnPageContentExtracted(
+      content::Page& page,
+      const optimization_guide::proto::AnnotatedPageContent& page_content)
+      override {
+    page_content_future_.SetValue(page_content);
+  }
+  void Wait() { EXPECT_TRUE(page_content_future_.Wait()); }
+  base::test::TestFuture<optimization_guide::proto::AnnotatedPageContent>
+      page_content_future_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PageContentAnnotationsServiceContentExtractionTestNoFeatureFlag,
+    ObserverAddedAfterWebContentsInit) {
+  FakeExtractionServiceObserver observer;
+  auto* service =
+      PageContentExtractionServiceFactory::GetForProfile(browser()->profile());
+  service->AddObserver(&observer);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  GURL url(embedded_test_server()->GetURL("a.test",
+                                          "/optimization_guide/hello.html"));
+  content::NavigateToURLBlockUntilNavigationsComplete(web_contents, url, 1);
+
+  observer.Wait();
+  auto& page_content = observer.page_content_future_.Get();
+  EXPECT_TRUE(page_content.IsInitialized());
+
+  // Should have cached data for page since there was an observer registered.
+  ASSERT_TRUE(service->GetExtractedPageContentAndEligibilityForPage(
+      web_contents->GetPrimaryPage()));
+
+  service->RemoveObserver(&observer);
+
+  GURL new_url(embedded_test_server()->GetURL(
+      "a.test", "/optimization_guide/newurl.html"));
+  content::NavigateToURLBlockUntilNavigationsComplete(web_contents, new_url, 1);
+
+  // Make sure cached content is cleared with a new navigation.
+  ASSERT_FALSE(service->GetExtractedPageContentAndEligibilityForPage(
+      web_contents->GetPrimaryPage()));
+}
 
 }  // namespace page_content_annotations

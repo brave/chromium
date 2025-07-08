@@ -207,6 +207,18 @@ chromium-metrics-reviews@google.com.
   <int value="8" label="Address is not validated by NSDataDetector"/>
 </enum>
 
+<!-- LINT.IfChange(IOSAIHubAction) -->
+
+<enum name="IOSAIHubAction">
+  <summary>The set of actions that can be performed on the AI Hub.</summary>
+  <int value="0" label="Lens"/>
+  <int value="1" label="ReaderMode"/>
+  <int value="2" label="Gemini"/>
+  <int value="3" label="Dismiss"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/intelligence/page_action_menu/utils/ai_hub_metrics.h:IOSAIHubAction) -->
+
 <enum name="IOSAnnotationType">
   <int value="0" label="Unknown"/>
   <int value="1" label="Date"/>
@@ -262,6 +274,13 @@ chromium-metrics-reviews@google.com.
   <int value="0" label="Cancel"/>
   <int value="1" label="Swipe down"/>
   <int value="2" label="Open tabs"/>
+</enum>
+
+<enum name="IOSBWGEntryPoint">
+  <int value="0" label="Promo"/>
+  <int value="1" label="Overflow Menu"/>
+  <int value="2" label="AI Hub"/>
+  <int value="3" label="Omnibox Chip"/>
 </enum>
 
 <enum name="iOSCredentialIdentityStoreErrorForReporting">
@@ -636,6 +655,7 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Message (e.g. translate)"/>
   <int value="2" label="Price insight"/>
   <int value="3" label="Lens overlay"/>
+  <int value="4" label="Reader mode"/>
 </enum>
 
 <!-- LINT.ThenChange(/ios/chrome/browser/location_bar/ui_bundled/location_bar_metrics.h:IOSLocationBarLeadingIconType) -->
@@ -739,9 +759,10 @@ chromium-metrics-reviews@google.com.
 
 <enum name="IOSNTPNewBadgeShownResult">
   <int value="0" label="Shown"/>
-  <int value="1" label="Not shown due to limit reached"/>
+  <int value="1" label="Obsolete in M140 - Not shown due to limit reached"/>
   <int value="2"
-      label="Not shown due to the button already having been pressed"/>
+      label="Obsolete in M140 - Not shown due to the button already having
+             been pressed"/>
 </enum>
 
 <enum name="IOSNTPOverscrollAction">
@@ -749,6 +770,17 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Pull to Refresh"/>
   <int value="2" label="Close Tab"/>
 </enum>
+
+<!-- LINT.IfChange(IOSOmniboxAssistiveKey) -->
+
+<enum name="IOSOmniboxAssistiveKey">
+  <int value="0" label="Key :"/>
+  <int value="1" label="Key -"/>
+  <int value="2" label="Key /"/>
+  <int value="3" label="Key .com"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/omnibox/ui/keyboard_assist/omnibox_assistive_keyboard_utils.h:IOSOmniboxAssistiveKey) -->
 
 <!-- LINT.IfChange(IOSOmniboxCopyType) -->
 
@@ -930,6 +962,8 @@ chromium-metrics-reviews@google.com.
   <int value="14" label="Made for iOS default browser promo"/>
   <int value="15" label="Stay Safe default browser promo"/>
   <int value="18" label="Welcome Back promo"/>
+  <int value="19" label="BWG promo"/>
+  <int value="20" label="Safari Import (Remind Me Later)"/>
 </enum>
 
 <enum name="IOSPromosManagerPromoType">
@@ -1078,19 +1112,6 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Incognito Mode, Google Search engine"/>
   <int value="3" label="Incognito Mode, Other Search engine"/>
 </enum>
-
-<!-- LINT.IfChange(IOSSegmentedDefaultBrowserPromoAction) -->
-
-<enum name="IOSSegmentedDefaultBrowserPromoAction">
-  <int value="0" label="Static Promo Appeared"/>
-  <int value="1" label="Static Promo Accepted"/>
-  <int value="2" label="Static Promo Dismissed"/>
-  <int value="3" label="Animated Promo Appeared"/>
-  <int value="4" label="Animated Promo Accepted"/>
-  <int value="5" label="Animated Promo Dismissed"/>
-</enum>
-
-<!-- LINT.ThenChange(//ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/constants.h:SegmentedDefaultBrowserPromoAction) -->
 
 <enum name="IOSSessionMigration">
   <int value="0" label="No Migration"/>
@@ -1375,27 +1396,9 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Not a new user (user is new for 30 days after FRE)"/>
 </enum>
 
-<enum name="OmniboxPositionChoiceScreenEvents">
-  <int value="0" label="Unknown"/>
-  <int value="1" label="Screen Was Displayed"/>
-  <int value="2" label="Top Selected"/>
-  <int value="3" label="Bottom Selected"/>
-  <int value="4" label="Position Validated"/>
-  <int value="5" label="Position Discarded"/>
-  <int value="6" label="Screen Skipped"/>
-  <int value="7" label="Promo Registered"/>
-</enum>
-
 <enum name="OmniboxPositionType">
   <int value="0" label="Top"/>
   <int value="1" label="Bottom"/>
-</enum>
-
-<enum name="OmniboxPromoSelectedPositions">
-  <int value="0" label="Top default"/>
-  <int value="1" label="Bottom default"/>
-  <int value="2" label="Top not default"/>
-  <int value="3" label="Bottom not default"/>
 </enum>
 
 <enum name="PageLoadedSnapshotResult">
@@ -1584,17 +1587,6 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(/ios/chrome/browser/push_notification/model/constants.h:PushNotificationTargetProfileHandlingResult) -->
 
-<!-- LINT.IfChange(ReaderModeAmpClassification) -->
-
-<enum name="ReaderModeAmpClassification">
-  <int value="0" label="Empty distill with AMP"/>
-  <int value="1" label="Populated distill with AMP"/>
-  <int value="2" label="Empty distill no AMP"/>
-  <int value="3" label="Populated distill no AMP"/>
-</enum>
-
-<!-- LINT.ThenChange(/ios/chrome/browser/reader_mode/model/constants.h:ReaderModeAmpClassification) -->
-
 <!-- LINT.IfChange(ReaderModeDistillerResult) -->
 
 <enum name="ReaderModeDistillerResult">
@@ -1627,6 +1619,16 @@ chromium-metrics-reviews@google.com.
 </enum>
 
 <!-- LINT.ThenChange(/ios/chrome/browser/reader_mode/model/constants.h:ReaderModeHeuristicResult) -->
+
+<!-- LINT.IfChange(ReaderModeState) -->
+
+<enum name="ReaderModeState">
+  <int value="0" label="Heuristic Canceled"/>
+  <int value="1" label="Heuristic Started"/>
+  <int value="2" label="Heuristic Completed"/>
+</enum>
+
+<!-- LINT.ThenChange(/ios/chrome/browser/reader_mode/model/constants.h:ReaderModeState) -->
 
 <enum name="TextSelectionDetectedEntityType">
   <int value="0" label="Unknown"/>
@@ -1705,6 +1707,16 @@ chromium-metrics-reviews@google.com.
   <int value="18" label="Package Tracking"/>
   <int value="19" label="Password Sharing"/>
   <int value="20" label="Customizable Overflow Menu"/>
+  <int value="21" label="Docking Bling"/>
+  <int value="22" label="Price Tracking"/>
+  <int value="23" label="Price History"/>
+  <int value="24" label="Other Buying Options"/>
+  <int value="25" label="Lens Search What You See"/>
+  <int value="26" label="Lens Translate"/>
+  <int value="27" label="Lens Question"/>
+  <int value="28" label="Passkeys"/>
+  <int value="29" label="Choose From Drive"/>
+  <int value="30" label="Save To Drive"/>
 </enum>
 
 <enum name="WindowActivityOrigin">

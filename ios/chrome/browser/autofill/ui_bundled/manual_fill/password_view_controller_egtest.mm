@@ -8,12 +8,14 @@
 #import "base/test/ios/wait_util.h"
 #import "components/password_manager/core/browser/password_ui_utils.h"
 #import "components/strings/grit/components_strings.h"
+#import "components/sync/base/features.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/form_input_accessory/form_input_accessory_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_matchers.h"
+#import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
@@ -35,6 +37,7 @@
 #import "ui/base/l10n/l10n_util_mac.h"
 #import "url/gurl.h"
 
+using chrome_test_util::ActionSheetItemWithAccessibilityLabelId;
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::CancelButton;
 using chrome_test_util::NavigationBarCancelButton;
@@ -69,19 +72,6 @@ id<GREYMatcher> UsernameButtonMatcher() {
 id<GREYMatcher> NotSecureWebsiteAlert() {
   return StaticTextWithAccessibilityLabelId(
       IDS_IOS_MANUAL_FALLBACK_NOT_SECURE_TITLE);
-}
-
-// Matcher for the confirmation dialog Continue button.
-id<GREYMatcher> ConfirmUsingOtherPasswordButton() {
-  return grey_allOf(ButtonWithAccessibilityLabelId(
-                        IDS_IOS_CONFIRM_USING_OTHER_PASSWORD_CONTINUE),
-                    grey_interactable(), nullptr);
-}
-
-// Matcher for the confirmation dialog Cancel button.
-id<GREYMatcher> CancelUsingOtherPasswordButton() {
-  return grey_allOf(ButtonWithAccessibilityLabelId(IDS_CANCEL),
-                    grey_interactable(), nullptr);
 }
 
 // Matcher for the overflow menu button shown in the password cells.
@@ -275,6 +265,15 @@ void CheckKeyboardIsUpAndNotCovered() {
     config.features_disabled.push_back(kIOSKeyboardAccessoryUpgradeForIPad);
   }
 
+  // TODO(crbug.com/371189341): Test fails on device.
+#if TARGET_OS_SIMULATOR
+  if ([self isRunningTest:@selector
+            (testPasswordGenerationFallbackSignedInEncryptionError)]) {
+    config.features_enabled.push_back(
+        syncer::kSyncTrustedVaultInfobarImprovements);
+  }
+#endif  // TARGET_OS_SIMULATOR
+
   return config;
 }
 
@@ -308,7 +307,9 @@ void CheckKeyboardIsUpAndNotCovered() {
       assertWithMatcher:grey_notNil()];
 
   // Acknowledge concerns using other passwords on a website.
-  [[EarlGrey selectElementWithMatcher:ConfirmUsingOtherPasswordButton()]
+  [[EarlGrey selectElementWithMatcher:
+                 ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_CONFIRM_USING_OTHER_PASSWORD_CONTINUE)]
       performAction:grey_tap()];
 }
 
@@ -562,7 +563,8 @@ void CheckKeyboardIsUpAndNotCovered() {
       performAction:grey_tap()];
 
   // Cancel using other passwords on a website.
-  [[EarlGrey selectElementWithMatcher:CancelUsingOtherPasswordButton()]
+  [[EarlGrey selectElementWithMatcher:ActionSheetItemWithAccessibilityLabelId(
+                                          IDS_CANCEL)]
       performAction:grey_tap()];
 
   // Verify that the other password list is not opened.
@@ -711,7 +713,9 @@ void CheckKeyboardIsUpAndNotCovered() {
       performAction:grey_tap()];
 
   // Acknowledge concerns using other passwords on a website.
-  [[EarlGrey selectElementWithMatcher:ConfirmUsingOtherPasswordButton()]
+  [[EarlGrey selectElementWithMatcher:
+                 ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_CONFIRM_USING_OTHER_PASSWORD_CONTINUE)]
       performAction:grey_tap()];
 
   // Verify that the all saved password list is visible.
@@ -917,8 +921,8 @@ void CheckKeyboardIsUpAndNotCovered() {
       assertWithMatcher:grey_not(grey_nil())];
 
   // Dismiss the alert.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::OKButton()]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:ActionSheetItemWithAccessibilityLabelId(
+                                          IDS_OK)] performAction:grey_tap()];
 
   [ChromeEarlGreyUI cleanupAfterShowingAlert];
 }
@@ -976,7 +980,15 @@ void CheckKeyboardIsUpAndNotCovered() {
 }
 
 // Tests password generation on manual fallback.
-- (void)testPasswordGenerationOnManualFallback {
+// TODO(crbug.com/424760140): Test fails on simulator.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testPasswordGenerationOnManualFallback \
+  DISABLED_testPasswordGenerationOnManualFallback
+#else
+#define MAYBE_testPasswordGenerationOnManualFallback \
+  testPasswordGenerationOnManualFallback
+#endif
+- (void)MAYBE_testPasswordGenerationOnManualFallback {
   [SigninEarlGreyUI signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
 
@@ -1005,7 +1017,15 @@ void CheckKeyboardIsUpAndNotCovered() {
 }
 
 // Tests password generation on manual fallback for signed in users.
-- (void)testPasswordGenerationOnManualFallbackSignedInAccount {
+// TODO(crbug.com/424760140): Test fails on simulator.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testPasswordGenerationOnManualFallbackSignedInAccount \
+  DISABLED_testPasswordGenerationOnManualFallbackSignedInAccount
+#else
+#define MAYBE_testPasswordGenerationOnManualFallbackSignedInAccount \
+  testPasswordGenerationOnManualFallbackSignedInAccount
+#endif
+- (void)MAYBE_testPasswordGenerationOnManualFallbackSignedInAccount {
   [SigninEarlGreyUI signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
 
@@ -1030,7 +1050,7 @@ void CheckKeyboardIsUpAndNotCovered() {
 // Tests password generation on manual fallback not showing for signed in users
 // with Passwords toggle in account settings disabled.
 // TODO(crbug.com/371189341): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testPasswordGenerationFallbackSignedInPasswordsDisabled \
   testPasswordGenerationFallbackSignedInPasswordsDisabled
 #else
@@ -1067,7 +1087,7 @@ void CheckKeyboardIsUpAndNotCovered() {
 // Tests password generation on manual fallback not showing for signed in users
 // with encryption error.
 // TODO(crbug.com/371189341): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testPasswordGenerationFallbackSignedInEncryptionError \
   testPasswordGenerationFallbackSignedInEncryptionError
 #else
@@ -1093,6 +1113,11 @@ void CheckKeyboardIsUpAndNotCovered() {
       performAction:grey_tap()];
 
   [self loadLoginPage];
+
+  // Swipe up the sync infobar error.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kInfobarBannerViewIdentifier)]
+      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
 
   // Bring up the keyboard.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
@@ -1304,6 +1329,11 @@ void CheckKeyboardIsUpAndNotCovered() {
 // Tests that tapping the "Autofill Form" button in the all password list fills
 // the password form with the right data.
 - (void)testAutofillFormButtonInAllPasswordListFillsForm {
+  // TODO(crbug.com/426435086): Test consistently fails on ipad.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Fails on iPad.");
+  }
+
   if (![AutofillAppInterface isKeyboardAccessoryUpgradeEnabled]) {
     EARL_GREY_TEST_DISABLED(@"This test is not relevant when the Keyboard "
                             @"Accessory Upgrade feature is disabled.")

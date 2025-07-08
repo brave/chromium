@@ -44,6 +44,7 @@ import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.components.dom_distiller.core.DomDistillerFeatures;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtilsJni;
@@ -446,31 +447,59 @@ public class ReaderModeManagerTest {
 
     @Test
     @Feature("ReaderMode")
-    @EnableFeatures(ChromeFeatureList.CCT_ADAPTIVE_BUTTON)
+    @EnableFeatures({
+        ChromeFeatureList.CCT_ADAPTIVE_BUTTON,
+        DomDistillerFeatures.READER_MODE_DISTILL_IN_APP // Makes test mocking easier.
+    })
     public void testTryShowingPrompt_Cct_AdaptiveButtonOn_ButtonShowing_ShouldNotShowPrompt() {
         when(mTab.getWebContents()).thenReturn(mWebContents);
         when(mTab.isCustomTab()).thenReturn(true);
-        // Simulate the button UI being shown, which sets the internal flag.
-        mManager.setReaderModeUiShown();
+        when(mTab.isLoading()).thenReturn(false);
 
         mDistillabilityObserver.onIsPageDistillableResult(mTab, true, true, false);
 
+        // Simulate the button UI being displayed.
+        mManager.onContextualPageActionShown(/* isReaderMode= */ true);
+
         verify(mMessageDispatcher, never())
                 .enqueueMessage(any(), any(), eq(MessageScopeType.NAVIGATION), anyBoolean());
+
+        // Verify the histogram for fallback UI is NOT recorded when button gets shown.
+        var watcher =
+                HistogramWatcher.newBuilder()
+                        .expectNoRecords("CustomTab.AdaptiveToolbarButton.FallbackUi")
+                        .build();
+        mManager.activateReaderMode();
+        watcher.assertExpected();
     }
 
     @Test
     @Feature("ReaderMode")
-    @EnableFeatures(ChromeFeatureList.CCT_ADAPTIVE_BUTTON)
+    @EnableFeatures({
+        ChromeFeatureList.CCT_ADAPTIVE_BUTTON,
+        DomDistillerFeatures.READER_MODE_DISTILL_IN_APP // Makes test mocking easier.
+    })
     public void testTryShowingPrompt_Cct_AdaptiveButtonOn_ButtonNotShowing_ShouldShowPrompt() {
         when(mTab.getWebContents()).thenReturn(mWebContents);
         when(mTab.isCustomTab()).thenReturn(true);
+        when(mTab.isLoading()).thenReturn(false);
 
         mDistillabilityObserver.onIsPageDistillableResult(mTab, true, true, false);
+
+        // Simulate the button UI not being displayed.
+        mManager.onContextualPageActionShown(/* isReaderMode= */ false);
 
         verify(mMessageDispatcher)
                 .enqueueMessage(
                         any(), eq(mWebContents), eq(MessageScopeType.NAVIGATION), eq(false));
+
+        // Verify the histogram for fallback UI is recorded when activating the reader mode page.
+        var watcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "CustomTab.AdaptiveToolbarButton.FallbackUi",
+                        AdaptiveToolbarButtonVariant.READER_MODE);
+        mManager.activateReaderMode();
+        watcher.assertExpected();
     }
 
     @Test

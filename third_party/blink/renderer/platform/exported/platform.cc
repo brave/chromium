@@ -32,6 +32,7 @@
 
 #include <memory>
 
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -137,7 +138,7 @@ WebThemeEngine* Platform::ThemeEngine() {
 void Platform::InitializeBlink() {
   DCHECK(!did_initialize_blink_);
   WTF::Partitions::Initialize();
-  WTF::Initialize();
+  InitializeWtf();
   Length::Initialize();
   ProcessHeap::Init();
   ThreadState::AttachMainThread();
@@ -223,13 +224,13 @@ void Platform::CreateMainThreadForTesting() {
 }
 
 void Platform::SetMainThreadTaskRunnerForTesting() {
-  DCHECK(WTF::IsMainThread());
+  DCHECK(IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
   scheduler::SetMainThreadTaskRunnerForTesting();
 }
 
 void Platform::UnsetMainThreadTaskRunnerForTesting() {
-  DCHECK(WTF::IsMainThread());
+  DCHECK(IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
   scheduler::UnsetMainThreadTaskRunnerForTesting();
 }

@@ -296,7 +296,7 @@ public class HubLayoutUnitTest {
         when(mTab.isNativePage()).thenReturn(false);
         when(mTabModelSelector.getCurrentTab()).thenReturn(mTab);
 
-        mHubLayoutAnimatorSupplier = new SyncOneshotSupplierImpl<HubLayoutAnimator>();
+        mHubLayoutAnimatorSupplier = new SyncOneshotSupplierImpl<>();
         when(mHubLayoutAnimatorProviderMock.getAnimatorSupplier())
                 .thenReturn(mHubLayoutAnimatorSupplier);
     }
@@ -323,7 +323,11 @@ public class HubLayoutUnitTest {
                 LazyOneshotSupplier.fromValue(mFrameLayout);
         HubLayoutDependencyHolder dependencyHolder =
                 new HubLayoutDependencyHolder(
-                        hubManagerSupplier, rootViewSupplier, mScrimController, mOnAlphaChange);
+                        hubManagerSupplier,
+                        rootViewSupplier,
+                        mScrimController,
+                        mOnAlphaChange,
+                        /* xrSceneCoreSessionManager= */ null);
 
         mTabModelSelectorSupplier = () -> mTabModelSelector;
         mHubLayout =
@@ -736,7 +740,11 @@ public class HubLayoutUnitTest {
                 LazyOneshotSupplier.fromValue(mFrameLayout);
         HubLayoutDependencyHolder dependencyHolder =
                 new HubLayoutDependencyHolder(
-                        hubManagerSupplier, rootViewSupplier, mScrimController, mOnAlphaChange);
+                        hubManagerSupplier,
+                        rootViewSupplier,
+                        mScrimController,
+                        mOnAlphaChange,
+                        /* xrSceneCoreSessionManager= */ null);
         mHubLayout =
                 new HubLayout(
                         mActivity,
@@ -927,9 +935,18 @@ public class HubLayoutUnitTest {
 
     private void forceLayout() {
         // Force any layout delayed animations to run.
-        mHubContainerView.layout(0, 0, 100, 100);
-        for (int i = 0; i < mHubContainerView.getChildCount(); i++) {
-            mHubContainerView.getChildAt(i).layout(0, 0, 100, 100);
+        forceLayoutRecursive(mHubContainerView);
+    }
+
+    private void forceLayoutRecursive(ViewGroup viewGroup) {
+        viewGroup.layout(0, 0, 100, 100);
+        for (int i = 0; i < viewGroup.getChildCount(); i++) {
+            View child = viewGroup.getChildAt(i);
+            if (child instanceof ViewGroup childViewGroup) {
+                forceLayoutRecursive(childViewGroup);
+            } else {
+                child.layout(0, 0, 100, 100);
+            }
         }
     }
 }

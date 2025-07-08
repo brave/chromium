@@ -11,7 +11,6 @@ import static org.junit.Assert.assertTrue;
 
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.ui.base.DeviceFormFactor.PHONE;
-import static org.chromium.ui.base.DeviceFormFactor.TABLET;
 
 import androidx.test.filters.LargeTest;
 import androidx.test.filters.MediumTest;
@@ -48,6 +47,7 @@ import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.BookmarkTestUtil;
 import org.chromium.chrome.test.util.MenuUtils;
 import org.chromium.net.test.EmbeddedTestServer;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.List;
 import java.util.concurrent.TimeoutException;
@@ -95,7 +95,7 @@ public class TabSwitcherSearchTest {
 
     @Test
     @MediumTest
-    @Restriction(TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testHubSearchLoupe_Tablet() {
         RegularTabSwitcherStation tabSwitcher = mPage.openRegularTabSwitcher();
         assertEquals(R.id.search_loupe, tabSwitcher.searchElement.get().getId());

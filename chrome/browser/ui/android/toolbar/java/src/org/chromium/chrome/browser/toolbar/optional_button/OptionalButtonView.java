@@ -10,8 +10,6 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
-import android.os.Build.VERSION;
 import android.os.Handler;
 import android.transition.ChangeBounds;
 import android.transition.Fade;
@@ -101,6 +99,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
     private @AdaptiveToolbarButtonVariant int mCurrentButtonVariant =
             AdaptiveToolbarButtonVariant.NONE;
     private boolean mCanCurrentButtonShow;
+
+    // Indicates whether this optional button can change its own the visibility or leave the control
+    // to some other entity. {@code true} by default.
+    private boolean mCanChangeOwnVisibility = true;
     private @ButtonType int mCurrentButtonType;
     private @ButtonType int mNextButtonType;
 
@@ -282,7 +284,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
                     isCpaCheckedState
                             ? R.drawable
                                     .modern_toolbar_text_box_background_with_primary_color_square
-                            : R.drawable.modern_toolbar_text_box_background_with_primary_color;
+                            : R.drawable.modern_toolbar_text_box_background;
 
             mBackground.setImageDrawable(AppCompatResources.getDrawable(getContext(), resId));
             setBackgroundResourceHelper(isCpaCheckedState);
@@ -321,8 +323,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         // Set hover state tooltip text for optional toolbar buttons(e.g. share, voice search, new
         // tab and profile).
         if (buttonSpec.getHoverTooltipTextId() != ButtonSpec.INVALID_TOOLTIP_TEXT_ID
-                && mButton != null
-                && VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                && mButton != null) {
             TooltipCompat.setTooltipText(
                     mButton, getContext().getString(buttonSpec.getHoverTooltipTextId()));
         } else {
@@ -440,6 +441,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         mActionChipLabel.setEnabled(enabled);
     }
 
+    void setCanChangeVisibility(boolean canChange) {
+        mCanChangeOwnVisibility = canChange;
+    }
+
     /**
      * Gets a handler used to schedule the action chip collapse animation after the action chip
      * finishes expanding. Tests can set their own handler with {@code setHandlerForTesting}.
@@ -469,8 +474,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         // If isCpaSpecUpdateEnabled, overriding the background in #updateButtonWithAnimation.
         mBackground.setImageDrawable(
                 AppCompatResources.getDrawable(
-                        getContext(),
-                        R.drawable.modern_toolbar_text_box_background_with_primary_color));
+                        getContext(), R.drawable.modern_toolbar_text_box_background));
     }
 
     /**
@@ -513,7 +517,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         mAnimationImage.setVisibility(GONE);
 
         if (mState == State.HIDDEN) {
-            this.setVisibility(GONE);
+            if (mCanChangeOwnVisibility) this.setVisibility(GONE);
         } else {
             mButton.setVisibility(VISIBLE);
             mButton.setImageDrawable(mIconDrawable);
@@ -753,7 +757,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         }
 
         if (getVisibility() == GONE) {
-            setVisibility(VISIBLE);
+            if (mCanChangeOwnVisibility) this.setVisibility(VISIBLE);
             setWidth(0);
         }
 
@@ -885,7 +889,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         }
 
         // Prepare views for the transition, these changes aren't animated.
-        this.setVisibility(VISIBLE);
+        if (mCanChangeOwnVisibility) this.setVisibility(VISIBLE);
         setWidth(0);
 
         mButton.setVisibility(GONE);

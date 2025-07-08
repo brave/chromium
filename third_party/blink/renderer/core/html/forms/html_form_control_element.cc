@@ -324,7 +324,7 @@ bool HTMLFormControlElement::IsKeyboardFocusableSlow(
     UpdateBehavior update_behavior) const {
   // Interest invoker targets with partial interest aren't keyboard focusable.
   if (IsInPartialInterestPopover()) {
-    CHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+    CHECK(RuntimeEnabledFeatures::HTMLInterestForAttributeEnabled(
         GetDocument().GetExecutionContext()));
     return false;
   }
@@ -381,7 +381,7 @@ HTMLFormControlElement::popoverTargetElement() {
     return no_element;
   }
   auto* target_popover = DynamicTo<HTMLElement>(target_element);
-  if (!target_popover || !target_popover->HasPopoverAttribute()) {
+  if (!target_popover || !target_popover->IsPopover()) {
     return no_element;
   }
   // The default action is "toggle".
@@ -396,8 +396,8 @@ HTMLFormControlElement::popoverTargetElement() {
   return PopoverTargetElement{.popover = target_popover, .action = action};
 }
 
-Element* HTMLFormControlElement::InterestTargetElement() const {
-  if (!RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+Element* HTMLFormControlElement::InterestForElement() const {
+  if (!RuntimeEnabledFeatures::HTMLInterestForAttributeEnabled(
           GetDocument().GetExecutionContext())) {
     return nullptr;
   }
@@ -406,7 +406,7 @@ Element* HTMLFormControlElement::InterestTargetElement() const {
   }
 
   return GetElementAttributeResolvingReferenceTarget(
-      html_names::kInteresttargetAttr);
+      html_names::kInterestforAttr);
 }
 
 void HTMLFormControlElement::DefaultEventHandler(Event& event) {
@@ -423,7 +423,7 @@ void HTMLFormControlElement::DefaultEventHandler(Event& event) {
 
     if (popover.popover) {
       bool event_target_was_nested_popover = false;
-      if (auto* target_node = event.target()->ToNode()) {
+      if (auto* target_node = event.RawTarget()->ToNode()) {
         bool button_is_ancestor_of_popover =
             IsShadowIncludingAncestorOf(*popover.popover);
         event_target_was_nested_popover =

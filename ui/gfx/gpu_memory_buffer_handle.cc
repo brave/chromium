@@ -5,6 +5,7 @@
 #include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "ui/gfx/generic_shared_memory_id.h"
 
@@ -12,7 +13,7 @@
 #include <windows.h>
 
 #include "base/win/scoped_handle.h"
-#endif
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace gfx {
 
@@ -98,21 +99,21 @@ GpuMemoryBufferHandle::GpuMemoryBufferHandle(DXGIHandle handle)
       dxgi_handle_(std::move(handle)) {
   CHECK(dxgi_handle_.IsValid());
 }
-#endif
+#endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_OZONE)
 GpuMemoryBufferHandle::GpuMemoryBufferHandle(
     NativePixmapHandle native_pixmap_handle)
     : type(GpuMemoryBufferType::NATIVE_PIXMAP),
       native_pixmap_handle_(std::move(native_pixmap_handle)) {}
-#endif
+#endif  // BUILDFLAG(IS_OZONE)
 
 #if BUILDFLAG(IS_ANDROID)
 GpuMemoryBufferHandle::GpuMemoryBufferHandle(
     base::android::ScopedHardwareBufferHandle handle)
     : type(GpuMemoryBufferType::ANDROID_HARDWARE_BUFFER),
       android_hardware_buffer(std::move(handle)) {}
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
 
 // TODO(crbug.com/40584691): Reset |type| and possibly the handles on the
 // moved-from object.
@@ -127,13 +128,19 @@ GpuMemoryBufferHandle::~GpuMemoryBufferHandle() = default;
 GpuMemoryBufferHandle GpuMemoryBufferHandle::Clone() const {
   GpuMemoryBufferHandle handle;
   handle.type = type;
-  handle.id = id;
   handle.offset = offset;
   handle.stride = stride;
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_OZONE)
   handle.native_pixmap_handle_ = CloneHandleForIPC(native_pixmap_handle_);
 #elif BUILDFLAG(IS_APPLE)
   handle.io_surface = io_surface;
+#if BUILDFLAG(IS_IOS)
+  handle.io_surface_mach_port = io_surface_mach_port;
+  handle.io_surface_shared_memory_region =
+      io_surface_shared_memory_region.Duplicate();
+  handle.io_surface_plane_strides = io_surface_plane_strides;
+  handle.io_surface_plane_offsets = io_surface_plane_offsets;
+#endif
 #elif BUILDFLAG(IS_WIN)
   handle.dxgi_handle_ = dxgi_handle_.Clone();
 #elif BUILDFLAG(IS_ANDROID)

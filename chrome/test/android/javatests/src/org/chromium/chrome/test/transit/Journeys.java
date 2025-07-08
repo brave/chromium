@@ -7,13 +7,11 @@ package org.chromium.chrome.test.transit;
 import static org.junit.Assert.assertTrue;
 
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.transit.Condition;
-import org.chromium.base.test.transit.Station;
-import org.chromium.base.test.transit.Transition.Trigger;
 import org.chromium.base.test.transit.TravelException;
+import org.chromium.base.test.transit.TripBuilder;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
@@ -171,9 +169,7 @@ public class Journeys {
             Supplier<PageStation.Builder<T>> pageStationFactory,
             boolean captureThumbnails) {
         assert urlsForRegularTabs.size() >= 1;
-        TabModelSelector tabModelSelector =
-                ThreadUtils.runOnUiThreadBlocking(
-                        () -> startingStation.getActivity().getTabModelSelector());
+        TabModelSelector tabModelSelector = startingStation.getTabModelSelector();
         int currentTabCount = tabModelSelector.getModel(/* incognito= */ false).getCount();
         int currentIncognitoTabCount = tabModelSelector.getModel(/* incognito= */ true).getCount();
         assert currentTabCount == 1;
@@ -213,7 +209,7 @@ public class Journeys {
             boolean captureThumbnails) {
         assert !urls.isEmpty();
 
-        TabModelSelector tabModelSelector = startingPage.getActivity().getTabModelSelector();
+        TabModelSelector tabModelSelector = startingPage.getTabModelSelector();
 
         PageStation currentPage = startingPage;
         for (int i = 0; i < urls.size(); i++) {
@@ -276,7 +272,7 @@ public class Journeys {
      */
     public static TabSwitcherGroupCardFacility mergeAllTabsToNewGroup(
             TabSwitcherStation tabSwitcher) {
-        TabModel tabModel = tabSwitcher.tabModelSelectorElement.get().getCurrentModel();
+        TabModel tabModel = tabSwitcher.tabModelElement.get();
         List<Tab> tabs = TabModelUtils.convertTabListToListOfTabs(tabModel);
         return mergeTabsToNewGroup(tabSwitcher, tabs);
     }
@@ -292,7 +288,7 @@ public class Journeys {
     public static TabSwitcherGroupCardFacility mergeTabsToNewGroup(
             TabSwitcherStation tabSwitcher, List<Tab> tabs) {
         assert !tabs.isEmpty();
-        TabModel currentModel = tabSwitcher.tabModelSelectorElement.get().getCurrentModel();
+        TabModel currentModel = tabSwitcher.tabModelElement.get();
         TabSwitcherListEditorFacility editor = tabSwitcher.openAppMenu().clickSelectTabs();
 
         TabBinList tabBinList = TabBinningUtil.binTabsByCard(currentModel);
@@ -316,18 +312,17 @@ public class Journeys {
      * Begins a new tab group creation UI flow. See {@link TabGroupCreationUiDelegate}
      *
      * @param <HostStationT> The type of station this is scoped to.
-     * @param station the station to begin the flow from.
-     * @param trigger The trigger used to begin the flow.
+     * @param tripBuilder TripBuilder with the Trigger to begin the flow from.
      */
-    public static <HostStationT extends Station<ChromeTabbedActivity>>
+    public static <HostStationT extends ChromeActivityTabModelBoundStation<ChromeTabbedActivity>>
             NewTabGroupDialogFacility<HostStationT> beginNewTabGroupUiFlow(
-                    HostStationT station, Trigger trigger) {
+                    TripBuilder tripBuilder) {
         assertTrue(ChromeFeatureList.sTabGroupEntryPointsAndroid.isEnabled());
 
         SoftKeyboardFacility softKeyboard = new SoftKeyboardFacility();
         NewTabGroupDialogFacility<HostStationT> dialog =
                 new NewTabGroupDialogFacility<>(softKeyboard);
-        station.enterFacilitiesSync(List.of(dialog, softKeyboard), trigger);
+        tripBuilder.enterFacilities(dialog, softKeyboard);
         return dialog;
     }
 

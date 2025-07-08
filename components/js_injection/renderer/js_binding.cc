@@ -17,7 +17,6 @@
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/string_util.h"
 #include "components/js_injection/common/interfaces.mojom-forward.h"
 #include "components/js_injection/renderer/js_communication.h"
@@ -26,6 +25,7 @@
 #include "gin/data_object_builder.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/public/common/messaging/string_message_codec.h"
@@ -77,7 +77,7 @@ class V8ArrayBufferPayload : public blink::WebMessageArrayBufferPayload {
 
 namespace js_injection {
 
-gin::WrapperInfo JsBinding::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo JsBinding::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 // static
 base::WeakPtr<JsBinding> JsBinding::Install(
@@ -155,7 +155,7 @@ void JsBinding::OnPostMessage(blink::WebMessagePayload message) {
   try_catch.SetVerbose(true);
 
   v8::Local<v8::Value> v8_message = std::visit(
-      base::Overloaded{
+      absl::Overload{
           [isolate](std::u16string& string_value) -> v8::Local<v8::Value> {
             return gin::ConvertToV8(isolate, std::move(string_value));
           },
@@ -212,7 +212,7 @@ void JsBinding::Bind(
 
 gin::ObjectTemplateBuilder JsBinding::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<JsBinding>::GetObjectTemplateBuilder(isolate)
+  return gin::DeprecatedWrappable<JsBinding>::GetObjectTemplateBuilder(isolate)
       .SetMethod(kPostMessage, &JsBinding::PostMessage)
       .SetMethod(kAddEventListener, &JsBinding::AddEventListener)
       .SetMethod(kRemoveEventListener, &JsBinding::RemoveEventListener)

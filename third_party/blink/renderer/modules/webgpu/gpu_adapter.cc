@@ -86,7 +86,6 @@ GPUAdapter::GPUAdapter(
   propertiesChain = &(*propertiesChain)->nextInChain;
 
   GetHandle().GetInfo(&info);
-  is_fallback_adapter_ = info.adapterType == wgpu::AdapterType::CPU;
   adapter_type_ = info.adapterType;
   backend_type_ = info.backendType;
 
@@ -114,21 +113,23 @@ GPUAdapter::GPUAdapter(
 
   features_ = MakeFeatureNameSet(GetHandle());
 
-  wgpu::Limits limits = {};
-  GetHandle().GetLimits(&limits);
+  GPUSupportedLimits::ComboLimits limits;
+  GetHandle().GetLimits(limits.GetLinked());
   limits_ = MakeGarbageCollected<GPUSupportedLimits>(limits);
 
   info_ = CreateAdapterInfoForAdapter();
 }
 
 GPUAdapterInfo* GPUAdapter::CreateAdapterInfoForAdapter() {
+  bool is_fallback_adapter = adapter_type_ == wgpu::AdapterType::CPU;
+
   GPUAdapterInfo* info;
   if (RuntimeEnabledFeatures::WebGPUDeveloperFeaturesEnabled()) {
     // If WebGPU developer features have been enabled then provide all available
     // adapter info values.
     info = MakeGarbageCollected<GPUAdapterInfo>(
         vendor_, architecture_, subgroup_min_size_, subgroup_max_size_,
-        is_fallback_adapter_, device_, description_, driver_,
+        is_fallback_adapter, device_, description_, driver_,
         FromDawnEnum(backend_type_), FromDawnEnum(adapter_type_),
         d3d_shader_model_, vk_driver_version_, FromDawnEnum(power_preference_));
 
@@ -142,7 +143,7 @@ GPUAdapterInfo* GPUAdapter::CreateAdapterInfoForAdapter() {
   } else {
     info = MakeGarbageCollected<GPUAdapterInfo>(
         vendor_, architecture_, subgroup_min_size_, subgroup_max_size_,
-        is_fallback_adapter_);
+        is_fallback_adapter);
   }
 
   // SAFETY: Required from caller
@@ -185,10 +186,6 @@ GPUSupportedFeatures* GPUAdapter::features() const {
 
 GPUAdapterInfo* GPUAdapter::info() const {
   return info_.Get();
-}
-
-bool GPUAdapter::isFallbackAdapter() const {
-  return is_fallback_adapter_;
 }
 
 wgpu::BackendType GPUAdapter::backendType() const {
@@ -274,10 +271,9 @@ ScriptPromise<GPUDevice> GPUAdapter::requestDevice(
 
   wgpu::DeviceDescriptor dawn_desc = {};
 
-  wgpu::Limits required_limits = {};
+  GPUSupportedLimits::ComboLimits required_limits;
   if (descriptor->hasRequiredLimits()) {
-    dawn_desc.requiredLimits = &required_limits;
-    GPUSupportedLimits::MakeUndefined(&required_limits);
+    dawn_desc.requiredLimits = required_limits.GetLinked();
     if (!GPUSupportedLimits::Populate(&required_limits,
                                       descriptor->requiredLimits(), resolver)) {
       return promise;

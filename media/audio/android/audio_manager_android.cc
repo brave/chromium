@@ -4,8 +4,10 @@
 
 #include "media/audio/android/audio_manager_android.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_android.h"
@@ -17,7 +19,9 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "build/android_buildflags.h"
+#include "media/audio/android/aaudio_bluetooth_output.h"
 #include "media/audio/android/aaudio_input.h"
 #include "media/audio/android/aaudio_output.h"
 #include "media/audio/android/audio_device.h"
@@ -112,10 +116,6 @@ class JniDelegateImpl : public AudioManagerAndroid::JniDelegate {
     return devices;
   }
 
-  bool IsAudioSinkConnected() override {
-    return Java_AudioManagerAndroid_isAudioSinkConnected(AttachCurrentThread());
-  }
-
   int GetMinInputFrameSize(int sample_rate, int channels) override {
     return Java_AudioManagerAndroid_getMinInputFrameSize(AttachCurrentThread(),
                                                          sample_rate, channels);
@@ -156,6 +156,7 @@ class JniDelegateImpl : public AudioManagerAndroid::JniDelegate {
   }
 
   void MaybeSetBluetoothScoState(bool state) override {
+    DVLOG(1) << __func__ << "(" << base::ToString(state) << ")";
     return Java_AudioManagerAndroid_maybeSetBluetoothScoState(
         AttachCurrentThread(), j_audio_manager_, state);
   }
@@ -180,8 +181,8 @@ class JniDelegateImpl : public AudioManagerAndroid::JniDelegate {
         AttachCurrentThread(), sample_rate, channels);
   }
 
-  int GetSinkAudioEncodingFormats() override {
-    return Java_AudioManagerAndroid_getAudioEncodingFormatsSupported(
+  AudioParameters::Format GetHdmiOutputEncodingFormats() override {
+    return Java_AudioManagerAndroid_getHdmiOutputEncodingFormats(
         AttachCurrentThread());
   }
 
@@ -244,6 +245,45 @@ std::string GetFallbackDeviceNameForType(AudioDeviceType type) {
     case AudioDeviceType::kMultichannelGroup:
       return GetLocalizedStringUTF8(MessageId::GENERIC_AUDIO_DEVICE_NAME);
   }
+}
+
+// Utility function used by `GetDeviceNames()` to find an A2DP/SCO device pair,
+// if present, and combine it into a single A2DP device with an associated SCO
+// device.
+void CombineBluetoothClassicDevices(
+    std::vector<std::pair<AudioDeviceId, AudioDevice>>& devices,
+    AudioDeviceNames* device_names) {
+  constexpr auto is_a2dp_predicate = [](const auto& pair) -> bool {
+    return pair.second.GetType() == AudioDeviceType::kBluetoothA2dp;
+  };
+  constexpr auto is_sco_predicate = [](const auto& pair) -> bool {
+    return pair.second.GetType() == AudioDeviceType::kBluetoothSco;
+  };
+
+  // It is assumed that only up to 1 of each of these device types will be
+  // present. If this assumption is invalidated, we can't determine associations
+  // between A2DP and SCO devices, and it is uncertain how to handle them.
+  // Here, we choose to not do any combining in this case.
+  if (std::ranges::count_if(devices, is_a2dp_predicate) > 1 ||
+      std::ranges::count_if(devices, is_sco_predicate) > 1) {
+    LOG(WARNING) << "Found multiple A2DP or SCO output devices";
+    return;
+  }
+
+  auto a2dp_device = std::ranges::find_if(devices, is_a2dp_predicate);
+  if (a2dp_device == devices.end()) {
+    return;
+  }
+  auto sco_device = std::ranges::find_if(devices, is_sco_predicate);
+  if (sco_device == devices.end()) {
+    return;
+  }
+
+  a2dp_device->second.SetAssociatedScoDeviceId(sco_device->second.GetId());
+  device_names->remove_if([sco_device](AudioDeviceName& name) {
+    return AudioDeviceId::Parse(name.unique_id) == sco_device->second.GetId();
+  });
+  devices.erase(sco_device);
 }
 
 bool UseAAudioOutput() {
@@ -373,7 +413,7 @@ void AudioManagerAndroid::GetAudioInputDeviceNames(
   // * On Android R-, these devices don't correspond to devices from a list,
   // but each one can be controlled via appropriate Android API calls, e.g.
   // AudioManager#startBluetoothSco() for Bluetooth.
-  GetDeviceNames(device_names, AudioDeviceDirection::kCommunication);
+  GetCommunicationDeviceNames(device_names);
 }
 
 void AudioManagerAndroid::GetAudioOutputDeviceNames(
@@ -406,31 +446,29 @@ void AudioManagerAndroid::GetAudioOutputDeviceNames(
 void AudioManagerAndroid::GetDeviceNames(AudioDeviceNames* device_names,
                                          AudioDeviceDirection direction) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  DCHECK(device_names);
 
   // Always add default device parameters as first element.
   DCHECK(device_names->empty());
   AddDefaultDevice(device_names);
 
-  std::vector<JniAudioDevice> j_devices;
-  switch (direction) {
-    case AudioDeviceDirection::kInput:
-    case AudioDeviceDirection::kOutput:
-      j_devices = GetJniDelegate().GetDevices(
-          /* inputs= */ direction == AudioDeviceDirection::kInput);
-      break;
-    case AudioDeviceDirection::kCommunication:
-      auto j_devices_optional = GetJniDelegate().GetCommunicationDevices();
-      if (!j_devices_optional) {
-        // Most probable reason for an `std::nullopt` result here is that the
-        // process lacks MODIFY_AUDIO_SETTINGS or RECORD_AUDIO permissions.
-        return;
-      }
-      j_devices = std::move(j_devices_optional).value();
-      break;
-  }
+  std::vector<JniAudioDevice> j_devices =
+      GetJniDelegate().GetDevices(direction == AudioDeviceDirection::kInput);
 
+  // This container is later converted to a `base::flat_map`, but it starts out
+  // as an `std::vector` in order to avoid the O(n) insertion time of
+  // `base::flat_map`.
   std::vector<std::pair<AudioDeviceId, AudioDevice>> devices;
+
+  // Populate `devices` and `device_names`.
   for (auto& j_device : j_devices) {
+    std::optional<AudioDeviceId> device_id =
+        AudioDeviceId::NonDefault(j_device.id);
+    if (!device_id.has_value()) {
+      LOG(WARNING) << "Unexpectedly received device with default ID";
+      continue;
+    }
+
     std::optional<AudioDeviceType> device_type =
         IntToAudioDeviceType(j_device.type);
     if (!device_type.has_value()) {
@@ -439,40 +477,69 @@ void AudioManagerAndroid::GetDeviceNames(AudioDeviceNames* device_names,
       device_type = AudioDeviceType::kUnknown;
     }
 
-    if (direction == AudioDeviceDirection::kInput ||
-        direction == AudioDeviceDirection::kOutput) {
-      std::optional<AudioDeviceId> device_id =
-          AudioDeviceId::NonDefault(j_device.id);
-      if (!device_id.has_value()) {
-        LOG(WARNING) << "Unexpectedly received device with default ID";
-        continue;
-      }
-
-      AudioDevice device(device_id.value(), device_type.value());
-      devices.emplace_back(std::move(device_id).value(), std::move(device));
-    }
-
-    std::string device_name;
-    if (j_device.name) {
-      device_name = std::move(j_device.name).value();
-    } else {
-      device_name = GetFallbackDeviceNameForType(device_type.value());
-    }
-
-    std::string device_id_string = base::NumberToString(j_device.id);
+    std::string device_name = j_device.name.value_or(
+        GetFallbackDeviceNameForType(device_type.value()));
+    std::string device_id_string =
+        base::NumberToString(device_id->ToAAudioDeviceId());
     device_names->emplace_back(std::move(device_name),
                                std::move(device_id_string));
+
+    AudioDevice device(device_id.value(), device_type.value());
+    devices.emplace_back(std::move(device_id).value(), std::move(device));
   }
 
-  if (direction == AudioDeviceDirection::kInput) {
-    input_devices_ = base::flat_map(devices);
-  } else if (direction == AudioDeviceDirection::kOutput) {
-    output_devices_ = base::flat_map(devices);
+  // If a Bluetooth SCO output device and a Bluetooth A2DP output device are
+  // both present, remove the SCO device from `devices` and `device_names`, and
+  // instead make it "associated" with the A2DP device.
+  if (direction == AudioDeviceDirection::kOutput) {
+    CombineBluetoothClassicDevices(devices, device_names);
   }
 
-  for (const AudioDeviceName& d : *device_names) {
-    DVLOG(1) << "device_name: " << d.device_name;
-    DVLOG(1) << "unique_id: " << d.unique_id;
+  switch (direction) {
+    case AudioDeviceDirection::kInput:
+      input_device_cache_ = base::flat_map(devices);
+      break;
+    case AudioDeviceDirection::kOutput:
+      output_device_cache_ = base::flat_map(devices);
+      break;
+  }
+}
+
+void AudioManagerAndroid::GetCommunicationDeviceNames(
+    AudioDeviceNames* device_names) {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  DCHECK(device_names);
+
+  // Always add default device parameters as first element.
+  DCHECK(device_names->empty());
+  AddDefaultDevice(device_names);
+
+  std::optional<std::vector<JniAudioDevice>> j_devices =
+      GetJniDelegate().GetCommunicationDevices();
+  if (!j_devices) {
+    // Most probable reason for an `std::nullopt` result here is that the
+    // process lacks MODIFY_AUDIO_SETTINGS or RECORD_AUDIO permissions.
+    return;
+  }
+
+  for (auto& j_device : j_devices.value()) {
+    // The device name should always be one of the predefined communication
+    // device names and so it should always be present.
+    CHECK(j_device.name);
+
+    std::string device_id_string = base::NumberToString(j_device.id);
+    device_names->emplace_back(std::move(j_device.name).value(),
+                               std::move(device_id_string));
+  }
+}
+
+const AudioManagerAndroid::DeviceCache& AudioManagerAndroid::GetDeviceCache(
+    AudioDeviceDirection direction) const {
+  switch (direction) {
+    case AudioDeviceDirection::kInput:
+      return input_device_cache_;
+    case AudioDeviceDirection::kOutput:
+      return output_device_cache_;
   }
 }
 
@@ -489,17 +556,7 @@ std::optional<AudioDevice> AudioManagerAndroid::GetDeviceForAAudioStream(
     return AudioDevice::Default();
   }
 
-  Devices devices;
-  switch (direction) {
-    case AudioDeviceDirection::kInput:
-      devices = input_devices_;
-      break;
-    case AudioDeviceDirection::kOutput:
-      devices = output_devices_;
-      break;
-    case AudioDeviceDirection::kCommunication:
-      NOTREACHED();
-  }
+  const DeviceCache& devices = GetDeviceCache(direction);
   auto device = devices.find(id);
   if (device == devices.end()) {
     return std::nullopt;
@@ -514,27 +571,28 @@ AudioParameters AudioManagerAndroid::GetInputStreamParameters(
   // Use mono as preferred number of input channels on Android to save
   // resources. Using mono also avoids a driver issue seen on Samsung
   // Galaxy S3 and S4 devices. See http://crbug.com/256851 for details.
-  constexpr ChannelLayout channel_layout = CHANNEL_LAYOUT_MONO;
-  int buffer_size = GetJniDelegate().GetMinInputFrameSize(
-      GetJniDelegate().GetNativeOutputSampleRate(),
-      ChannelLayoutToChannelCount(channel_layout));
-  buffer_size = buffer_size <= 0 ? kDefaultInputBufferSize : buffer_size;
-  int effects = AudioParameters::NO_EFFECTS;
-  effects |= GetJniDelegate().AcousticEchoCancelerIsAvailable()
-                 ? AudioParameters::ECHO_CANCELLER
-                 : AudioParameters::NO_EFFECTS;
+  const ChannelLayoutConfig channel_layout_config = ChannelLayoutConfig::Mono();
 
+  const int sample_rate = GetJniDelegate().GetNativeOutputSampleRate();
+
+  int buffer_size = GetJniDelegate().GetMinInputFrameSize(
+      sample_rate, channel_layout_config.channels());
+  if (buffer_size <= 0) {
+    buffer_size = kDefaultInputBufferSize;
+  }
   int user_buffer_size = GetUserBufferSize();
   if (user_buffer_size) {
     buffer_size = user_buffer_size;
   }
 
+  AudioParameters::PlatformEffectsMask effects =
+      GetJniDelegate().AcousticEchoCancelerIsAvailable()
+          ? AudioParameters::ECHO_CANCELLER
+          : AudioParameters::NO_EFFECTS;
+
   AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                         ChannelLayoutConfig::FromLayout<channel_layout>(),
-                         GetJniDelegate().GetNativeOutputSampleRate(),
-                         buffer_size);
+                         channel_layout_config, sample_rate, buffer_size);
   params.set_effects(effects);
-  DVLOG(1) << params.AsHumanReadableString();
   return params;
 }
 
@@ -594,7 +652,12 @@ AudioInputStream* AudioManagerAndroid::MakeAudioInputStream(
 
 void AudioManagerAndroid::ReleaseOutputStream(AudioOutputStream* stream) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+
   output_streams_.erase(static_cast<MuteableAudioOutputStream*>(stream));
+  if (__builtin_available(android AAUDIO_MIN_API, *)) {
+    bluetooth_output_streams_.erase(stream);
+  }
+
   AudioManagerBase::ReleaseOutputStream(stream);
 }
 
@@ -618,8 +681,11 @@ AudioOutputStream* AudioManagerAndroid::MakeLinearOutputStream(
 
   if (__builtin_available(android AAUDIO_MIN_API, *)) {
     if (UseAAudioOutput()) {
-      return new AAudioOutputStream(this, params, AudioDevice::Default(),
-                                    AAUDIO_USAGE_MEDIA);
+      return new AAudioOutputStream(
+          this, params, AudioDevice::Default(), AAUDIO_USAGE_MEDIA,
+          base::BindRepeating(&AudioManager::TraceAmplitudePeak,
+                              base::Unretained(this),
+                              /*trace_start=*/false));
     }
   }
 #if BUILDFLAG(USE_OPENSLES)
@@ -651,8 +717,27 @@ AudioOutputStream* AudioManagerAndroid::MakeLowLatencyOutputStream(
       const aaudio_usage_t usage = communication_mode_is_on_
                                        ? AAUDIO_USAGE_VOICE_COMMUNICATION
                                        : AAUDIO_USAGE_MEDIA;
+
+      auto peak_detected_cb = base::BindRepeating(
+          &AudioManager::TraceAmplitudePeak, base::Unretained(this),
+          /*trace_start=*/false);
+      if (device->GetAssociatedScoDevice().has_value()) {
+        // Use a specialized stream implementation to handle "combined" A2DP/SCO
+        // devices.
+
+        // TODO(crbug.com/405955144): Set `use_sco_device` based on the SCO
+        // state as reported by the system in order to handle SCO management by
+        // other apps.
+        auto* stream = new AAudioBluetoothOutputStream(
+            *this, params, std::move(device).value(),
+            /*use_sco_device=*/!input_streams_requiring_sco_.empty(), usage,
+            peak_detected_cb);
+        bluetooth_output_streams_.insert(stream);
+        return stream;
+      }
+
       return new AAudioOutputStream(this, params, std::move(device).value(),
-                                    usage);
+                                    usage, peak_detected_cb);
     }
   }
 
@@ -760,6 +845,15 @@ void AudioManagerAndroid::OnStartAAudioInputStream(AAudioInputStream* stream) {
 
   // SCO can safely be re-enabled even if it is already on.
   GetJniDelegate().MaybeSetBluetoothScoState(true);
+
+  // TODO(crbug.com/405955144): Call this in response to an appropriate system
+  // broadcast instead, in order to correctly react to SCO state changes caused
+  // by other apps.
+  DVLOG(1) << "Calling SetUseSco(true) for " << bluetooth_output_streams_.size()
+           << " Bluetooth streams";
+  for (auto bluetooth_output_stream : bluetooth_output_streams_) {
+    bluetooth_output_stream->SetUseSco(true);
+  }
 }
 
 void AudioManagerAndroid::OnStopAAudioInputStream(AAudioInputStream* stream) {
@@ -776,10 +870,18 @@ void AudioManagerAndroid::OnStopAAudioInputStream(AAudioInputStream* stream) {
   }
 
   GetJniDelegate().MaybeSetBluetoothScoState(false);
+
+  // TODO(crbug.com/405955144): Call this in response to an appropriate system
+  // broadcast instead, in order to correctly react to SCO state changes caused
+  // by other apps.
+  DVLOG(1) << "Calling SetUseSco(false) for "
+           << bluetooth_output_streams_.size() << " Bluetooth streams";
+  for (auto bluetooth_output_stream : bluetooth_output_streams_) {
+    bluetooth_output_stream->SetUseSco(false);
+  }
 }
 
 void AudioManagerAndroid::SetMute(JNIEnv* env,
-                                  const JavaParamRef<jobject>& obj,
                                   jboolean muted) {
   GetTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&AudioManagerAndroid::DoSetMuteOnAudioThread,
@@ -807,15 +909,17 @@ base::TimeDelta AudioManagerAndroid::GetOutputLatency() {
 AudioParameters AudioManagerAndroid::GetPreferredOutputStreamParameters(
     const std::string& output_device_id,
     const AudioParameters& input_params) {
-  DVLOG(1) << __FUNCTION__;
-  // TODO(tommi): Support |output_device_id|.
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+
+  // TODO(crbug.com/417397476): Support non-default devices.
   DLOG_IF(ERROR, !output_device_id.empty()) << "Not implemented!";
+
   ChannelLayoutConfig channel_layout_config = ChannelLayoutConfig::Stereo();
   int sample_rate = GetJniDelegate().GetNativeOutputSampleRate();
   int buffer_size = GetOptimalOutputFrameSize(sample_rate, 2);
+
+  // Use the client's input parameters if they are valid.
   if (input_params.IsValid()) {
-    // Use the client's input parameters if they are valid.
     sample_rate = input_params.sample_rate();
 
     // AudioManager APIs for GetOptimalOutputFrameSize() don't support channel
@@ -841,7 +945,11 @@ AudioParameters AudioManagerAndroid::GetPreferredOutputStreamParameters(
     // use the max number of channels supported. This can prevent down-sampling
     // and loss of channel information (e.g. if a stream starts as stereo and
     // changes to 5.1)
-    channel_layout_config = GetLayoutWithMaxChannels(channel_layout_config);
+    ChannelLayoutConfig max_channel_layout_config = GetLayoutWithMaxChannels();
+    if (max_channel_layout_config.channels() >
+        channel_layout_config.channels()) {
+      channel_layout_config = max_channel_layout_config;
+    }
   }
 
   int user_buffer_size = GetUserBufferSize();
@@ -849,13 +957,14 @@ AudioParameters AudioManagerAndroid::GetPreferredOutputStreamParameters(
     buffer_size = user_buffer_size;
   }
 
-  // Check if device supports additional audio encodings.
-  if (GetJniDelegate().IsAudioSinkConnected()) {
-    return GetAudioFormatsSupportedBySinkDevice(
-        output_device_id, channel_layout_config, sample_rate, buffer_size);
-  }
+  // Specify hardware capabilities for HDMI audio passthrough
+  AudioParameters::HardwareCapabilities hardware_capabilities(
+      GetJniDelegate().GetHdmiOutputEncodingFormats(),
+      /*require_encapsulation=*/false);
+
   return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                         channel_layout_config, sample_rate, buffer_size);
+                         channel_layout_config, sample_rate, buffer_size,
+                         hardware_capabilities);
 }
 
 bool AudioManagerAndroid::HasNoAudioInputStreams() {
@@ -883,30 +992,10 @@ int AudioManagerAndroid::GetOptimalOutputFrameSize(int sample_rate,
       GetJniDelegate().GetMinOutputFrameSize(sample_rate, channels));
 }
 
-// Returns a bit mask of AudioParameters::Format enum values sink device
-// supports.
-int AudioManagerAndroid::GetSinkAudioEncodingFormats() {
+AudioParameters::Format AudioManagerAndroid::GetHdmiOutputEncodingFormats() {
   // This method is static, so it cannot use the `JniDelegate`.
   JNIEnv* env = AttachCurrentThread();
-  return Java_AudioManagerAndroid_getAudioEncodingFormatsSupported(env);
-}
-
-// Returns encoding bitstream formats supported by Sink device. Returns
-// AudioParameters structure.
-AudioParameters AudioManagerAndroid::GetAudioFormatsSupportedBySinkDevice(
-    const std::string& output_device_id,
-    const ChannelLayoutConfig& channel_layout_config,
-    int sample_rate,
-    int buffer_size) {
-  int formats = GetJniDelegate().GetSinkAudioEncodingFormats();
-  DVLOG(1) << __func__ << ": IsAudioSinkConnected()==true, output_device_id="
-           << output_device_id << ", Supported Encodings=" << formats;
-
-  return AudioParameters(
-      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout_config,
-      sample_rate, buffer_size,
-      AudioParameters::HardwareCapabilities(formats,
-                                            /*require_encapsulation=*/false));
+  return Java_AudioManagerAndroid_getHdmiOutputEncodingFormats(env);
 }
 
 void AudioManagerAndroid::DoSetMuteOnAudioThread(bool muted) {
@@ -926,18 +1015,13 @@ void AudioManagerAndroid::DoSetVolumeOnAudioThread(double volume) {
   }
 }
 
-ChannelLayoutConfig AudioManagerAndroid::GetLayoutWithMaxChannels(
-    ChannelLayoutConfig layout_configuration) {
+ChannelLayoutConfig AudioManagerAndroid::GetLayoutWithMaxChannels() {
   int value = GetJniDelegate().GetLayoutWithMaxChannels();
   CHECK_GT(value, 0);
   CHECK_LE(value, CHANNEL_LAYOUT_MAX);
   ChannelLayout channel_layout = static_cast<ChannelLayout>(value);
-  int number_channels = ChannelLayoutToChannelCount(channel_layout);
-  if (number_channels > layout_configuration.channels()) {
-    return ChannelLayoutConfig(channel_layout, number_channels);
-  }
-
-  return layout_configuration;
+  int channel_count = ChannelLayoutToChannelCount(channel_layout);
+  return ChannelLayoutConfig(channel_layout, channel_count);
 }
 
 void AudioManagerAndroid::SetJniDelegateForTesting(

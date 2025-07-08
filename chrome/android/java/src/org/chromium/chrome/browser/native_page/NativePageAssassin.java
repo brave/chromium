@@ -35,8 +35,7 @@ public class NativePageAssassin {
      * The most recently hidden tabs, limited to MAX_RECENT_TABS elements, ordered from oldest to
      * newest. Visible tabs are not included in this list.
      */
-    private final ArrayList<WeakReference<Tab>> mRecentTabs =
-            new ArrayList<WeakReference<Tab>>(MAX_RECENT_TABS + 1);
+    private final ArrayList<WeakReference<Tab>> mRecentTabs = new ArrayList<>(MAX_RECENT_TABS + 1);
 
     private NativePageAssassin() {}
 
@@ -68,7 +67,7 @@ public class NativePageAssassin {
      * @param tab The tab being hidden.
      */
     public void tabHidden(Tab tab) {
-        mRecentTabs.add(new WeakReference<Tab>(tab));
+        mRecentTabs.add(new WeakReference<>(tab));
 
         // If a tab has just passed the threshold from "recent" to "not recent" and it's displaying
         // a native page, freeze the native page.

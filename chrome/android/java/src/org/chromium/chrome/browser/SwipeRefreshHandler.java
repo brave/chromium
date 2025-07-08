@@ -19,6 +19,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordHistogram;
@@ -437,6 +438,11 @@ public class SwipeRefreshHandler extends TabWebContentsUserData
      */
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     boolean isRefreshOnOverscrollSupported() {
-        return !DeviceInput.supportsPrecisionPointer();
+        // TODO(https://crbug.com/422413654) Remove this after long-term fix
+        if (DeviceInfo.isDesktop()) {
+            return !DeviceInput.supportsPrecisionPointer();
+        } else {
+            return true;
+        }
     }
 }

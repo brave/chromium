@@ -2320,7 +2320,7 @@ void ResourceFetcher::WarnUnusedPreloads(
     ++unused_resource_count;
     unused_preloads.push_back(resource->Url());
     if (resource->IsLinkPreload()) {
-      String message = WTF::StrCat(
+      String message = StrCat(
           {"The resource ", resource->Url().GetString(),
            " was preloaded using link preload but not used within a few "
            "seconds from the window's load event. Please make sure it has an "
@@ -2364,10 +2364,10 @@ void ResourceFetcher::WarnUnusedPreloads(
     // resource wouldn't be harmful. We need to plumb information from the
     // browser process to check whether the resource was already in the HTTP
     // cache.
-    String message = WTF::StrCat(
-        {"The resource ", pair.key.GetString(),
-         " was preloaded using link preload in Early Hints but not "
-         "used within a few seconds from the window's load event."});
+    String message =
+        StrCat({"The resource ", pair.key.GetString(),
+                " was preloaded using link preload in Early Hints but not "
+                "used within a few seconds from the window's load event."});
     console_logger_->AddConsoleMessage(
         mojom::blink::ConsoleMessageSource::kJavaScript,
         mojom::blink::ConsoleMessageLevel::kWarning, message);
@@ -2574,6 +2574,10 @@ bool ResourceFetcher::StartLoad(
       resource_load_observer_->WillSendRequest(
           request, response, resource->GetType(), resource->Options(),
           render_blocking_behavior, resource);
+    }
+
+    if (RuntimeEnabledFeatures::ResourceTimingInitiatorEnabled()) {
+      context_->FillInitiatorInfo(resource->MutableOptions().initiator_info);
     }
 
     using QuotaType = decltype(inflight_keepalive_bytes_);
@@ -3046,6 +3050,7 @@ void ResourceFetcher::PopulateAndAddResourceTimingInfo(
   info->render_blocking_status = pending_info.render_blocking_behavior ==
                                  RenderBlockingBehavior::kBlocking;
   info->response_end = response_end;
+  info->initiator_url = resource->Options().initiator_info.initiator_url;
   // Store LCP breakdown timings for images.
   if (resource->GetType() == ResourceType::kImage) {
     // The resource_load_timing may be null in tests.

@@ -330,11 +330,12 @@ int ParseOSProductVersion(const std::string_view& version) {
     macos_version *= 100;
   }
 
-  // Checks that the value is within expected bounds corresponding to released
-  // OS version numbers. The most important bit is making sure that the "10.16"
-  // compatibility mode isn't engaged.
+  // Check that the value is within expected bounds corresponding to released
+  // OS version numbers. Specifically, ensure that neither the "macOS 10.16" nor
+  // the "macOS 16" compatibility modes are engaged.
   CHECK(macos_version >= 10'00'00);
   CHECK(macos_version < 10'16'00 || macos_version >= 11'00'00);
+  CHECK(macos_version < 16'00'00 || macos_version >= 26'00'00);
 
   return macos_version;
 }

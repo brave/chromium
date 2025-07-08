@@ -50,14 +50,8 @@ BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnWeb);
 // On Device Suggest.
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderIncognito);
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderNonIncognito);
-BASE_DECLARE_FEATURE(kOnDeviceHeadProviderKorean);
 BASE_DECLARE_FEATURE(kOnDeviceTailModel);
 BASE_DECLARE_FEATURE(kOnDeviceTailEnableEnglishModel);
-
-// Provider-specific - These features change the behavior of specific providers.
-// TODO(crbug.com/40179316): Clean up feature flag used in staged roll-out of
-// various CLs related to the contents/description clean-up work.
-BASE_DECLARE_FEATURE(kStoreTitleInContentsAndUrlInDescription);
 
 // Document provider and domain suggestions
 BASE_DECLARE_FEATURE(kDocumentProvider);
@@ -65,7 +59,6 @@ BASE_DECLARE_FEATURE(kDocumentProviderPrimaryAccountRequirement);
 BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibility);
 BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibilityWhenUnknown);
 BASE_DECLARE_FEATURE(kDocumentProviderNoSyncRequirement);
-BASE_DECLARE_FEATURE(kDomainSuggestions);
 
 // Suggestions UI - these affect the UI or function of the suggestions popup.
 BASE_DECLARE_FEATURE(kShowPopupOnMouseReleased);
@@ -104,7 +97,6 @@ BASE_DECLARE_FEATURE(kOmniboxAnswerActions);
 
 // Adds support for categorical suggestion type.
 BASE_DECLARE_FEATURE(kCategoricalSuggestions);
-BASE_DECLARE_FEATURE(kMergeSubtypes);
 
 // Allows for touch down events to send a signal to |SearchPrefetchService| to
 // start prefetching the suggestion. The feature only applies to search
@@ -123,6 +115,7 @@ BASE_DECLARE_FEATURE(kOmniboxAsyncViewInflation);
 BASE_DECLARE_FEATURE(kUseFusedLocationProvider);
 
 BASE_DECLARE_FEATURE(kOmniboxMobileParityUpdate);
+BASE_DECLARE_FEATURE(kOmniboxMobileParityUpdateV2);
 
 // Omnibox suggestions tuning
 BASE_DECLARE_FEATURE(kNumNtpZpsRecentSearches);
@@ -149,11 +142,14 @@ BASE_DECLARE_FEATURE(kOmniboxShortcutsAndroid);
 // Enterprise search aggregators features.
 BASE_DECLARE_FEATURE(kEnableSearchAggregatorPolicy);
 
-// Ipad ZPS matches limit increase.
-BASE_DECLARE_FEATURE(kIpadZeroSuggestMatches);
-
 // Site search allow user override feature.
 BASE_DECLARE_FEATURE(kEnableSiteSearchAllowUserOverridePolicy);
+
+// Preconnect/prerender behavior for suggestions
+BASE_DECLARE_FEATURE(kPreconnectNonSearchOmniboxSuggestions);
+
+// Only restore focus when invisible.
+BASE_DECLARE_FEATURE(kOmniboxRestoreInvisibleFocusOnly);
 
 }  // namespace omnibox
 

@@ -30,6 +30,7 @@
 #include "cc/metrics/compositor_timing_history.h"
 #include "cc/paint/paint_image.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
+#include "cc/scheduler/scheduler_state_machine.h"
 #include "cc/trees/commit_state.h"
 #include "cc/trees/compositor_commit_data.h"
 #include "cc/trees/layer_tree_frame_sink.h"
@@ -44,6 +45,7 @@
 #include "cc/trees/swap_promise.h"
 #include "cc/trees/task_runner_provider.h"
 #include "cc/trees/trace_utils.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_sinks/delay_based_time_source.h"
 #include "components/viz/common/frame_timing_details.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
@@ -353,7 +355,6 @@ void ProxyImpl::NotifyReadyToCommitOnImpl(
     std::unique_ptr<CommitState> commit_state,
     const ThreadUnsafeCommitState* unsafe_state,
     base::TimeTicks main_thread_start_time,
-    const viz::BeginFrameArgs& commit_args,
     bool scroll_and_viewport_changes_synced,
     CommitTimestamps* commit_timestamps,
     bool commit_timeout) {
@@ -395,7 +396,7 @@ void ProxyImpl::NotifyReadyToCommitOnImpl(
   scheduler_->NotifyBeginMainFrameStarted(main_thread_start_time);
 
   auto& begin_main_frame_metrics = commit_state->begin_main_frame_metrics;
-  host_impl_->ReadyToCommit(commit_args, scroll_and_viewport_changes_synced,
+  host_impl_->ReadyToCommit(scroll_and_viewport_changes_synced,
                             begin_main_frame_metrics.get(), commit_timeout);
 
   int source_frame_number = commit_state->source_frame_number;
@@ -528,6 +529,9 @@ void ProxyImpl::RenewTreePriority() {
       host_impl_->IsPinchGestureActive() ||
       host_impl_->page_scale_animation_active();
 
+  bool is_current_scroll_main_painted =
+      host_impl_->IsCurrentScrollMainRepainted();
+
   // Schedule expiration if smoothness currently takes priority.
   if ((non_scroll_interaction_in_progress || precise_scrolling_in_progress) &&
       !avoid_entering_smoothness) {
@@ -549,7 +553,7 @@ void ProxyImpl::RenewTreePriority() {
   //   scroll offset change to be visible.
   if (host_impl_->active_tree()->GetDeviceViewport().size().IsEmpty() ||
       host_impl_->EvictedUIResourcesExist() ||
-      (host_impl_->IsCurrentScrollMainRepainted() &&
+      (is_current_scroll_main_painted &&
        base::FeatureList::IsEnabled(
            features::kMainRepaintScrollPrefersNewContent))) {
     // Once we enter NEW_CONTENTS_TAKES_PRIORITY mode, visible tiles on active
@@ -565,12 +569,17 @@ void ProxyImpl::RenewTreePriority() {
   // have a scroll listener. This gives the scroll listener a better chance of
   // handling scroll updates within the same frame. The tree itself is still
   // kept in prefer smoothness mode to allow checkerboarding.
+  //
+  // Note: `is_current_scroll_main_painted` does not imply
+  // SCROLL_AFFECTS_SCROLL_HANDLER, as on some platforms we don't attempt to
+  // synchronize non=passive scroll handlers. See `kSynchronizedScrolling`.
   ScrollHandlerState scroll_handler_state =
       host_impl_->ScrollAffectsScrollHandler()
           ? ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER
           : ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER;
-  scheduler_->SetTreePrioritiesAndScrollState(tree_priority,
-                                              scroll_handler_state);
+
+  scheduler_->SetTreePrioritiesAndScrollState(
+      tree_priority, scroll_handler_state, is_current_scroll_main_painted);
 }
 
 void ProxyImpl::PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
@@ -1014,12 +1023,6 @@ void ProxyImpl::SetSpeculativeDecodeRequestInFlight(bool value) {
 void ProxyImpl::SetSourceURL(ukm::SourceId source_id, const GURL& url) {
   DCHECK(IsImplThread());
   host_impl_->SetActiveURL(url, source_id);
-}
-
-void ProxyImpl::SetUkmSmoothnessDestination(
-    base::WritableSharedMemoryMapping ukm_smoothness_data) {
-  DCHECK(IsImplThread());
-  host_impl_->SetUkmSmoothnessDestination(std::move(ukm_smoothness_data));
 }
 
 void ProxyImpl::SetUkmDroppedFramesDestination(

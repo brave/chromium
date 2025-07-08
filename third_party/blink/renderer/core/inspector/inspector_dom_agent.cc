@@ -190,12 +190,12 @@ void InspectorRevalidateDOMTask::Trace(Visitor* visitor) const {
 protocol::Response InspectorDOMAgent::ToResponse(
     DummyExceptionStateForTesting& exception_state) {
   if (exception_state.HadException()) {
-    String name_prefix = IsDOMExceptionCode(exception_state.Code())
-                             ? DOMException::GetErrorName(
-                                   exception_state.CodeAs<DOMExceptionCode>()) +
-                                   " "
-                             : g_empty_string;
-    String msg = name_prefix + exception_state.Message();
+    String msg = exception_state.Message();
+    if (IsDOMExceptionCode(exception_state.Code())) {
+      msg = StrCat({DOMException::GetErrorName(
+                        exception_state.CodeAs<DOMExceptionCode>()),
+                    " ", msg});
+    }
     return protocol::Response::ServerError(msg.Utf8());
   }
   return protocol::Response::Success();
@@ -1090,11 +1090,10 @@ protocol::Response InspectorDOMAgent::setAttributesAsText(
 
   auto getParsedElement = [](Element* element, Element* contextElement,
                              const String& text, bool is_html_document) {
-    String markup = element->IsSVGElement()
-                        ? "<svg " + text + "></svg>"
-                        : element->IsMathMLElement()
-                              ? "<math " + text + "></math>"
-                              : "<span " + text + "></span>";
+    String markup = element->IsSVGElement() ? StrCat({"<svg ", text, "></svg>"})
+                    : element->IsMathMLElement()
+                        ? StrCat({"<math ", text, "></math>"})
+                        : StrCat({"<span ", text, "></span>"});
     DocumentFragment* fragment =
         element->GetDocument().createDocumentFragment();
     if (is_html_document && contextElement)
@@ -1212,6 +1211,7 @@ protocol::Response InspectorDOMAgent::getOuterHTML(
     std::optional<int> node_id,
     std::optional<int> backend_node_id,
     std::optional<String> object_id,
+    std::optional<bool> include_shadow_dom,
     WTF::String* outer_html) {
   Node* node = nullptr;
   protocol::Response response =
@@ -1219,7 +1219,12 @@ protocol::Response InspectorDOMAgent::getOuterHTML(
   if (!response.IsSuccess())
     return response;
 
-  *outer_html = CreateMarkup(node);
+  ShadowRootInclusion shadow_roots{
+      include_shadow_dom.value_or(false)
+          ? ShadowRootInclusion::Behavior::kIncludeAllShadowRootsForInspector
+          : ShadowRootInclusion::Behavior::kOnlyProvidedShadowRoots};
+  *outer_html =
+      CreateMarkup(node, kIncludeNode, kDoNotResolveURLs, shadow_roots);
   return protocol::Response::Success();
 }
 
@@ -1353,15 +1358,34 @@ protocol::Response InspectorDOMAgent::performSearch(
   // Selector evaluation
   for (Document* document : docs) {
     DummyExceptionStateForTesting exception_state;
+
+    // First, evaluate the query selector on the document
     StaticElementList* element_list = document->QuerySelectorAll(
         AtomicString(whitespace_trimmed_query), exception_state);
-    if (exception_state.HadException() || !element_list) {
-      continue;
+    if (element_list && !exception_state.HadException()) {
+      for (unsigned i = 0; i < element_list->length(); ++i) {
+        result_collector.insert(element_list->item(i));
+      }
     }
 
-    unsigned size = element_list->length();
-    for (unsigned i = 0; i < size; ++i) {
-      result_collector.insert(element_list->item(i));
+    // Second, evaluate the query selector on each shadow root
+    Node* document_element = document->documentElement();
+    Node* node = document_element;
+    if (!node) {
+      continue;
+    }
+    for (; node; node = NextNodeWithShadowDOMInMind(
+                     *node, document_element, include_user_agent_shadow_dom)) {
+      if (auto* shadow_root = DynamicTo<ShadowRoot>(node)) {
+        element_list = shadow_root->QuerySelectorAll(
+            AtomicString(whitespace_trimmed_query), exception_state);
+        if (exception_state.HadException() || !element_list) {
+          continue;
+        }
+        for (unsigned i = 0; i < element_list->length(); ++i) {
+          result_collector.insert(element_list->item(i));
+        }
+      }
     }
   }
 
@@ -1670,8 +1694,7 @@ protocol::Response InspectorDOMAgent::getNodeStackTraces(
 
   auto it = node_to_creation_source_location_map_.find(node);
   if (it != node_to_creation_source_location_map_.end()) {
-    SourceLocation& source_location = it->value->GetSourceLocation();
-    *creation = source_location.BuildInspectorObject();
+    *creation = it->value->BuildInspectorObject();
   }
   return protocol::Response::Success();
 }
@@ -1894,7 +1917,7 @@ protocol::Response InspectorDOMAgent::getElementByRelation(
   } else if (relation == protocol::DOM::GetElementByRelation::RelationEnum::
                              InterestTarget) {
     if (auto* invoker = DynamicTo<Element>(node)) {
-      element = invoker->InterestTargetElement();
+      element = invoker->InterestForElement();
     }
   } else if (relation ==
              protocol::DOM::GetElementByRelation::RelationEnum::CommandFor) {
@@ -2063,8 +2086,10 @@ std::unique_ptr<protocol::DOM::Node> InspectorDOMAgent::BuildObjectForNode(
     case Node::kCommentNode:
     case Node::kCdataSectionNode:
       node_value = node->nodeValue();
-      if (node_value.length() > kMaxTextSize)
-        node_value = node_value.Left(kMaxTextSize) + kEllipsisUChar;
+      if (node_value.length() > kMaxTextSize) {
+        node_value =
+            StrCat({node_value.Left(kMaxTextSize), StringView(kEllipsisUChar)});
+      }
       break;
     case Node::kAttributeNode:
       local_name = To<Attr>(node)->localName();
@@ -2690,7 +2715,7 @@ void InspectorDOMAgent::PseudoElementDestroyed(PseudoElement* pseudo_element) {
   Element* parent = pseudo_element->ParentOrShadowHostElement();
   DCHECK(parent);
   int parent_id = BoundNodeId(parent);
-  // Since the pseudo element tree created for a view transition is destroyed
+  // Since the pseudo-element tree created for a view transition is destroyed
   // with in-order traversal, the parent node (::view-transition) are destroyed
   // before its children
   // (::view-transition-group).
@@ -2704,12 +2729,10 @@ void InspectorDOMAgent::NodeCreated(Node* node) {
   if (!capture_node_stack_traces_.Get())
     return;
 
-  std::unique_ptr<SourceLocation> creation_source_location =
+  SourceLocation* creation_source_location =
       SourceLocation::CaptureWithFullStackTrace();
   if (creation_source_location) {
-    node_to_creation_source_location_map_.Set(
-        node, MakeGarbageCollected<InspectorSourceLocation>(
-                  std::move(creation_source_location)));
+    node_to_creation_source_location_map_.Set(node, creation_source_location);
   }
 }
 

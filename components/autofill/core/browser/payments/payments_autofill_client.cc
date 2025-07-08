@@ -234,7 +234,7 @@ bool PaymentsAutofillClient::ShowTouchToFillIban(
 
 bool PaymentsAutofillClient::ShowTouchToFillLoyaltyCard(
     base::WeakPtr<TouchToFillDelegate> delegate,
-    base::span<const LoyaltyCard> loyalty_cards_to_suggest) {
+    std::vector<LoyaltyCard> loyalty_cards_to_suggest) {
   return false;
 }
 
@@ -258,7 +258,14 @@ PaymentsAutofillClient::GetOrCreatePaymentsMandatoryReauthManager() {
   return nullptr;
 }
 
-void PaymentsAutofillClient::ShowCreditCardSaveAndFillDialog() {}
+PaymentsAutofillClient::UserProvidedCardSaveAndFillDetails::
+    UserProvidedCardSaveAndFillDetails() = default;
+
+PaymentsAutofillClient::UserProvidedCardSaveAndFillDetails::
+    ~UserProvidedCardSaveAndFillDetails() = default;
+
+void PaymentsAutofillClient::ShowCreditCardLocalSaveAndFillDialog(
+    CardSaveAndFillDialogCallback callback) {}
 
 payments::SaveAndFillManager* PaymentsAutofillClient::GetSaveAndFillManager() {
   return nullptr;

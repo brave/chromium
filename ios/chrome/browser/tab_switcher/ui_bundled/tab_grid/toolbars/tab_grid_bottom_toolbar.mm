@@ -46,14 +46,14 @@
   TabGridToolbarScrollingBackground* _scrollBackgroundView;
   // Configures the responder following the receiver in the responder chain.
   UIResponder* _followingNextResponder;
-
-  // TODO(crbug.com/398183785): Remove once we got feedback.
-  UIBarButtonItem* _sendFeedbackGroupButton;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
+    if (IsDiamondPrototypeEnabled()) {
+      return self;
+    }
     [self setupViews];
     [self updateLayout];
     if (@available(iOS 17, *)) {
@@ -128,6 +128,14 @@
 
 #pragma mark - Public
 
+- (void)setIsInTabGroupView:(BOOL)isInTabGroupView {
+  if (_isInTabGroupView == isInTabGroupView) {
+    return;
+  }
+  _isInTabGroupView = isInTabGroupView;
+  [self updateLayout];
+}
+
 - (void)setPage:(TabGridPage)page {
   if (_page == page) {
     return;
@@ -162,10 +170,6 @@
 
 - (void)setDoneButtonEnabled:(BOOL)enabled {
   _doneButton.enabled = enabled;
-}
-
-- (void)setDoneButtonHidden:(BOOL)hidden {
-  _doneButton.hidden = hidden;
 }
 
 - (void)setCloseAllButtonEnabled:(BOOL)enabled {
@@ -268,16 +272,6 @@
   _editButton.enabled = enabled;
 }
 
-- (void)setEditButtonHidden:(BOOL)hidden {
-  _editButton.hidden = hidden;
-}
-
-#pragma mark - Send feedback
-
-- (void)setTabGroupFeedbackVisible:(BOOL)visible {
-  _sendFeedbackGroupButton.hidden = !visible;
-}
-
 #pragma mark - Private
 
 - (void)setupViews {
@@ -348,15 +342,6 @@
       kTabGridEditCloseTabsButtonIdentifier;
   [self updateCloseTabsButtonTitle];
 
-  _sendFeedbackGroupButton = [[UIBarButtonItem alloc] init];
-  _sendFeedbackGroupButton.target = self;
-  _sendFeedbackGroupButton.action = @selector(sendFeedback:);
-  _sendFeedbackGroupButton.tintColor =
-      UIColorFromRGB(kTabGridToolbarTextButtonColor);
-  _sendFeedbackGroupButton.title =
-      l10n_util::GetNSString(IDS_IOS_CONTENT_NOTIFICATIONS_SEND_FEEDBACK);
-  _sendFeedbackGroupButton.hidden = YES;
-
   _compactConstraints = @[
     [_toolbar.topAnchor constraintEqualToAnchor:self.topAnchor],
     [_toolbar.bottomAnchor
@@ -419,6 +404,9 @@
 }
 
 - (void)updateLayout {
+  if (IsDiamondPrototypeEnabled()) {
+    return;
+  }
   // Search mode doesn't have bottom toolbar or floating buttons, Handle it and
   // return early in that case.
   if (self.mode == TabGridMode::kSearch) {
@@ -454,14 +442,16 @@
     [_largeNewTabButton removeFromSuperview];
 
     // For incognito/regular pages, display all 3 buttons;
-    // For Tab Groups and remote tabs page, only display trailing button.
+    // For Remote tabs page/TabGroup panel, only display trailing button.
+    // For Tab Group view only display the new tab button
     if (self.page == TabGridPageRemoteTabs ||
         self.page == TabGridPageTabGroups) {
       [_toolbar setItems:@[ _spaceItem, trailingButton ]];
+    } else if (self.isInTabGroupView) {
+      [_toolbar setItems:@[ _spaceItem, _newTabButtonItem, _spaceItem ]];
     } else {
       [_toolbar setItems:@[
-        leadingButton, _spaceItem, _newTabButtonItem, _spaceItem,
-        trailingButton, _sendFeedbackGroupButton
+        leadingButton, _spaceItem, _newTabButtonItem, _spaceItem, trailingButton
       ]];
     }
 
@@ -471,7 +461,7 @@
   } else {
     [NSLayoutConstraint deactivateConstraints:_compactConstraints];
     [_toolbar removeFromSuperview];
-    // Do not display new tab button for Tab Groups and remote tabs page.
+    // Do not display new tab button for remote tabs page/TabGroup panel.
     if (self.page == TabGridPageRemoteTabs ||
         self.page == TabGridPageTabGroups) {
       [NSLayoutConstraint deactivateConstraints:_floatingConstraints];
@@ -504,28 +494,31 @@
 // middle/scrolled to the top states.
 - (void)createScrolledBackgrounds {
   _scrolledToEdge = YES;
-  if (IsIOSSoftLockEnabled()) {
-    _scrollBackgroundView = [[TabGridToolbarScrollingBackground alloc] init];
-    _scrollBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
-    [self addSubview:_scrollBackgroundView];
-    AddSameConstraintsToSides(
-        self, _scrollBackgroundView,
-        LayoutSides::kLeading | LayoutSides::kTop | LayoutSides::kTrailing);
+  if (@available(iOS 26, *)) {
   } else {
-    _backgroundView =
-        [[TabGridToolbarBackground alloc] initWithFrame:self.frame];
-    _backgroundView.translatesAutoresizingMaskIntoConstraints = NO;
-    [self addSubview:_backgroundView];
-    AddSameConstraintsToSides(
-        self, _backgroundView,
-        LayoutSides::kLeading | LayoutSides::kTop | LayoutSides::kTrailing);
-  }
+    if (IsIOSSoftLockEnabled()) {
+      _scrollBackgroundView = [[TabGridToolbarScrollingBackground alloc] init];
+      _scrollBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
+      [self addSubview:_scrollBackgroundView];
+      AddSameConstraintsToSides(
+          self, _scrollBackgroundView,
+          LayoutSides::kLeading | LayoutSides::kTop | LayoutSides::kTrailing);
+    } else {
+      _backgroundView =
+          [[TabGridToolbarBackground alloc] initWithFrame:self.frame];
+      _backgroundView.translatesAutoresizingMaskIntoConstraints = NO;
+      [self addSubview:_backgroundView];
+      AddSameConstraintsToSides(
+          self, _backgroundView,
+          LayoutSides::kLeading | LayoutSides::kTop | LayoutSides::kTrailing);
+    }
 
-  // A non-nil UIImage has to be added in the background of the toolbar to avoid
-  // having an additional blur effect.
-  [_toolbar setBackgroundImage:[[UIImage alloc] init]
-            forToolbarPosition:UIBarPositionAny
-                    barMetrics:UIBarMetricsDefault];
+    // A non-nil UIImage has to be added in the background of the toolbar to
+    // avoid having an additional blur effect.
+    [_toolbar setBackgroundImage:[[UIImage alloc] init]
+              forToolbarPosition:UIBarPositionAny
+                      barMetrics:UIBarMetricsDefault];
+  }
 }
 
 // Updates the visibility of the backgrounds based on the state of the TabGrid.
@@ -590,7 +583,7 @@
 }
 
 - (void)keyCommand_close {
-  base::RecordAction(base::UserMetricsAction("MobileKeyCommandClose"));
+  base::RecordAction(base::UserMetricsAction(kMobileKeyCommandClose));
   [self doneButtonTapped:nil];
 }
 
@@ -624,11 +617,6 @@
   if (_shareButton.enabled) {
     [self.buttonsDelegate shareSelectedTabs:sender];
   }
-}
-
-// TODO(crbug.com/398183785): Remove once we got feedback.
-- (void)sendFeedback:(id)sender {
-  [self.buttonsDelegate sendFeedbackGroupTapped:sender];
 }
 
 #pragma mark - Setters

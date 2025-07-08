@@ -187,8 +187,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/install_default_websocket_handlers.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_certificate_data.h"
 #include "net/test/test_data_directory.h"
 #include "services/network/public/cpp/features.h"
@@ -419,12 +419,8 @@ class SSLUITestBase : public InProcessBrowserTest,
         https_server_mismatched_(net::EmbeddedTestServer::TYPE_HTTPS),
         https_server_sha1_(net::EmbeddedTestServer::TYPE_HTTPS),
         https_server_common_name_only_(net::EmbeddedTestServer::TYPE_HTTPS),
-        wss_server_expired_(net::SpawnedTestServer::TYPE_WSS,
-                            SSLOptions(SSLOptions::CERT_EXPIRED),
-                            net::GetWebSocketTestDataDirectory()),
-        wss_server_mismatched_(net::SpawnedTestServer::TYPE_WSS,
-                               SSLOptions(SSLOptions::CERT_MISMATCHED_NAME),
-                               net::GetWebSocketTestDataDirectory()) {
+        wss_server_expired_(net::EmbeddedTestServer::TYPE_HTTPS),
+        wss_server_mismatched_(net::EmbeddedTestServer::TYPE_HTTPS) {
     https_server_.AddDefaultHandlers(GetChromeTestDataDir());
 
     https_server_expired_.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
@@ -440,6 +436,15 @@ class SSLUITestBase : public InProcessBrowserTest,
     https_server_common_name_only_.SetSSLConfig(
         net::EmbeddedTestServer::CERT_COMMON_NAME_ONLY);
     https_server_common_name_only_.AddDefaultHandlers(GetChromeTestDataDir());
+
+    wss_server_expired_.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
+    net::test_server::InstallDefaultWebSocketHandlers(&wss_server_expired_);
+    wss_server_expired_.AddDefaultHandlers(GetChromeTestDataDir());
+
+    wss_server_mismatched_.SetSSLConfig(
+        net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
+    net::test_server::InstallDefaultWebSocketHandlers(&wss_server_mismatched_);
+    wss_server_mismatched_.AddDefaultHandlers(GetChromeTestDataDir());
   }
 
   SSLUITestBase(const SSLUITestBase&) = delete;
@@ -655,8 +660,6 @@ class SSLUITestBase : public InProcessBrowserTest,
   }
 
  protected:
-  typedef net::SpawnedTestServer::SSLOptions SSLOptions;
-
   // Navigates to an interstitial and clicks through the certificate
   // error; then navigates to a page at |path| that loads unsafe content.
   void SetUpUnsafeContentsWithUserException(const std::string& path) {
@@ -708,8 +711,8 @@ class SSLUITestBase : public InProcessBrowserTest,
   net::EmbeddedTestServer https_server_sha1_;
   net::EmbeddedTestServer https_server_common_name_only_;
 
-  net::SpawnedTestServer wss_server_expired_;
-  net::SpawnedTestServer wss_server_mismatched_;
+  net::EmbeddedTestServer wss_server_expired_;
+  net::EmbeddedTestServer wss_server_mismatched_;
 
   testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
 
@@ -721,8 +724,8 @@ class SSLUITest : public SSLUITestBase {
  public:
   SSLUITest() : SSLUITestBase() {
     scoped_feature_list_.InitWithFeatures(
-        /* enabled_features */ {},
-        /* disabled_features */ {blink::features::kMixedContentAutoupgrade});
+        /*enabled_features=*/{},
+        /*disabled_features=*/{blink::features::kMixedContentAutoupgrade});
   }
 
   SSLUITest(const SSLUITest&) = delete;
@@ -816,8 +819,8 @@ class SSLUITestReduceSubresourceNotifications : public SSLUITestBase {
  public:
   SSLUITestReduceSubresourceNotifications() {
     scoped_feature_list_.InitWithFeatures(
-        /* enabled_features */ {features::kReduceSubresourceResponseStartedIPC},
-        /* disabled_features */ {blink::features::kMixedContentAutoupgrade});
+        /*enabled_features=*/{features::kReduceSubresourceResponseStartedIPC},
+        /*disabled_features=*/{blink::features::kMixedContentAutoupgrade});
   }
 
   SSLUITestReduceSubresourceNotifications(
@@ -1533,12 +1536,12 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestWSSInvalidCertAndClose) {
   std::string wss_close_url_path = base::StringPrintf(
       "%s?%d",
       embedded_test_server()->GetURL("/ssl/wss_close.html").spec().c_str(),
-      wss_server_expired_.host_port_pair().port());
+      wss_server_expired_.port());
   GURL wss_close_url(wss_close_url_path);
   std::string wss_loop_url_path = base::StringPrintf(
       "%s?%d",
       embedded_test_server()->GetURL("/ssl/wss_close_loop.html").spec().c_str(),
-      wss_server_expired_.host_port_pair().port());
+      wss_server_expired_.port());
   GURL wss_loop_url(wss_loop_url_path);
 
   // Create tabs and visit pages which keep on creating wss connections.
@@ -1574,11 +1577,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestWSSInvalidCert) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
   ASSERT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(tab));
   ssl_test_util::CheckAuthenticationBrokenState(
       tab, net::CERT_STATUS_DATE_INVALID, AuthState::SHOWING_INTERSTITIAL);
@@ -1655,19 +1655,17 @@ IN_PROC_BROWSER_TEST_F(SSLUITestWithClientCert, DISABLED_TestWSSClientCert) {
                                        std::u16string(), true, nullptr));
 
   // Start WebSocket test server with TLS and client cert authentication.
-  net::SpawnedTestServer::SSLOptions options(
-      net::SpawnedTestServer::SSLOptions::CERT_OK);
-  options.request_client_certificate = true;
-  base::FilePath ca_path = net::GetTestCertsDirectory().Append(
-      FILE_PATH_LITERAL("websocket_cacert.pem"));
-  options.client_authorities.push_back(ca_path);
-  net::SpawnedTestServer wss_server(net::SpawnedTestServer::TYPE_WSS, options,
-                                    net::GetWebSocketTestDataDirectory());
+  net::EmbeddedTestServer wss_server(net::EmbeddedTestServer::Type::TYPE_HTTP);
+  {
+    net::SSLServerConfig ssl_config;
+    ssl_config.client_cert_type =
+        net::SSLServerConfig::ClientCertType::REQUIRE_CLIENT_CERT;
+    wss_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
+  }
+  net::test_server::InstallDefaultWebSocketHandlers(&wss_server);
+  wss_server.AddDefaultHandlers(GetChromeTestDataDir());
   ASSERT_TRUE(wss_server.Start());
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
-  GURL url =
-      wss_server.GetURL("connect_check.html").ReplaceComponents(replacements);
+  GURL url = wss_server.GetURL("/websocket/connect_check.html");
 
   // Setup page title observer.
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
@@ -1679,7 +1677,7 @@ IN_PROC_BROWSER_TEST_F(SSLUITestWithClientCert, DISABLED_TestWSSClientCert) {
   Profile* profile = Profile::FromBrowserContext(tab->GetBrowserContext());
   DCHECK(profile);
   base::Value::Dict filter;
-  filter.SetByDottedPath("ISSUER.CN", "pywebsocket");
+  filter.SetByDottedPath("ISSUER.CN", "Test Root CA");
   base::Value::List filters;
   filters.Append(std::move(filter));
   base::Value::Dict setting;
@@ -3384,9 +3382,10 @@ IN_PROC_BROWSER_TEST_P(
 // This test checks that all mixed content requests from a dedicated worker are
 // blocked regardless of the settings in WebPreferences when
 // block-all-mixed-content CSP is set with allow_running_insecure_content=true.
+// TODO(crbug.com/429204994): Disabled due to flakiness.
 IN_PROC_BROWSER_TEST_P(
     SSLUIWorkerFetchTest,
-    MixedContentSettingsWithBlockingCSP_AllowRunningInsecureContent) {
+    DISABLED_MixedContentSettingsWithBlockingCSP_AllowRunningInsecureContent) {
   ChromeContentBrowserClientForMixedContentTest browser_client;
   content::ScopedContentBrowserClientSetting setting(&browser_client);
 
@@ -3629,11 +3628,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITestIgnoreCertErrors, TestWSS) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
 
   // We shouldn't have an interstitial page showing here.
 
@@ -3656,11 +3652,8 @@ IN_PROC_BROWSER_TEST_F(SSLUITestIgnoreCertErrorsBySPKIWSS, TestWSSExpired) {
   watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit bad HTTPS page.
-  GURL::Replacements replacements;
-  replacements.SetSchemeStr("https");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), wss_server_expired_.GetURL("connect_check.html")
-                     .ReplaceComponents(replacements)));
+      browser(), wss_server_expired_.GetURL("/websocket/connect_check.html")));
 
   // We shouldn't have an interstitial page showing here.
 
@@ -5515,6 +5508,78 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, DISABLED_PushStateSSLState) {
   chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   EXPECT_TRUE(content::WaitForLoadStop(tab));
   ssl_test_util::CheckAuthenticatedState(tab, AuthState::NONE);
+}
+
+namespace {
+
+// A request handler returns different HTTP response codes
+// to simulate server responses in browser tests.
+std::unique_ptr<net::test_server::HttpResponse> SimpleHttpResponseCodeHandler(
+    const net::test_server::HttpRequest& request) {
+  auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+  if (request.relative_url == "/code-200") {
+    response->set_code(net::HTTP_OK);
+    response->set_content("HTTP OK");
+    response->set_content_type("text/html");
+  } else if (request.relative_url == "/code-500") {
+    response->set_code(net::HTTP_INTERNAL_SERVER_ERROR);
+    response->AddCustomHeader("Content-Length", "0");
+  } else {
+    response->set_code(net::HTTP_NOT_FOUND);
+    response->AddCustomHeader("Content-Length", "0");
+  }
+  return response;
+}
+
+}  // namespace
+
+// Checks that when navigating to the following scenarios with various HTTP
+// response codes on a server with a valid SSL certificate, the SSL state
+// (certificate) remains present.
+IN_PROC_BROWSER_TEST_F(SSLUITest, SSLStateOnDifferentHttpResponses) {
+  https_server_.RegisterRequestHandler(
+      base::BindRepeating(&SimpleHttpResponseCodeHandler));
+  ASSERT_TRUE(https_server_.Start());
+
+  // 1) Navigating to a page that returns HTTP 200.
+  // The SSL certificate state should remain present.
+  GURL success_url = https_server_.GetURL("/code-200");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), success_url));
+  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
+
+  auto* helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
+
+  content::NavigationEntry* entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
+
+  // 2) Navigating to a page that returns HTTP 500 with empty content.
+  // The browser shows a default error page for the HTTP 500 response.
+  // The SSL certificate state should still remain present.
+  GURL error_url = https_server_.GetURL("/code-500");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), error_url));
+
+  tab = browser()->tab_strip_model()->GetActiveWebContents();
+  helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
+
+  entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
+
+  // 3) Navigating to a page that returns HTTP 404 with empty content.
+  // The browser shows a default error page for the HTTP 404 response.
+  // The SSL certificate state should still remain present.
+  GURL not_found_url = https_server_.GetURL("/not-found");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), not_found_url));
+  tab = browser()->tab_strip_model()->GetActiveWebContents();
+  helper = SecurityStateTabHelper::FromWebContents(tab);
+  EXPECT_TRUE(helper->GetVisibleSecurityState()->certificate);
+
+  entry = tab->GetController().GetVisibleEntry();
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->GetSSL().certificate);
 }
 
 // Regression test for http://crbug.com/635833 (crash when a window with no

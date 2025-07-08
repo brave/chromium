@@ -23,7 +23,7 @@
 #include "chrome/browser/ui/views/passwords/move_to_account_store_bubble_view.h"
 #include "chrome/browser/ui/views/passwords/password_add_username_view.h"
 #include "chrome/browser/ui/views/passwords/password_auto_sign_in_view.h"
-#include "chrome/browser/ui/views/passwords/password_change/password_change_view_factory.h"
+#include "chrome/browser/ui/views/passwords/password_change/successful_password_change_view.h"
 #include "chrome/browser/ui/views/passwords/password_save_unsynced_credentials_locally_view.h"
 #include "chrome/browser/ui/views/passwords/password_save_update_view.h"
 #include "chrome/browser/ui/views/passwords/post_save_compromised_bubble_view.h"
@@ -50,18 +50,6 @@
 #include "chrome/browser/ui/views/passwords/biometric_authentication_confirmation_bubble_view.h"
 #include "chrome/browser/ui/views/passwords/biometric_authentication_for_filling_bubble_view.h"
 #endif
-
-namespace {
-PageActionIconType GetPageActionIconType(content::WebContents* web_contents) {
-  base::WeakPtr<PasswordsModelDelegate> delegate =
-      PasswordsModelDelegateFromWebContents(web_contents);
-  password_manager::ui::State model_state = delegate->GetState();
-  if (model_state == password_manager::ui::PASSWORD_CHANGE_STATE) {
-    return PageActionIconType::kChangePassword;
-  }
-  return PageActionIconType::kManagePasswords;
-}
-}  // namespace
 
 // static
 PasswordBubbleViewBase* PasswordBubbleViewBase::g_manage_passwords_bubble_ =
@@ -99,7 +87,7 @@ void PasswordBubbleViewBase::ShowBubble(content::WebContents* web_contents,
   if (!views::Button::AsButton(anchor_view)) {
     g_manage_passwords_bubble_->SetHighlightedButton(
         button_provider->GetPageActionIconView(
-            GetPageActionIconType(web_contents)));
+            PageActionIconType::kManagePasswords));
   }
 
   views::BubbleDialogDelegateView::CreateBubble(g_manage_passwords_bubble_);
@@ -201,8 +189,7 @@ PasswordBubbleViewBase* PasswordBubbleViewBase::CreateBubble(
     view = new PasskeyUpgradeBubbleView(web_contents, anchor_view, reason,
                                         delegate->PasskeyRpId());
   } else if (model_state == password_manager::ui::PASSWORD_CHANGE_STATE) {
-    view = CreatePasswordChangeBubbleView(delegate->GetPasswordChangeDelegate(),
-                                          web_contents, anchor_view);
+    view = new SuccessfulPasswordChangeView(web_contents, anchor_view);
   } else {
     NOTREACHED();
   }
@@ -281,7 +268,25 @@ void PasswordBubbleViewBase::SetBubbleHeader(int light_image_id,
 
   gfx::Size preferred_size = image_view->GetPreferredSize();
   if (preferred_size.width()) {
-    float scale =
+    const float scale =
+        static_cast<float>(ChromeLayoutProvider::Get()->GetDistanceMetric(
+            views::DISTANCE_BUBBLE_PREFERRED_WIDTH)) /
+        preferred_size.width();
+    preferred_size = gfx::ScaleToRoundedSize(preferred_size, scale);
+    image_view->SetImageSize(preferred_size);
+  }
+  GetBubbleFrameView()->SetHeaderView(std::move(image_view));
+}
+
+void PasswordBubbleViewBase::SetBubbleHeaderLottie(int lottie_image_id) {
+  ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+  auto image_view = std::make_unique<views::ImageView>(
+      bundle.GetThemedLottieImageNamed(lottie_image_id));
+  image_view->GetViewAccessibility().SetIsInvisible(true);
+
+  gfx::Size preferred_size = image_view->GetPreferredSize();
+  if (preferred_size.width()) {
+    const float scale =
         static_cast<float>(ChromeLayoutProvider::Get()->GetDistanceMetric(
             views::DISTANCE_BUBBLE_PREFERRED_WIDTH)) /
         preferred_size.width();

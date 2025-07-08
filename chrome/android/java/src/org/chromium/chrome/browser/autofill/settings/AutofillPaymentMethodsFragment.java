@@ -18,6 +18,7 @@ import android.text.style.ForegroundColorSpan;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.View;
 
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.Preference;
@@ -35,6 +36,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillEditorBase;
 import org.chromium.chrome.browser.autofill.AutofillImageFetcherFactory;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils;
+import org.chromium.chrome.browser.autofill.GoogleWalletLauncher;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.Iban;
@@ -45,6 +47,7 @@ import org.chromium.chrome.browser.device_reauth.DeviceAuthSource;
 import org.chromium.chrome.browser.device_reauth.ReauthenticatorBridge;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.payments.ServiceWorkerPaymentAppBridge;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
 import org.chromium.chrome.browser.settings.ChromeManagedPreferenceDelegate;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
@@ -60,8 +63,11 @@ import org.chromium.components.browser_ui.settings.SettingsFragment;
 import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.payments.AndroidPaymentAppFactory;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
+import org.chromium.ui.text.ChromeClickableSpan;
+import org.chromium.ui.text.SpanApplier;
 
 /**
  * Autofill credit cards fragment, which allows the user to edit credit cards and control payment
@@ -70,6 +76,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 @NullMarked
 public class AutofillPaymentMethodsFragment extends ChromeBaseSettingsFragment
         implements PersonalDataManager.PersonalDataManagerObserver {
+    static final String DISABLED_SETTINGS_INFO = "disabled_settings_info";
     // The Fido pref is used as a key on the settings toggle. This key helps in the retrieval of the
     // Fido toggle during tests.
     static final String PREF_FIDO = "fido";
@@ -80,6 +87,7 @@ public class AutofillPaymentMethodsFragment extends ChromeBaseSettingsFragment
     static final String PREF_IBAN = "iban";
     static final String PREF_CARD_BENEFITS = "card_benefits";
     private static final String PREF_PAYMENT_APPS = "payment_apps";
+    static final String PREF_LOYALTY_CARDS = "loyalty_cards";
 
     @VisibleForTesting
     static final String PREF_FINANCIAL_ACCOUNTS_MANAGEMENT = "financial_accounts_management";
@@ -149,6 +157,16 @@ public class AutofillPaymentMethodsFragment extends ChromeBaseSettingsFragment
     private void rebuildPage() {
         getPreferenceScreen().removeAll();
         getPreferenceScreen().setOrderingAsAdded(true);
+
+        if (usesThirdPartyMode()
+                && ChromeFeatureList.isEnabled(
+                        ChromeFeatureList.THIRD_PARTY_DISABLE_CHROME_AUTOFILL_SETTINGS_SCREEN)) {
+            // Add the information string at the top.
+            Preference disabled_settings_info_pref = new Preference(getStyledContext());
+            disabled_settings_info_pref.setKey(DISABLED_SETTINGS_INFO);
+            disabled_settings_info_pref.setSummary(getDisableSettingsExplanation());
+            getPreferenceScreen().addPreference(disabled_settings_info_pref);
+        }
 
         PersonalDataManager personalDataManager =
                 PersonalDataManagerFactory.getForProfile(getProfile());
@@ -397,6 +415,22 @@ public class AutofillPaymentMethodsFragment extends ChromeBaseSettingsFragment
         payment_apps_pref.setKey(PREF_PAYMENT_APPS);
         getPreferenceScreen().addPreference(payment_apps_pref);
         refreshPaymentAppsPrefForAndroidPaymentApps(payment_apps_pref);
+
+        // Add the link to manage loyalty cards.
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.AUTOFILL_ENABLE_LOYALTY_CARDS_FILLING)) {
+            Preference loyalty_cards_pref = new Preference(getStyledContext());
+            loyalty_cards_pref.setTitle(R.string.payment_methods_settings_loyalty_cards_title);
+            loyalty_cards_pref.setSummary(
+                    R.string.payment_methods_settings_loyalty_cards_description);
+            loyalty_cards_pref.setKey(PREF_LOYALTY_CARDS);
+            getPreferenceScreen().addPreference(loyalty_cards_pref);
+            loyalty_cards_pref.setOnPreferenceClickListener(
+                    (preference) -> {
+                        GoogleWalletLauncher.openGoogleWallet(
+                                getActivity(), getActivity().getPackageManager());
+                        return true;
+                    });
+        }
     }
 
     private void createReauthenticatorBridge() {
@@ -689,5 +723,24 @@ public class AutofillPaymentMethodsFragment extends ChromeBaseSettingsFragment
     @Override
     public @SettingsFragment.AnimationType int getAnimationType() {
         return SettingsFragment.AnimationType.PROPERTY;
+    }
+
+    private boolean usesThirdPartyMode() {
+        return UserPrefs.get(getProfile()).getBoolean(Pref.AUTOFILL_USING_VIRTUAL_VIEW_STRUCTURE);
+    }
+
+    private SpannableString getDisableSettingsExplanation() {
+        return SpanApplier.applySpans(
+                getString(R.string.autofill_disable_settings_explanation),
+                new SpanApplier.SpanInfo(
+                        "<link>",
+                        "</link>",
+                        new ChromeClickableSpan(
+                                getPreferenceManager().getContext(),
+                                this::onLinkToAutofillOptionsClicked)));
+    }
+
+    private void onLinkToAutofillOptionsClicked(View unusedView) {
+        // TODO(crbug.com/428918449): Implement.
     }
 }

@@ -12,6 +12,17 @@ This file checks for the following:
   - XML namspace "app" is used for "http://schemas.android.com/apk/res-auto"
   - Android text attributes are only defined in text appearance styles
   - Warning on adding new text appearance styles
+  - Encourages using TextViewWithLeading rather than android:lineSpacingExtra
+    and android:lineSpacingMultiplier
+  - Encourages using ButtonCompat rather than Button, AppButtonCompat
+  - Checks whether inappropriate quotes are used in string resources
+  - Checks whether inappropriate ellipsis are used in string resources
+  - Encourages android:importantForAccessibility="no" rather than
+    tools:ignore="ContentDescription" for images that don't need content
+    descriptions
+  - Checks whether style attribute reference could work
+  - Checks whether direct theme color attributes are used in xml files in
+    layout, encouraging the usage of Chrome's semantically named colors
 """
 
 from collections import defaultdict
@@ -79,6 +90,7 @@ def _CommonChecks(input_api, output_api):
   result.extend(_CheckStringResourceEllipsisPunctuations(input_api, output_api))
   result.extend(_CheckImportantForAccessibility(input_api, output_api))
   result.extend(_CheckBadStyleReference(input_api, output_api))
+  result.extend(_CheckThemeColorAttributes(input_api, output_api))
   # Add more checks here
   return result
 
@@ -427,7 +439,7 @@ def _CheckTextAppearance(input_api, output_api):
     text appearance styles, listed below.
 
     It is recommended to use the pre-defined text appearance styles in
-      src/ui/android/java/res/values-v17/styles.xml
+      src/ui/android/java/res/values/styles.xml
 
     And to use
       android:textAppearance="@style/SomeTextAppearance"
@@ -438,7 +450,7 @@ def _CheckTextAppearance(input_api, output_api):
     new text appearance style.
 
     If your approved text appearance style is a common text appreance style,
-    please define it in src/ui/android/java/res/values-v17/styles.xml.
+    please define it in src/ui/android/java/res/values/styles.xml.
 
     Otherwise, if your approved text appearance is feature-specific, in
     chrome/android/java/res/values*/styles.xml, please define
@@ -701,3 +713,48 @@ def _checkStringResourcePunctuations(regex, warning, input_api, output_api):
   if warnings:
     result += [output_api.PresubmitPromptWarning(warning, warnings)]
   return result
+
+
+def _CheckThemeColorAttributes(input_api, output_api):
+  """
+  Checks whether direct theme color attributes are used in xml files in layout.
+  Encourages the usage of Chrome's semantically named colors.
+  """
+  warnings = []
+
+  # Find the attributes whose value is a theme reference that contains the
+  # word "color" or "Color".
+  color_theme_attr_pattern = re.compile(
+      r'\b(android|app):(\S*)\s*=\s*"\?attr\/.*([Cc]olor)')
+
+  # Split the file path into a list of strings and check whether that list
+  # contains the string "layout".
+  def is_layout_file(f):
+    # Split path string (on either a forward or backslash) into a list of strings
+    # and check whether that list contains the string "layout".
+    path_components = re.split(r'[\\/]', f.LocalPath())
+    return 'layout' in path_components
+
+  for f in IncludedFiles(input_api):
+    if not is_layout_file(f):
+      continue
+    for line_number, line in f.ChangedContents():
+      if color_theme_attr_pattern.search(line):
+        warnings.append('  %s:%d\n    \t%s' %
+                        (f.LocalPath(), line_number, line.strip()))
+
+  if warnings:
+    return [
+      output_api.PresubmitPromptWarning(
+      '''
+      Android Direct Theme Color Attribute Usage:
+      Your new code is using a direct theme attribute (?attr/...) for a color
+      in a layout file.
+
+      Please use a semantic color macro (e.g., "@macro/default_bg_color")
+      to ensure that colors are consistent and support all themes correctly.
+
+      If a suitable semantic color does not exist, you may need to define one.
+      ''', warnings)
+    ]
+  return []

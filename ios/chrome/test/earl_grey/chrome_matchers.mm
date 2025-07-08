@@ -66,6 +66,21 @@ id<GREYMatcher> ContextMenuItemWithAccessibilityLabelId(int message_id) {
       contextMenuItemWithAccessibilityLabelID:message_id];
 }
 
+id<GREYMatcher> ActionSheetItemWithAccessibilityLabel(NSString* label) {
+  return
+      [ChromeMatchersAppInterface actionSheetItemWithAccessibilityLabel:label];
+}
+
+id<GREYMatcher> ActionSheetItemWithAccessibilityLabelId(int message_id) {
+  return [ChromeMatchersAppInterface
+      actionSheetItemWithAccessibilityLabelID:message_id];
+}
+
+id<GREYMatcher> AlertItemWithAccessibilityLabelId(int message_id) {
+  return
+      [ChromeMatchersAppInterface alertItemWithAccessibilityLabelId:message_id];
+}
+
 id<GREYMatcher> ImageViewWithImageNamed(NSString* imageName) {
   return [ChromeMatchersAppInterface imageViewWithImageNamed:imageName];
 }
@@ -887,6 +902,7 @@ id<GREYMatcher> SafetyCheckTableViewMatcher() {
 id<GREYMatcher> AlertAction(NSString* title) {
   return grey_allOf(
       grey_accessibilityID([title stringByAppendingString:@"AlertAction"]),
+      grey_kindOfClassName(@"_UIAlertControllerActionView"),
       grey_interactable(), nil);
 }
 

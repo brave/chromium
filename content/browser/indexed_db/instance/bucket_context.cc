@@ -40,6 +40,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
@@ -434,6 +435,7 @@ void BucketContext::CreateAllExternalObjects(
     const std::vector<IndexedDBExternalObject>& objects,
     std::vector<blink::mojom::IDBExternalObjectPtr>* mojo_objects) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(!ShouldUseSqlite());
 
   TRACE_EVENT0("IndexedDB", "BucketContext::CreateAllExternalObjects");
 
@@ -623,11 +625,9 @@ void BucketContext::Open(
   Database* database_ptr = nullptr;
   auto it = databases_.find(name);
   if (it == databases_.end()) {
-    auto database = std::make_unique<Database>(name, *this);
     // The database must be added before the schedule call, as the
     // CreateDatabaseDeleteClosure can be called synchronously.
-    database_ptr = database.get();
-    AddDatabase(name, std::move(database));
+    database_ptr = CreateAndAddDatabase(name);
   } else {
     database_ptr = it->second.get();
   }
@@ -710,8 +710,7 @@ void BucketContext::DeleteDatabase(
 
   // If it exists but does not already have an `Database` object,
   // create it and initiate deletion.
-  auto database = std::make_unique<Database>(name, *this);
-  Database* database_ptr = AddDatabase(name, std::move(database));
+  Database* database_ptr = CreateAndAddDatabase(name);
   database_ptr->ScheduleDeleteDatabase(
       std::make_unique<FactoryClient>(std::move(factory_client)),
       std::move(on_deletion_complete));
@@ -761,10 +760,11 @@ void BucketContext::BindMockFailureSingletonForTesting(
   level_db::BindMockFailureSingletonForTesting(std::move(receiver));  // IN-TEST
 }
 
-Database* BucketContext::AddDatabase(const std::u16string& name,
-                                     std::unique_ptr<Database> database) {
+Database* BucketContext::CreateAndAddDatabase(const std::u16string& name) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!base::Contains(databases_, name));
+  auto database =
+      std::make_unique<Database>(next_database_id_for_locks_++, name, *this);
   return databases_.emplace(name, std::move(database)).first->second.get();
 }
 
@@ -887,7 +887,7 @@ std::string BucketContext::SanitizeErrorMessage(const std::string& message) {
   return sanitized_message;
 }
 
-bool BucketContext::ShouldUseSqlite() {
+bool BucketContext::ShouldUseSqlite() const {
   // Additional checks may be added subsequently.
   return base::FeatureList::IsEnabled(kSqliteBackingStore);
 }
@@ -992,7 +992,8 @@ BucketContext::InitBackingStoreIfNeeded(bool create_if_missing) {
     const bool is_first_attempt = i == 0;
     std::tie(backing_store, status, data_loss_info, disk_full) =
         ShouldUseSqlite()
-            ? sqlite::BackingStoreImpl::OpenAndVerify(data_path_)
+            ? sqlite::BackingStoreImpl::OpenAndVerify(data_path_,
+                                                      *blob_storage_context_)
             : level_db::BackingStore::OpenAndVerify(
                   *this, data_path_, database_path, blob_path,
                   lock_manager.get(), is_first_attempt, create_if_missing);

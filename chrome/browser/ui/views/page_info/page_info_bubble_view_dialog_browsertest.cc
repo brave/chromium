@@ -157,7 +157,8 @@ GetMerchantTrustMetadataWithoutSummary() {
 
 }  // namespace
 
-// TODO(crbug.com/392934324): Add QWAC test cases.
+// TODO(crbug.com/392934324): Add 1-QWAC test cases.
+// TODO(crbug.com/392934325): Add 2-QWAC test cases.
 class PageInfoBubbleViewDialogBrowserTest : public DialogBrowserTest {
  public:
   PageInfoBubbleViewDialogBrowserTest() {
@@ -982,9 +983,17 @@ class PageInfoBubbleViewIsolatedWebAppBrowserTest : public DialogBrowserTest {
 // Test renamed, as currently Skia Gold doesn't support resetting test
 // expectation for tests run on windows.
 // crbug.com/1403038
+// Flaky on Win10 Tests x64 (crbug.com/40261456)
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2 \
+  DISABLED_InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2
+#else
+#define MAYBE_InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2 \
+  InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2
+#endif
 IN_PROC_BROWSER_TEST_F(
     PageInfoBubbleViewIsolatedWebAppBrowserTest,
-    InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2) {
+    MAYBE_InvokeUi_AppNameIsDisplayedInsteadOfOriginForIsolatedWebApps_REV2) {
   ShowAndVerifyUi();
 }
 

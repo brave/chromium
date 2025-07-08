@@ -10,10 +10,16 @@ import android.view.View;
 
 import androidx.core.widget.ImageViewCompat;
 
+import com.google.android.material.divider.MaterialDivider;
+
+import org.chromium.base.Callback;
 import org.chromium.base.lifetime.Destroyable;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.theme.ThemeColorProvider;
+import org.chromium.chrome.browser.ui.extensions.ExtensionActionsBridge;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.ui.listmenu.ListMenuButton;
 
@@ -21,26 +27,67 @@ import org.chromium.ui.listmenu.ListMenuButton;
 @NullMarked
 public class ExtensionsMenuButtonCoordinator implements Destroyable {
 
+    private final Context mContext;
     private final ListMenuButton mExtensionsMenuButton;
+    private final MaterialDivider mExtensionsMenuTabSwitcherDivider;
     private final ThemeColorProvider mThemeColorProvider;
-    private final ThemeColorProvider.TintObserver mTintObserver;
+    private final ObservableSupplier<Profile> mProfileSupplier;
+
+    private final ThemeColorProvider.TintObserver mTintObserver = this::onTintChanged;
+    private final Callback<Profile> mProfileUpdatedCallback = this::onProfileUpdated;
+
+    @Nullable private Profile mProfile;
+    @Nullable private ExtensionsMenuCoordinator mExtensionsMenuCoordinator;
 
     public ExtensionsMenuButtonCoordinator(
             Context context,
             ListMenuButton extensionsMenuButton,
-            ThemeColorProvider themeColorProvider) {
+            MaterialDivider extensionsMenuTabSwitcherDivider,
+            ThemeColorProvider themeColorProvider,
+            ObservableSupplier<Profile> profileSupplier) {
+        mContext = context;
+
         mExtensionsMenuButton = extensionsMenuButton;
         mExtensionsMenuButton.setOnClickListener(this::onClick);
 
+        mExtensionsMenuTabSwitcherDivider = extensionsMenuTabSwitcherDivider;
+
+        mProfileSupplier = profileSupplier;
+
         mThemeColorProvider = themeColorProvider;
-        mTintObserver = this::onTintChanged;
         mThemeColorProvider.addTintObserver(mTintObserver);
+
+        mProfileSupplier.addObserver(mProfileUpdatedCallback);
+    }
+
+    private void onProfileUpdated(@Nullable Profile profile) {
+        if (profile == mProfile) {
+            return;
+        }
+
+        mProfile = profile;
+
+        // TODO(crbug.com/422307625): Remove this check once extensions are ready for
+        // dogfooding.
+        int visibility = View.GONE;
+        if (mProfile != null) {
+            ExtensionActionsBridge extensionActionsBridge = ExtensionActionsBridge.get(mProfile);
+            if (extensionActionsBridge != null && extensionActionsBridge.extensionsEnabled()) {
+                visibility = View.VISIBLE;
+            }
+        }
+
+        mExtensionsMenuButton.setVisibility(visibility);
+        mExtensionsMenuTabSwitcherDivider.setVisibility(visibility);
     }
 
     void onClick(View view) {
-        if (view != mExtensionsMenuButton) return;
+        if (mExtensionsMenuCoordinator == null) {
+            mExtensionsMenuCoordinator =
+                    new ExtensionsMenuCoordinator(mContext, mExtensionsMenuButton);
+        }
 
-        // TODO(crbug.com/409181513): Implement popup view for extensions.
+        mExtensionsMenuCoordinator.showMenu();
     }
 
     public void onTintChanged(
@@ -52,7 +99,13 @@ public class ExtensionsMenuButtonCoordinator implements Destroyable {
 
     @Override
     public void destroy() {
+        if (mExtensionsMenuCoordinator != null) {
+            mExtensionsMenuCoordinator.destroy();
+            mExtensionsMenuCoordinator = null;
+        }
         mExtensionsMenuButton.setOnClickListener(null);
         mThemeColorProvider.removeTintObserver(mTintObserver);
+        mProfileSupplier.removeObserver(mProfileUpdatedCallback);
+        mProfile = null;
     }
 }

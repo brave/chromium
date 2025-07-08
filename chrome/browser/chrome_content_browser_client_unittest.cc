@@ -107,6 +107,7 @@
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/search_test_utils.h"
@@ -471,6 +472,28 @@ TEST_F(ChromeContentBrowserClientWindowTest,
   client.QueryInstalledWebAppsByManifestId(/*frame_url=*/out_of_scope_frame_url,
                                            app_url, browser()->profile(),
                                            future.GetCallback());
+
+  ASSERT_TRUE(future.Wait());
+  EXPECT_FALSE(future.Get().has_value());
+}
+
+TEST_F(ChromeContentBrowserClientWindowTest,
+       QueryInstalledWebAppsByManifestIdIncognitoProfileReturnsNullopt) {
+  ChromeContentBrowserClient client;
+
+  // Create / fetch an incognito (off-the-record) profile.
+  Profile* incognito_profile =
+      browser()->profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
+  ASSERT_TRUE(incognito_profile->IsOffTheRecord());
+  ASSERT_TRUE(!web_app::AreWebAppsEnabled(incognito_profile));
+
+  const GURL app_url("http://foo.com");
+  const GURL frame_url("http://foo.com");
+
+  base::test::TestFuture<std::optional<blink::mojom::RelatedApplication>>
+      future;
+  client.QueryInstalledWebAppsByManifestId(
+      frame_url, app_url, incognito_profile, future.GetCallback());
 
   ASSERT_TRUE(future.Wait());
   EXPECT_FALSE(future.Get().has_value());
@@ -913,7 +936,7 @@ TEST_F(ChromeContentSettingsRedirectTest, RedirectDebugURL) {
   test_content_browser_client.HandleWebUI(&dest_url, &profile_);
   EXPECT_EQ(chrome::kChromeUIInternalDebugPagesDisabledHost, dest_url.host());
   std::string query_param_name("host=");
-  EXPECT_EQ(query_param_name + chrome::kChromeUILocalStateHost,
+  EXPECT_EQ(query_param_name + chrome::kChromeUILocalStateURL + "/",
             dest_url.query());
 
   // Enable the internal only uis pref.

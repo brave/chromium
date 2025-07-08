@@ -77,11 +77,6 @@ bool CastMediaShlib::SupportsMediaClockRateChange() {
   return false;
 }
 
-VideoPlane::Coordinates VideoPlane::GetCoordinates() {
-  // SbPlayerSetBounds takes coordinates in terms of the graphics resolution.
-  return VideoPlane::Coordinates::kGraphics;
-}
-
 bool MediaCapabilitiesShlib::IsSupportedVideoConfig(VideoCodec codec,
                                                     VideoProfile profile,
                                                     int level) {
@@ -106,7 +101,7 @@ bool MediaCapabilitiesShlib::IsSupportedVideoConfig(VideoCodec codec,
                          kStarboardMediaSupportTypeProbably;
 
   LOG(INFO) << "Video codec=" << codec << ", profile=" << profile
-            << ", level=" << level << " is "
+            << ", level=" << level << " (MIME type " << mime << ") is "
             << (supported ? "supported" : "not supported") << " by starboard.";
   return supported;
 }
@@ -131,8 +126,9 @@ bool MediaCapabilitiesShlib::IsSupportedAudioConfig(const AudioConfig& config) {
                              mime.c_str(), /*key_system=*/"") ==
                          kStarboardMediaSupportTypeProbably;
 
-  LOG(INFO) << "Audio codec=" << config.codec << " is "
-            << (supported ? "supported" : "not supported") << " by starboard.";
+  LOG(INFO) << "Audio codec=" << config.codec << " (MIME type " << mime
+            << ") is " << (supported ? "supported" : "not supported")
+            << " by starboard.";
   return supported;
 }
 

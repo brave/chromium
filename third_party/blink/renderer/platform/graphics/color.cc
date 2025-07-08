@@ -32,7 +32,9 @@
 #include <tuple>
 
 #include "base/check_op.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
+#include "base/strings/string_view_util.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/platform/geometry/blend.h"
@@ -972,7 +974,7 @@ bool Color::ParseHexColor(base::span<const UChar> name, Color& color) {
 bool Color::ParseHexColor(const StringView& name, Color& color) {
   if (name.empty())
     return false;
-  return VisitCharacters(name, [&color](auto chars) {
+  return WTF::VisitCharacters(name, [&color](auto chars) {
     return ParseHexColorInternal(chars, color);
   });
 }
@@ -988,7 +990,7 @@ bool Color::SetFromString(const String& name) {
   // TODO(https://crbug.com/1434423): Implement CSS Color level 4 parsing.
   if (name[0] != '#')
     return SetNamedColor(name);
-  return VisitCharacters(name, [this](auto chars) {
+  return WTF::VisitCharacters(name, [this](auto chars) {
     return ParseHexColorInternal(chars.template subspan<1>(), *this);
   });
 }
@@ -1275,6 +1277,15 @@ Color Color::BlendWithWhite() const {
       break;
   }
   return new_color;
+}
+
+Color Color::InvertSRGB() const {
+  Color inv_color = *this;
+  inv_color.ConvertToColorSpace(ColorSpace::kSRGB);
+  inv_color.param0_ = 1.0f - inv_color.param0_;
+  inv_color.param1_ = 1.0f - inv_color.param1_;
+  inv_color.param2_ = 1.0f - inv_color.param2_;
+  return inv_color;
 }
 
 // From https://www.w3.org/TR/css-color-4/#interpolation

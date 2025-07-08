@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "net/dns/dns_transaction.h"
 
 #include <stdint.h>
@@ -21,6 +16,7 @@
 #include <vector>
 
 #include "base/base64url.h"
+#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
@@ -30,6 +26,7 @@
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
 #include "base/task/single_thread_task_runner.h"
@@ -139,12 +136,13 @@ class DnsSocketData {
     if (Transport::TCP == transport_) {
       auto length = std::make_unique<uint16_t>();
       *length = base::HostToNet16(query_->io_buffer()->size());
-      writes_.emplace_back(mode, reinterpret_cast<const char*>(length.get()),
-                           sizeof(uint16_t), num_reads_and_writes());
+      writes_.emplace_back(mode, base::byte_span_from_ref(*length),
+                           /*result=*/0,
+                           /*seq=*/num_reads_and_writes());
       lengths_.push_back(std::move(length));
     }
-    writes_.emplace_back(mode, query_->io_buffer()->data(),
-                         query_->io_buffer()->size(), num_reads_and_writes());
+    writes_.emplace_back(mode, query_->io_buffer()->span(),
+                         /*result=*/0, /*seq=*/num_reads_and_writes());
   }
 
   DnsSocketData(const DnsSocketData&) = delete;
@@ -163,12 +161,12 @@ class DnsSocketData {
     if (Transport::TCP == transport_) {
       auto length = std::make_unique<uint16_t>();
       *length = base::HostToNet16(tcp_length);
-      reads_.emplace_back(mode, reinterpret_cast<const char*>(length.get()),
-                          sizeof(uint16_t), num_reads_and_writes());
+      reads_.emplace_back(mode, base::byte_span_from_ref(*length),
+                          /*result=*/0, /*seq=*/num_reads_and_writes());
       lengths_.push_back(std::move(length));
     }
-    reads_.emplace_back(mode, response->io_buffer()->data(),
-                        response->io_buffer_size(), num_reads_and_writes());
+    reads_.emplace_back(mode, response->io_buffer()->span(),
+                        /*result=*/0, /*seq=*/num_reads_and_writes());
     responses_.push_back(std::move(response));
   }
 
@@ -587,12 +585,12 @@ class URLRequestMockDohJob : public URLRequestJob, public AsyncSocket {
                    IOBuffer* buf,
                    int buf_size) {
     if (data_len > buf_size) {
-      std::copy(data, data + buf_size, buf->data());
-      leftover_data_ = data + buf_size;
+      std::copy(data, UNSAFE_TODO(data + buf_size), buf->data());
+      leftover_data_ = UNSAFE_TODO(data + buf_size);
       leftover_data_len_ = data_len - buf_size;
       return buf_size;
     }
-    std::copy(data, data + data_len, buf->data());
+    std::copy(data, UNSAFE_TODO(data + data_len), buf->data());
     return data_len;
   }
 
@@ -803,17 +801,17 @@ class DnsTransactionTestBase : public testing::Test {
     ASSERT_EQ(num_attempts, socket_factory_->remote_endpoints_.size());
     auto num_insecure_nameservers = session_->config().nameservers.size();
     for (size_t i = 0; i < num_attempts; ++i) {
-      if (servers[i] < num_insecure_nameservers) {
+      if (UNSAFE_TODO(servers[i]) < num_insecure_nameservers) {
         // Check insecure server match.
-        EXPECT_EQ(
+        UNSAFE_TODO(EXPECT_EQ(
             socket_factory_->remote_endpoints_[i].insecure_nameserver.value(),
-            session_->config().nameservers[servers[i]]);
+            session_->config().nameservers[servers[i]]));
       } else {
         // Check secure server match.
-        EXPECT_EQ(
+        UNSAFE_TODO(EXPECT_EQ(
             socket_factory_->remote_endpoints_[i].secure_nameserver.value(),
             session_->config()
-                .doh_config.servers()[servers[i] - num_insecure_nameservers]);
+                .doh_config.servers()[servers[i] - num_insecure_nameservers]));
       }
     }
   }

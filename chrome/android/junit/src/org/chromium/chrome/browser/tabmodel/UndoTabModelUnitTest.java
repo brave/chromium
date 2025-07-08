@@ -179,7 +179,7 @@ public class UndoTabModelUnitTest {
                             mTabModelDelegate,
                             tabRemover,
                             supportUndo,
-                            /* isArchivedTabModel= */ true);
+                            /* isArchivedTabModel= */ false);
             when(mTabModelSelector.getModel(true)).thenReturn(tabModel);
         } else {
             tabModel =
@@ -195,7 +195,7 @@ public class UndoTabModelUnitTest {
                             mTabModelDelegate,
                             tabRemover,
                             supportUndo,
-                            /* isArchivedTabModel= */ true);
+                            /* isArchivedTabModel= */ false);
             when(mTabModelSelector.getModel(false)).thenReturn(tabModel);
         }
         // Assume the model is the current and active model.
@@ -272,7 +272,7 @@ public class UndoTabModelUnitTest {
         model.addObserver(
                 new TabModelObserver() {
                     @Override
-                    public void tabPendingClosure(Tab tab) {
+                    public void tabPendingClosure(Tab tab, @TabClosingSource int closingSource) {
                         didReceivePendingClosureHelper.notifyCalled();
                     }
                 });
@@ -1486,7 +1486,7 @@ public class UndoTabModelUnitTest {
         checkState(model, new Tab[] {tab0, tab3}, tab3, sEmptyList, fullList, tab3);
 
         // 4.
-        model.moveTab(tab0.getId(), 2);
+        model.moveTab(tab0.getId(), 1);
         fullList = new Tab[] {tab3, tab0};
         checkState(model, new Tab[] {tab3, tab0}, tab3, sEmptyList, fullList, tab3);
         assertTrue(tab1.isClosing());
@@ -1660,7 +1660,7 @@ public class UndoTabModelUnitTest {
         checkState(model, fullList, tab4, sEmptyList, fullList, tab4);
         assertFalse(model.supportsPendingClosures());
 
-        final ArrayList<Tab> lastClosedTabs = new ArrayList<Tab>();
+        final ArrayList<Tab> lastClosedTabs = new ArrayList<>();
         model.addObserver(
                 new TabModelObserver() {
                     @Override

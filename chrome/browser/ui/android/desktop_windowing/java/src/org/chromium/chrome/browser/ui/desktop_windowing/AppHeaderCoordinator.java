@@ -27,6 +27,7 @@ import androidx.core.view.WindowInsetsCompat;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
@@ -35,6 +36,7 @@ import org.chromium.chrome.browser.lifecycle.SaveInstanceStateObserver;
 import org.chromium.chrome.browser.lifecycle.TopResumedActivityChangedObserver;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.DesktopWindowHeuristicResult;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.WindowingMode;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeStateProvider;
@@ -81,6 +83,7 @@ public class AppHeaderCoordinator
     private int mBrowserControlsToken = TokenHolder.INVALID_TOKEN;
     private @Nullable AppHeaderState mAppHeaderState;
     private boolean mIsInUnfocusedDesktopWindow;
+    private final ObservableSupplierImpl<Boolean> mDesktopWindowTopResumedActivitySupplier;
     private @DesktopWindowHeuristicResult int mHeuristicResult =
             DesktopWindowHeuristicResult.UNKNOWN;
     private @WindowingMode int mWindowingMode = WindowingMode.UNKNOWN;
@@ -117,7 +120,6 @@ public class AppHeaderCoordinator
         mRootView = rootView;
         mBrowserControlsVisibilityDelegate = browserControlsVisibilityDelegate;
         mInsetObserver = insetObserver;
-        mInsetObserver.addInsetsConsumer(this, InsetConsumerSource.APP_HEADER_COORDINATOR_BOTTOM);
         mInsetsController = assertNonNull(mRootView.getWindowInsetsController());
         mActivityLifecycleDispatcher = activityLifecycleDispatcher;
         mActivityLifecycleDispatcher.register(this);
@@ -128,6 +130,14 @@ public class AppHeaderCoordinator
                         && savedInstanceState.getBoolean(
                                 INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW, false);
 
+        mDesktopWindowTopResumedActivitySupplier =
+                new ObservableSupplierImpl<Boolean>(!mIsInUnfocusedDesktopWindow);
+        mDesktopWindowTopResumedActivitySupplier.addObserver(
+                (isFocused) -> {
+                    mObservers.forEach(
+                            (observer) -> observer.onActivityFocusStateChanged(isFocused));
+                });
+
         // Initialize mInsetsRectProvider and setup observers.
         mCaptionBarRectProvider =
                 sInsetsRectProviderForTesting != null
@@ -137,15 +147,11 @@ public class AppHeaderCoordinator
                                 insetObserver.getLastRawWindowInsets(),
                                 InsetConsumerSource.APP_HEADER_COORDINATOR_CAPTION);
 
-        // Populate the initial value after the rect provider is ready. Avoid invocation during
-        // instantiation by lazily setting the consumer.
-        InsetsRectProvider.Consumer insetsRectUpdateRunnable = this::onInsetsRectsUpdated;
-        mCaptionBarRectProvider.setConsumer(insetsRectUpdateRunnable);
-
-        if (!mCaptionBarRectProvider.getWidestUnoccludedRect().isEmpty()) {
-            insetsRectUpdateRunnable.onWidestUnoccludedRectUpdated(
-                    mCaptionBarRectProvider.getWidestUnoccludedRect());
-        }
+        // Set the insets consumers and trigger insets application for potential consumption after
+        // the rect provider is ready, to populate initial values.
+        mCaptionBarRectProvider.setConsumer(this::onInsetsRectsUpdated);
+        mInsetObserver.addInsetsConsumer(this, InsetConsumerSource.APP_HEADER_COORDINATOR_BOTTOM);
+        insetObserver.retriggerOnApplyWindowInsets();
     }
 
     /** Destroy the instances and remove all the dependencies. */
@@ -186,6 +192,9 @@ public class AppHeaderCoordinator
     @Override
     public void onTopResumedActivityChanged(boolean isTopResumedActivity) {
         mIsInUnfocusedDesktopWindow = !isTopResumedActivity && mIsInDesktopWindow;
+        if (mIsInDesktopWindow) {
+            mDesktopWindowTopResumedActivitySupplier.set(isTopResumedActivity);
+        }
     }
 
     // SaveInstanceStateObserver implementation.
@@ -286,6 +295,8 @@ public class AppHeaderCoordinator
             newResult = DesktopWindowHeuristicResult.CAPTION_BAR_BOUNDING_RECT_INVALID_HEIGHT;
         } else if (!allowHeaderCustomization) {
             newResult = DesktopWindowHeuristicResult.DISALLOWED_ON_EXTERNAL_DISPLAY;
+        } else if (insetsRectProvider.isUnoccludedRegionComplex()) {
+            newResult = DesktopWindowHeuristicResult.COMPLEX_UNOCCLUDED_REGION;
         } else {
             newResult = DesktopWindowHeuristicResult.IN_DESKTOP_WINDOW;
         }
@@ -347,14 +358,18 @@ public class AppHeaderCoordinator
     }
 
     /** Set states for testing. */
-    public void setStateForTesting(boolean isInDesktopWindow, AppHeaderState appHeaderState) {
+    public void setStateForTesting(
+            boolean isInDesktopWindow, AppHeaderState appHeaderState, boolean isFocused) {
         mIsInDesktopWindow = isInDesktopWindow;
         setEdgeToEdgeState(mIsInDesktopWindow);
         mAppHeaderState = appHeaderState;
-
+        if (mIsInDesktopWindow) {
+            mDesktopWindowTopResumedActivitySupplier.set(isFocused);
+        }
         for (var observer : mObservers) {
             observer.onAppHeaderStateChanged(mAppHeaderState);
             observer.onDesktopWindowingModeChanged(mIsInDesktopWindow);
+            observer.onActivityFocusStateChanged(isFocused);
         }
     }
 
@@ -378,6 +393,11 @@ public class AppHeaderCoordinator
     @Override
     public WindowInsetsCompat onApplyWindowInsets(
             View view, WindowInsetsCompat windowInsetsCompat) {
+        if (EdgeToEdgeUtils.isEdgeToEdgeTabletEnabled()
+                && mActivity != null
+                && EdgeToEdgeUtils.isSupportedTablet(mActivity)) {
+            return windowInsetsCompat;
+        }
         mKeyboardInset = windowInsetsCompat.getInsets(WindowInsetsCompat.Type.ime()).bottom;
         mNavBarInset =
                 windowInsetsCompat.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
@@ -389,5 +409,9 @@ public class AppHeaderCoordinator
                 .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
                 .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
                 .build();
+    }
+
+    /* package */ ObservableSupplierImpl<Boolean> getTopResumedActivitySupplierForTesting() {
+        return mDesktopWindowTopResumedActivitySupplier;
     }
 }

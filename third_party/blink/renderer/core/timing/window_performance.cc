@@ -76,6 +76,7 @@
 #include "third_party/blink/renderer/core/paint/timing/container_timing.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/timing/animation_frame_timing_info.h"
+#include "third_party/blink/renderer/core/timing/interaction_contentful_paint.h"
 #include "third_party/blink/renderer/core/timing/largest_contentful_paint.h"
 #include "third_party/blink/renderer/core/timing/layout_shift.h"
 #include "third_party/blink/renderer/core/timing/performance_container_timing.h"
@@ -83,6 +84,7 @@
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/core/timing/performance_event_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_long_animation_frame_timing.h"
+#include "third_party/blink/renderer/core/timing/performance_navigation_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_observer.h"
 #include "third_party/blink/renderer/core/timing/performance_paint_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_timing.h"
@@ -615,10 +617,7 @@ void WindowPerformance::EventTimingProcessingStart(
   // Set prevent_counting_as_interaction to true for all the event entries when
   // the selection autoscroll happens at the current event presentation frame
   // or the previous frame.
-  if (RuntimeEnabledFeaturesBase::
-          EventTimingSelectionAutoScrollNoInteractionIdEnabled()) {
-    reporting_info.prevent_counting_as_interaction |= IsAutoscrollActive();
-  }
+  reporting_info.prevent_counting_as_interaction |= IsAutoscrollActive();
 
   // We always have a Hit test target before starting event dispatch.  During
   // event dispatch we might change target via event retargetting or
@@ -693,11 +692,11 @@ void WindowPerformance::EventTimingProcessingEnd(
 #endif  // BUILDFLAG(IS_MAC)
   }
 
-  if (event.target()) {
-    // `event->target()` is assigned as part of EventDispatch, and will be unset
-    // whenever we skip dispatch. (See: crbug.com/1367329).
-    // Note: target may be dom detached, and even GC-ed, before Observer fires.
-    entry->SetTarget(event.target()->ToNode());
+  if (EventTarget* raw_target = event.RawTarget()) {
+    // `event->RawTarget()` is assigned as part of EventDispatch, and will be
+    // unset whenever we skip dispatch. (See: crbug.com/1367329). Note: target
+    // may be dom detached, and even GC-ed, before Observer fires.
+    entry->SetTarget(raw_target->ToNode());
   }
 
   // Request presentation time first, because this might increment presentation
@@ -1223,6 +1222,12 @@ void WindowPerformance::NotifyAndAddEventTimingBuffer(
                           enqueued_to_main_thread_time, flow_id);
     }
 
+    // Add EventTimingMeasurementComplete trace event to report when Event
+    // Timing was measured and reported to the Performance Timeline. This helps
+    // track the delay between frame presentation and timeline reporting.
+    TRACE_EVENT_INSTANT("latency", "EventTimingMeasurementComplete", track_id,
+                        base::TimeTicks::Now(), flow_id);
+
     TRACE_EVENT_BEGIN(
         "latency", "EventProcessing", track_id,
         entry->GetEventTimingReportingInfo()->processing_start_time, flow_id,
@@ -1304,17 +1309,15 @@ void WindowPerformance::QueueLongAnimationFrameTiming(
 }
 
 void WindowPerformance::AddFirstPaintTiming(
-    const DOMPaintTimingInfo& paint_timing_info,
-    bool is_triggered_by_soft_navigation) {
+    const DOMPaintTimingInfo& paint_timing_info) {
   AddPaintTiming(PerformancePaintTiming::PaintType::kFirstPaint,
-                 paint_timing_info, is_triggered_by_soft_navigation);
+                 paint_timing_info);
 }
 
 void WindowPerformance::AddFirstContentfulPaintTiming(
-    const DOMPaintTimingInfo& paint_timing_info,
-    bool is_triggered_by_soft_navigation) {
+    const DOMPaintTimingInfo& paint_timing_info) {
   AddPaintTiming(PerformancePaintTiming::PaintType::kFirstContentfulPaint,
-                 paint_timing_info, is_triggered_by_soft_navigation);
+                 paint_timing_info);
 }
 
 void WindowPerformance::AddLongAnimationFrameEntry(PerformanceEntry* entry) {
@@ -1426,14 +1429,17 @@ void WindowPerformance::AddVisibilityStateEntry(bool is_visible,
   }
 }
 
-void WindowPerformance::AddSoftNavigationEntry(const AtomicString& name,
-                                               base::TimeTicks timestamp) {
+void WindowPerformance::AddSoftNavigationEntry(
+    const AtomicString& name,
+    base::TimeTicks timestamp,
+    const DOMPaintTimingInfo& paint_timing_info) {
   if (!RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(
           GetExecutionContext())) {
     return;
   }
   SoftNavigationEntry* entry = MakeGarbageCollected<SoftNavigationEntry>(
-      name, MonotonicTimeToDOMHighResTimeStamp(timestamp), DomWindow());
+      name, MonotonicTimeToDOMHighResTimeStamp(timestamp), paint_timing_info,
+      DomWindow());
 
   if (HasObserverFor(PerformanceEntry::kSoftNavigation)) {
     UseCounter::Count(GetExecutionContext(),
@@ -1454,11 +1460,7 @@ void WindowPerformance::PageVisibilityChangedWithTimestamp(
   // invisible.
   if (!GetPage()->IsPageVisible()) {
     last_hidden_timestamp_ = visibility_change_timestamp;
-
-    if (RuntimeEnabledFeaturesBase::
-            ReportEventTimingAtVisibilityChangeEnabled()) {
-      FlushEventTimingsOnPageHidden();
-    }
+    FlushEventTimingsOnPageHidden();
   }
   AddVisibilityStateEntry(GetPage()->IsPageVisible(),
                           visibility_change_timestamp);
@@ -1485,8 +1487,7 @@ void WindowPerformance::OnLargestContentfulPaintUpdated(
     base::TimeTicks load_time,
     const AtomicString& id,
     const String& url,
-    Element* element,
-    bool is_triggered_by_soft_navigation) {
+    Element* element) {
   DOMHighResTimeStamp load_timestamp =
       MonotonicTimeToDOMHighResTimeStamp(load_time);
 
@@ -1494,8 +1495,7 @@ void WindowPerformance::OnLargestContentfulPaintUpdated(
       paint_timing_info.has_value() ? paint_timing_info->presentation_time
                                     : load_timestamp,
       paint_timing_info.has_value() ? paint_timing_info->presentation_time : 0,
-      paint_size, load_timestamp, id, url, element, DomWindow(),
-      is_triggered_by_soft_navigation);
+      paint_size, load_timestamp, id, url, element, DomWindow());
 
   if (paint_timing_info) {
     entry->SetPaintTimingInfo(paint_timing_info.value());
@@ -1527,6 +1527,36 @@ void WindowPerformance::OnLargestContentfulPaintUpdated(
       }
     }
   }
+}
+
+void WindowPerformance::OnInteractionContentfulPaintUpdated(
+    std::optional<DOMPaintTimingInfo> paint_timing_info,
+    uint64_t paint_size,
+    base::TimeTicks load_time,
+    const AtomicString& id,
+    const String& url,
+    Element* element) {
+  if (!RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(
+          GetExecutionContext())) {
+    return;
+  }
+  DOMHighResTimeStamp load_timestamp =
+      MonotonicTimeToDOMHighResTimeStamp(load_time);
+
+  auto* entry = MakeGarbageCollected<InteractionContentfulPaint>(
+      paint_timing_info.has_value() ? paint_timing_info->presentation_time
+                                    : load_timestamp,
+      paint_timing_info.has_value() ? paint_timing_info->presentation_time : 0,
+      paint_size, load_timestamp, id, url, element, DomWindow());
+
+  if (paint_timing_info) {
+    entry->SetPaintTimingInfo(paint_timing_info.value());
+  }
+
+  if (HasObserverFor(PerformanceEntry::kInteractionContentfulPaint)) {
+    NotifyObserversOfEntry(*entry);
+  }
+  AddInteractionContentfulPaint(entry);
 }
 
 void WindowPerformance::OnPaintFinished() {

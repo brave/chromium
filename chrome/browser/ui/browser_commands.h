@@ -37,6 +37,10 @@ namespace bookmarks {
 class BookmarkModel;
 }  // namespace bookmarks
 
+namespace split_tabs {
+enum class SplitTabCreatedSource;
+}
+
 namespace chrome {
 
 // For all commands, where a tab is not specified, the active tab is assumed.
@@ -152,7 +156,7 @@ void MoveGroupToExistingWindow(Browser* source,
 void MuteSite(Browser* browser);
 void PinTab(Browser* browser);
 void GroupTab(Browser* browser);
-void NewSplitTab(Browser* browser);
+void NewSplitTab(Browser* browser, split_tabs::SplitTabCreatedSource source);
 
 // Tab group commands
 // These values are persisted to logs. Entries should not be renumbered
@@ -272,6 +276,7 @@ void OpenFeedbackDialog(Browser* browser,
 void ToggleBookmarkBar(Browser* browser);
 void ToggleShowFullURLs(Browser* browser);
 void ToggleShowGoogleLensShortcut(Browser* browser);
+void ToggleShowSearchTools(Browser* browser);
 void ShowAppMenu(Browser* browser);
 void ShowAvatarMenu(Browser* browser);
 void OpenUpdateChromeDialog(Browser* browser);

@@ -27,6 +27,7 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -108,7 +109,6 @@ public class StartupHelperUnitTest {
                         mPrefService);
 
         when(mTabGroupModelFilter.getRootIdFromTabGroupId(eq(TOKEN_1))).thenReturn(ROOT_ID_1);
-        when(mTabGroupModelFilter.getTabGroupIdFromRootId(eq(ROOT_ID_1))).thenReturn(TOKEN_1);
 
         when(mTabGroupSyncService.getDeletedGroupIds()).thenReturn(new ArrayList<>());
         when(mTabGroupSyncService.getAllGroupIds()).thenReturn(new String[0]);
@@ -153,12 +153,16 @@ public class StartupHelperUnitTest {
         List<LocalTabGroupId> deletedIds = new ArrayList<>();
         deletedIds.add(LOCAL_TAB_GROUP_ID_1);
         when(mTabGroupSyncService.getDeletedGroupIds()).thenReturn(deletedIds);
+        HistogramWatcher histogramExpectation =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "TabGroups.CloseTabGroupsDeletedRemotely", 1);
 
         // Init. Deleted groups should be closed.
         mStartupHelper.initializeTabGroupSync();
         verify(mTabGroupSyncService).getDeletedGroupIds();
         verify(mLocalMutationHelper, atLeastOnce())
                 .closeTabGroup(eq(LOCAL_TAB_GROUP_ID_1), eq(ClosingSource.CLEANED_UP_ON_STARTUP));
+        histogramExpectation.assertExpected();
     }
 
     @Test

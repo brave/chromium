@@ -111,7 +111,7 @@ declare_args() {
   enable_dav1d_decoder = use_blink
 
   # Enable browser managed persistent metadata storage for EME persistent
-  # session and persistent usage record session.
+  # session.
   enable_media_drm_storage = is_android || is_castos
 
   # Enable HLS manifest parser and demuxer.
@@ -347,6 +347,11 @@ declare_args() {
   # Currently it is available on Win, Mac and Linux, since it requires the audio
   # service to run in a separate process.
   chrome_wide_echo_cancellation_supported = is_win || is_mac || is_linux
+}
+
+declare_args() {
+  system_loopback_as_aec_reference_supported =
+      (is_win || is_mac) && chrome_wide_echo_cancellation_supported
 }
 
 # Do not expand this list without double-checking with OWNERS, this is a list of

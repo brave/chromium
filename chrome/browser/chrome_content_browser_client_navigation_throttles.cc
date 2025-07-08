@@ -228,8 +228,6 @@ bool IsErrorPageAutoReloadEnabled() {
 void MaybeCreateAndAddVisitedLinkNavigationThrottle(
     content::NavigationThrottleRegistry& registry) {
   if (!base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase) &&
-      !base::FeatureList::IsEnabled(
           blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks)) {
     return;
   }
@@ -299,7 +297,7 @@ void CreateAndAddChromeThrottlesForNavigation(
     // we are attempting to load a google property.
     if (ash::merge_session_throttling_utils::ShouldAttachNavigationThrottle() &&
         !ash::merge_session_throttling_utils::AreAllSessionMergedAlready() &&
-        handle.GetURL().SchemeIsHTTPOrHTTPS()) {
+        registry.IsHTTPOrHTTPS()) {
       ash::MergeSessionNavigationThrottle::CreateAndAdd(registry);
     }
   }
@@ -355,8 +353,7 @@ void CreateAndAddChromeThrottlesForNavigation(
 #endif
 
   SupervisedUserGoogleAuthNavigationThrottle::MaybeCreateAndAdd(registry);
-
-  supervised_user::MaybeCreateAndAddClassifyUrlNavigationThrottle(registry);
+  supervised_user::ClassifyUrlNavigationThrottle::MaybeCreateAndAdd(registry);
 
   if (auto* throttle_manager =
           subresource_filter::ContentSubresourceFilterThrottleManager::

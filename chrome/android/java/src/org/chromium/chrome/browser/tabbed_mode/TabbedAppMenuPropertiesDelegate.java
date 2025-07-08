@@ -5,7 +5,9 @@
 package org.chromium.chrome.browser.tabbed_mode;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.util.SparseArray;
+import android.view.LayoutInflater;
 import android.view.View;
 
 import androidx.annotation.IdRes;
@@ -13,13 +15,16 @@ import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.graphics.drawable.DrawableCompat;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.CallbackController;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.Supplier;
-import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.Contract;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
@@ -46,13 +51,16 @@ import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.readaloud.ReadAloudController;
 import org.chromium.chrome.browser.share.ShareUtils;
+import org.chromium.chrome.browser.supervised_user.SupervisedUserServiceBridge;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tinker_tank.TinkerTankDelegate;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
+import org.chromium.chrome.browser.toolbar.menu_button.MenuItemState;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuDelegate;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuItemProperties;
+import org.chromium.chrome.browser.ui.extensions.ExtensionUi;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.components.browser_ui.accessibility.PageZoomCoordinator;
 import org.chromium.components.dom_distiller.core.DomDistillerFeatures;
@@ -101,6 +109,8 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
      * CallbackController} has been fired.
      */
     private @Nullable IncognitoReauthController mIncognitoReauthController;
+
+    private @Nullable Runnable mUpdateStateChangeObserver;
 
     private final CallbackController mIncognitoReauthCallbackController = new CallbackController();
 
@@ -161,11 +171,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     }
 
     @Override
-    public MVCListAdapter.ModelList buildMenuModelList(AppMenuHandler handler) {
+    public MVCListAdapter.ModelList buildMenuModelList() {
         int menuGroup = getMenuGroup();
         MVCListAdapter.ModelList modelList = new MVCListAdapter.ModelList();
         if (menuGroup == MenuGroup.PAGE_MENU) {
-            populatePageModeMenu(modelList, handler);
+            populatePageModeMenu(modelList);
         } else if (menuGroup == MenuGroup.OVERVIEW_MODE_MENU) {
             populateOverviewModeMenu(modelList);
         } else if (menuGroup == MenuGroup.TABLET_EMPTY_MODE_MENU) {
@@ -174,7 +184,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
         return modelList;
     }
 
-    private void populatePageModeMenu(MVCListAdapter.ModelList modelList, AppMenuHandler handler) {
+    private void populatePageModeMenu(MVCListAdapter.ModelList modelList) {
         Tab currentTab = mActivityTabProvider.get();
 
         GURL url = currentTab != null ? currentTab.getUrl() : GURL.emptyGURL();
@@ -202,9 +212,9 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
         mUpdateMenuItemVisible = shouldShowUpdateMenuItem();
         if (mUpdateMenuItemVisible) {
             modelList.add(buildUpdateItem());
-            mAppMenuInvalidator = handler::invalidateAppMenu;
+            mUpdateStateChangeObserver = buildUpdateStateChangedObserver();
             UpdateMenuItemHelper.getInstance(mTabModelSelector.getModel(false).getProfile())
-                    .registerObserver(mAppMenuInvalidator);
+                    .registerObserver(mUpdateStateChangeObserver);
         }
 
         // New Tab
@@ -215,6 +225,11 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
 
         // Add to Group
         if (shouldShowAddToGroup()) modelList.add(buildAddToGroupItem(currentTab));
+
+        // Pin/Unpin tab.
+        if (shouldShowTogglePinTabItem(currentTab)) {
+            modelList.add(buildTogglePinTabItem(currentTab));
+        }
 
         // New Window
         if (shouldShowNewWindow()) modelList.add(buildNewWindowItem());
@@ -248,6 +263,9 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
 
         // Recent Tabs
         if (shouldShowRecentTabsItem()) modelList.add(buildRecentTabsItem());
+
+        // Extensions
+        if (shouldShowExtensionsItem()) modelList.add(buildExtensionsItem());
 
         // Divider
         modelList.add(
@@ -303,7 +321,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
 
         // Universal Install / Open Web APK
         if (shouldShowHomeScreenMenuItem(
-                isNativePage, isFileScheme, isContentScheme, isIncgnitoShowing(), url)) {
+                isNativePage, isFileScheme, isContentScheme, isIncognitoShowing(), url)) {
             modelList.add(buildAddToHomescreenListItem(currentTab, shouldShowIconBeforeItem()));
         }
 
@@ -340,8 +358,8 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
         modelList.add(buildSettingsItem());
 
         // NTP Customizations
-        if (shouldShowNtpCustomizations()) {
-            modelList.add(buildNtpCustomizationsItem());
+        if (shouldShowNtpCustomizations(currentTab)) {
+            modelList.add(buildNtpCustomizationsItem(currentTab));
         }
 
         // Help
@@ -352,12 +370,33 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
             maybeAddDividerLine(modelList, R.id.managed_by_divider_line_id);
             modelList.add(buildManagedByItem(currentTab));
         }
+        if (shouldShowContentFilterHelpCenterMenuItem(currentTab)) {
+            maybeAddDividerLine(modelList, R.id.menu_item_content_filter_divider_line_id);
+            modelList.add(buildContentFilterHelpCenterMenuItem(currentTab));
+        }
+    }
+
+    private Runnable buildUpdateStateChangedObserver() {
+        return () -> {
+            MVCListAdapter.ModelList modelList = getModelList();
+            if (modelList == null) {
+                assert false : "ModelList should not be null";
+                return;
+            }
+            for (MVCListAdapter.ListItem listItem : getModelList()) {
+                if (listItem.model.get(AppMenuItemProperties.MENU_ITEM_ID) == R.id.update_menu_id) {
+                    updateUpdateItemData(listItem.model);
+                    return;
+                }
+            }
+        };
     }
 
     private void maybeAddDividerLine(MVCListAdapter.ModelList modelList, @IdRes int id) {
         if (modelList.get(modelList.size() - 1).type == AppMenuHandler.AppMenuItemType.DIVIDER) {
             return;
         }
+
         modelList.add(
                 new MVCListAdapter.ListItem(
                         AppMenuHandler.AppMenuItemType.DIVIDER, buildModelForDivider(id)));
@@ -386,14 +425,40 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     private MVCListAdapter.ListItem buildUpdateItem() {
         assert shouldShowUpdateMenuItem();
         PropertyModel model =
-                buildModelForStandardMenuItem(
-                        R.id.update_menu_id, R.string.menu_update, R.drawable.menu_update);
-        model.set(
-                AppMenuItemProperties.CUSTOM_ITEM_DATA,
+                populateBaseModelForTextItem(
+                                new PropertyModel.Builder(UpdateMenuItemViewBinder.ALL_KEYS),
+                                R.id.update_menu_id)
+                        .with(AppMenuItemProperties.TITLE, mContext.getString(R.string.menu_update))
+                        .with(
+                                AppMenuItemProperties.ICON,
+                                AppCompatResources.getDrawable(mContext, R.drawable.menu_update))
+                        .build();
+        updateUpdateItemData(model);
+        return new MVCListAdapter.ListItem(TabbedAppMenuItemType.UPDATE_ITEM, model);
+    }
+
+    private void updateUpdateItemData(PropertyModel model) {
+        MenuItemState itemState =
                 UpdateMenuItemHelper.getInstance(mTabModelSelector.getModel(false).getProfile())
                         .getUiState()
-                        .itemState);
-        return new MVCListAdapter.ListItem(TabbedAppMenuItemType.UPDATE_ITEM, model);
+                        .itemState;
+        if (itemState == null) {
+            assert false : "The update state should be non-null";
+            model.set(AppMenuItemProperties.ENABLED, false);
+            return;
+        }
+        model.set(UpdateMenuItemViewBinder.SUMMARY, itemState.summary);
+        model.set(AppMenuItemProperties.TITLE, mContext.getString(itemState.title));
+        model.set(UpdateMenuItemViewBinder.TITLE_COLOR_ID, itemState.titleColorId);
+        Drawable icon = null;
+        if (itemState.icon != 0) {
+            icon = AppCompatResources.getDrawable(mContext, itemState.icon);
+        }
+        if (icon != null && itemState.iconTintId != 0) {
+            DrawableCompat.setTint(icon, mContext.getColor(itemState.iconTintId));
+        }
+        model.set(AppMenuItemProperties.ICON, icon);
+        model.set(AppMenuItemProperties.ENABLED, itemState.enabled);
     }
 
     private MVCListAdapter.ListItem buildNewTabItem() {
@@ -405,12 +470,12 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                         shouldShowIconBeforeItem() ? R.drawable.ic_add_box_rounded_corner : 0));
     }
 
-    private boolean isIncgnitoShowing() {
+    private boolean isIncognitoShowing() {
         return mTabModelSelector.getCurrentModel().isIncognito();
     }
 
     private boolean isIncognitoReauthShowing() {
-        return isIncgnitoShowing()
+        return isIncognitoShowing()
                 && (mIncognitoReauthController != null)
                 && mIncognitoReauthController.isReauthPageShowing();
     }
@@ -445,6 +510,23 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
         return new MVCListAdapter.ListItem(AppMenuHandler.AppMenuItemType.STANDARD, model);
     }
 
+    @Contract("null -> false")
+    private boolean shouldShowTogglePinTabItem(Tab currentTab) {
+        return ChromeFeatureList.sAndroidPinnedTabs.isEnabled() && currentTab != null;
+    }
+
+    private MVCListAdapter.ListItem buildTogglePinTabItem(Tab currentTab) {
+        assert shouldShowTogglePinTabItem(currentTab);
+        boolean isPinned = currentTab.getIsPinned();
+        int menuId = isPinned ? R.id.unpin_tab_menu_id : R.id.pin_tab_menu_id;
+        int titleId = isPinned ? R.string.menu_unpin_tab : R.string.menu_pin_tab;
+
+        return new MVCListAdapter.ListItem(
+                AppMenuHandler.AppMenuItemType.STANDARD,
+                buildModelForStandardMenuItem(
+                        menuId, titleId, shouldShowIconBeforeItem() ? R.drawable.ic_keep_24dp : 0));
+    }
+
     private MVCListAdapter.ListItem buildNewWindowItem() {
         assert shouldShowNewWindow();
         return new MVCListAdapter.ListItem(
@@ -467,12 +549,16 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
 
     private MVCListAdapter.ListItem buildManageWindowsItem() {
         assert MultiWindowUtils.shouldShowManageWindowsMenu();
-        return new MVCListAdapter.ListItem(
-                AppMenuHandler.AppMenuItemType.STANDARD,
+        PropertyModel model =
                 buildModelForStandardMenuItem(
                         R.id.manage_all_windows_menu_id,
                         R.string.menu_manage_all_windows,
-                        shouldShowIconBeforeItem() ? R.drawable.ic_select_window : 0));
+                        shouldShowIconBeforeItem() ? R.drawable.ic_select_window : 0);
+        model.set(
+                AppMenuItemProperties.TITLE,
+                mContext.getString(R.string.menu_manage_all_windows, getInstanceCount()));
+
+        return new MVCListAdapter.ListItem(AppMenuHandler.AppMenuItemType.STANDARD, model);
     }
 
     private MVCListAdapter.ListItem buildHistoryItem() {
@@ -503,7 +589,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     }
 
     private boolean shouldShowRecentTabsItem() {
-        return !isIncgnitoShowing();
+        return !isIncognitoShowing();
     }
 
     private MVCListAdapter.ListItem buildRecentTabsItem() {
@@ -514,6 +600,21 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                         R.id.recent_tabs_menu_id,
                         R.string.menu_recent_tabs,
                         shouldShowIconBeforeItem() ? R.drawable.devices_black_24dp : 0));
+    }
+
+    private boolean shouldShowExtensionsItem() {
+        // TODO(crbug.com/422307625): Remove this check once extensions are ready for dogfooding.
+        return ExtensionUi.isEnabled(mTabModelSelector.getCurrentModel().getProfile());
+    }
+
+    private MVCListAdapter.ListItem buildExtensionsItem() {
+        assert shouldShowExtensionsItem();
+        return new MVCListAdapter.ListItem(
+                AppMenuHandler.AppMenuItemType.STANDARD,
+                buildModelForStandardMenuItem(
+                        R.id.extensions_menu_id,
+                        R.string.menu_extensions,
+                        shouldShowIconBeforeItem() ? R.drawable.ic_extension_24dp : 0));
     }
 
     private boolean shouldShowPageZoomItem(Tab currentTab) {
@@ -545,7 +646,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     private boolean shouldShowPrintItem(@Nullable Tab currentTab) {
         return currentTab != null
                 && ShareUtils.shouldEnableShare(currentTab)
-                && BuildConfig.IS_DESKTOP_ANDROID
+                && DeviceInfo.isDesktop()
                 && UserPrefs.get(currentTab.getProfile()).getBoolean(Pref.PRINTING_ENABLED);
     }
 
@@ -565,7 +666,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                 AppMenuHandler.AppMenuItemType.STANDARD,
                 buildModelForStandardMenuItem(
                         R.id.reader_mode_menu_id,
-                        R.string.reader_view_text_alt,
+                        R.string.show_reading_mode_text,
                         shouldShowIconBeforeItem() ? R.drawable.ic_reader_mode_24dp : 0));
     }
 
@@ -609,21 +710,24 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     }
 
     private MVCListAdapter.ListItem buildCloseAllTabsItem() {
-        if (isIncgnitoShowing()) {
-            return new MVCListAdapter.ListItem(
-                    AppMenuHandler.AppMenuItemType.STANDARD,
+        final PropertyModel model;
+        if (isIncognitoShowing()) {
+            model =
                     buildModelForStandardMenuItem(
                             R.id.close_all_incognito_tabs_menu_id,
                             R.string.menu_close_all_incognito_tabs,
-                            shouldShowIconBeforeItem() ? R.drawable.ic_close_all_tabs : 0));
+                            shouldShowIconBeforeItem() ? R.drawable.ic_close_all_tabs : 0);
+            model.set(
+                    AppMenuItemProperties.ENABLED, mTabModelSelector.getModel(true).getCount() > 0);
         } else {
-            return new MVCListAdapter.ListItem(
-                    AppMenuHandler.AppMenuItemType.STANDARD,
+            model =
                     buildModelForStandardMenuItem(
                             R.id.close_all_tabs_menu_id,
                             R.string.menu_close_all_tabs,
-                            shouldShowIconBeforeItem() ? R.drawable.btn_close_white : 0));
+                            shouldShowIconBeforeItem() ? R.drawable.btn_close_white : 0);
+            model.set(AppMenuItemProperties.ENABLED, mTabModelSelector.getTotalTabCount() > 0);
         }
+        return new MVCListAdapter.ListItem(AppMenuHandler.AppMenuItemType.STANDARD, model);
     }
 
     private boolean shouldShowTinkerTank() {
@@ -664,12 +768,21 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                         shouldShowIconBeforeItem() ? R.drawable.settings_cog : 0));
     }
 
-    private boolean shouldShowNtpCustomizations() {
-        return ChromeFeatureList.sNewTabPageCustomization.isEnabled() && !isIncgnitoShowing();
+    /**
+     * Returns True if the NTP Customization menu entry should be visible.
+     *
+     * <p>This entry is shown only when the corresponding feature flag is enabled and the user is on
+     * the regular Ntp.
+     */
+    private boolean shouldShowNtpCustomizations(@Nullable Tab currentTab) {
+        return ChromeFeatureList.sNewTabPageCustomization.isEnabled()
+                && !isIncognitoShowing()
+                && currentTab != null
+                && UrlUtilities.isNtpUrl(currentTab.getUrl());
     }
 
-    private MVCListAdapter.ListItem buildNtpCustomizationsItem() {
-        assert shouldShowNtpCustomizations();
+    private MVCListAdapter.ListItem buildNtpCustomizationsItem(Tab currentTab) {
+        assert shouldShowNtpCustomizations(currentTab);
         return new MVCListAdapter.ListItem(
                 AppMenuHandler.AppMenuItemType.STANDARD,
                 buildModelForStandardMenuItem(
@@ -688,7 +801,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     }
 
     private boolean shouldShowQuickDeleteItem() {
-        return !isIncgnitoShowing();
+        return !isIncognitoShowing();
     }
 
     private MVCListAdapter.ListItem buildQuickDeleteItem() {
@@ -767,7 +880,7 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
         return currentTab != null
                 && ChromeFeatureList.sPaintPreviewDemo.isEnabled()
                 && !isNativePage
-                && !isIncgnitoShowing();
+                && !isIncognitoShowing();
     }
 
     private MVCListAdapter.ListItem buildPaintPreviewItem(boolean isNativePage, Tab currentTab) {
@@ -848,47 +961,36 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
     }
 
     @Override
-    public int getFooterResourceId() {
-        if (shouldShowWebFeedMenuItem()) {
-            return R.layout.web_feed_main_menu_item;
+    public @Nullable View buildFooterView(AppMenuHandler appMenuHandler) {
+        if (!shouldShowWebFeedMenuItem()) {
+            return null;
         }
-        return 0;
-    }
 
-    @Override
-    public void onFooterViewInflated(AppMenuHandler appMenuHandler, View view) {
-        if (view instanceof WebFeedMainMenuItem) {
-            ((WebFeedMainMenuItem) view)
-                    .initialize(
-                            mActivityTabProvider.get(),
-                            appMenuHandler,
-                            WebFeedFaviconFetcher.createDefault(),
-                            mFeedLauncher,
-                            mModalDialogManager,
-                            mSnackbarManager,
-                            CreatorActivity.class);
-        }
-    }
-
-    @Override
-    public int getHeaderResourceId() {
-        return 0;
-    }
-
-    @Override
-    public void onHeaderViewInflated(AppMenuHandler appMenuHandler, View view) {}
-
-    @Override
-    public boolean shouldShowFooter(int maxMenuHeight) {
-        if (shouldShowWebFeedMenuItem()) {
-            return true;
-        }
-        return super.shouldShowFooter(maxMenuHeight);
+        WebFeedMainMenuItem footer =
+                (WebFeedMainMenuItem)
+                        LayoutInflater.from(mContext)
+                                .inflate(R.layout.web_feed_main_menu_item, null);
+        footer.initialize(
+                mActivityTabProvider.get(),
+                appMenuHandler,
+                WebFeedFaviconFetcher.createDefault(),
+                mFeedLauncher,
+                mModalDialogManager,
+                mSnackbarManager,
+                CreatorActivity.class);
+        return footer;
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     protected boolean shouldShowManagedByMenuItem(@Nullable Tab currentTab) {
         return currentTab != null && ManagedBrowserUtils.isBrowserManaged(currentTab.getProfile());
+    }
+
+    protected boolean shouldShowContentFilterHelpCenterMenuItem(@Nullable Tab currentTab) {
+        return currentTab != null
+                && ChromeFeatureList.isEnabled(
+                        ChromeFeatureList.PROPAGATE_DEVICE_CONTENT_FILTERS_TO_SUPERVISED_USER)
+                && SupervisedUserServiceBridge.isSupervisedLocally(currentTab.getProfile());
     }
 
     private MVCListAdapter.ListItem buildManagedByItem(Tab currentTab) {
@@ -899,6 +1001,16 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                         R.id.managed_by_menu_id,
                         R.string.managed_browser,
                         shouldShowIconBeforeItem() ? R.drawable.ic_business : 0));
+    }
+
+    private MVCListAdapter.ListItem buildContentFilterHelpCenterMenuItem(Tab currentTab) {
+        assert shouldShowContentFilterHelpCenterMenuItem(currentTab);
+        return new MVCListAdapter.ListItem(
+                AppMenuHandler.AppMenuItemType.STANDARD,
+                buildModelForStandardMenuItem(
+                        R.id.menu_item_content_filter_help_center_id,
+                        R.string.menu_item_content_filter_help_center_link,
+                        shouldShowIconBeforeItem() ? R.drawable.ic_account_child_20dp : 0));
     }
 
     @Override
@@ -914,9 +1026,9 @@ public class TabbedAppMenuPropertiesDelegate extends AppMenuPropertiesDelegateIm
                     UpdateMenuItemHelper.getInstance(
                             mTabModelSelector.getModel(false).getProfile());
             updateHelper.onMenuDismissed();
-            updateHelper.unregisterObserver(mAppMenuInvalidator);
+            updateHelper.unregisterObserver(mUpdateStateChangeObserver);
             mUpdateMenuItemVisible = false;
-            mAppMenuInvalidator = null;
+            mUpdateStateChangeObserver = null;
         }
     }
 }

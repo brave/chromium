@@ -23,7 +23,6 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "components/webapps/isolated_web_apps/iwa_key_distribution_histograms.h"
-#include "components/webapps/isolated_web_apps/proto/key_distribution.pb.h"
 
 namespace base {
 class FilePath;
@@ -90,7 +89,7 @@ class IwaKeyDistributionInfoProvider {
     bool is_preloaded = false;
   };
 
-  static IwaKeyDistributionInfoProvider* GetInstance();
+  static IwaKeyDistributionInfoProvider& GetInstance();
   static void DestroyInstanceForTesting();
 
   ~IwaKeyDistributionInfoProvider();
@@ -108,6 +107,10 @@ class IwaKeyDistributionInfoProvider {
 
   // Only bundles present in the managed allowlist can be installed and updated.
   bool IsManagedInstallPermitted(std::string_view web_bundle_id) const;
+  bool IsManagedUpdatePermitted(std::string_view web_bundle_id) const;
+
+  // When set to true both above functions always return true
+  void SkipManagedAllowlistChecksForTesting(bool skip_managed_checks);
 
   // Sets up the `IwaKeyDistributionInfoProvider`, i.e. adds the capability to
   // schedule on demand callbacks.
@@ -194,6 +197,7 @@ class IwaKeyDistributionInfoProvider {
 
   std::optional<ComponentData> data_;
   base::ObserverList<Observer> observers_;
+  bool skip_managed_checks_for_testing_ = false;
 };
 
 }  // namespace web_app

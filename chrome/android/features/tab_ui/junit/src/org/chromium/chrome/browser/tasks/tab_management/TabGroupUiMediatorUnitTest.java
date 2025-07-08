@@ -986,7 +986,7 @@ public class TabGroupUiMediatorUnitTest {
         mTabGridDialogBackPressSupplier.set(true);
 
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
-        Assert.assertEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        Assert.assertEquals(true, groupUiBackPressSupplier.get());
 
         assertThat(mTabGroupUiMediator.onBackPressed(), equalTo(true));
         verify(mTabGridDialogController).handleBackPressed();
@@ -1000,7 +1000,7 @@ public class TabGroupUiMediatorUnitTest {
         mTabGridDialogBackPressSupplier.set(false);
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
 
-        assertNotEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        assertNotEquals(true, groupUiBackPressSupplier.get());
         assertThat(mTabGroupUiMediator.onBackPressed(), equalTo(false));
         verify(mTabGridDialogController).handleBackPressed();
     }
@@ -1012,7 +1012,7 @@ public class TabGroupUiMediatorUnitTest {
         var groupUiBackPressSupplier = mTabGroupUiMediator.getHandleBackPressChangedSupplier();
 
         // Not initialized yet.
-        assertNotEquals(Boolean.TRUE, groupUiBackPressSupplier.get());
+        assertNotEquals(true, groupUiBackPressSupplier.get());
 
         // Late init.
         mDialogControllerSupplier.get();
@@ -1134,19 +1134,6 @@ public class TabGroupUiMediatorUnitTest {
         assertTrue(mModel.get(TabGroupUiProperties.SHOW_GROUP_DIALOG_BUTTON_VISIBLE));
         assertFalse(mModel.get(TabGroupUiProperties.IMAGE_TILES_CONTAINER_VISIBLE));
         verify(mSharedImageTilesCoordinator).onGroupMembersChanged(null, null);
-    }
-
-    @Test
-    public void testImageTiles_1Member() {
-        setupSyncedGroup(/* isShared= */ true);
-        when(mCollaborationService.getGroupData(COLLABORATION_ID1))
-                .thenReturn(SharedGroupTestHelper.newGroupData(COLLABORATION_ID1, GROUP_MEMBER1));
-        initAndAssertProperties(mTab2);
-
-        assertTrue(mModel.get(TabGroupUiProperties.SHOW_GROUP_DIALOG_BUTTON_VISIBLE));
-        assertFalse(mModel.get(TabGroupUiProperties.IMAGE_TILES_CONTAINER_VISIBLE));
-        verify(mSharedImageTilesCoordinator)
-                .onGroupMembersChanged(COLLABORATION_ID1, List.of(GROUP_MEMBER1));
     }
 
     @Test

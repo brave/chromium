@@ -12,8 +12,9 @@ import android.widget.RelativeLayout;
 import androidx.annotation.NonNull;
 import androidx.annotation.Px;
 import androidx.annotation.StringRes;
-import androidx.recyclerview.widget.RecyclerView;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.ItemType;
 import org.chromium.chrome.browser.touch_to_fill.common.ItemDividerBase;
 import org.chromium.chrome.browser.touch_to_fill.common.TouchToFillViewBase;
@@ -26,16 +27,11 @@ import java.util.Set;
  * credentials. It is a View in this Model-View-Controller component and doesn't inherit but holds
  * Android Views.
  */
+@NullMarked
 class TouchToFillView extends TouchToFillViewBase {
     private static class HorizontalDividerItemDecoration extends ItemDividerBase {
         HorizontalDividerItemDecoration(Context context) {
             super(context);
-        }
-
-        @Override
-        protected int selectBackgroundDrawable(
-                int position, boolean containsFillButton, int itemCount) {
-            return super.selectBackgroundDrawable(position, containsFillButton, itemCount);
         }
 
         @Override
@@ -53,14 +49,6 @@ class TouchToFillView extends TouchToFillViewBase {
             assert false : "Undefined whether to skip setting background for item of type: " + type;
             return true; // Should never be reached. But if, skip to not change anything.
         }
-
-        @Override
-        protected boolean containsFillButton(RecyclerView parent) {
-            int itemCount = parent.getAdapter().getItemCount();
-            // The button will be above the footer if it's present.
-            return itemCount > 1
-                    && parent.getAdapter().getItemViewType(itemCount - 2) == ItemType.FILL_BUTTON;
-        }
     }
 
     /**
@@ -76,6 +64,7 @@ class TouchToFillView extends TouchToFillViewBase {
                         LayoutInflater.from(context).inflate(R.layout.touch_to_fill_sheet, null),
                 true);
 
+        setSheetItemListView(getContentView().findViewById(R.id.sheet_item_list));
         getSheetItemListView().addItemDecoration(new HorizontalDividerItemDecoration(context));
     }
 
@@ -107,6 +96,12 @@ class TouchToFillView extends TouchToFillViewBase {
     @Override
     protected View getHandlebar() {
         return getContentView().findViewById(R.id.drag_handlebar);
+    }
+
+    @Override
+    protected @Nullable View getHeaderView() {
+        // Credential filling bottom sheet doesn't have a static header view.
+        return null;
     }
 
     @Override

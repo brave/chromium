@@ -13,6 +13,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
@@ -235,8 +236,7 @@ std::unique_ptr<ClientCertStoreLoader> CreateProvisionedClientCertLoader(
     Profile* profile) {
   client_certificates::CertificateProvisioningService*
       profile_provisioning_service = nullptr;
-  if (profile && client_certificates::features::
-                     IsManagedClientCertificateForUserEnabled()) {
+  if (profile) {
     profile_provisioning_service = client_certificates::
         CertificateProvisioningServiceFactory::GetForProfile(profile);
   }
@@ -268,7 +268,7 @@ void PopulateCertInfosFromCertificateList(
   std::vector<certificate_manager::mojom::SummaryCertInfoPtr> out_infos;
   for (const auto& cert : certs) {
     x509_certificate_model::X509CertificateModel model(
-        bssl::UpRef(cert->cert_buffer()), "");
+        bssl::UpRef(cert->cert_buffer()));
     out_infos.push_back(certificate_manager::mojom::SummaryCertInfo::New(
         model.HashCertSHA256(), model.GetTitle(), is_deletable));
   }
@@ -439,7 +439,7 @@ class WritableCertLoader : public CertificateManagerPageHandler::CertSource {
     std::vector<certificate_manager::mojom::SummaryCertInfoPtr> out_infos;
     for (const auto& info : *certs_) {
       x509_certificate_model::X509CertificateModel model(
-          bssl::UpRef(info.cert->cert_buffer()), "");
+          bssl::UpRef(info.cert->cert_buffer()));
       out_infos.push_back(certificate_manager::mojom::SummaryCertInfo::New(
           model.HashCertSHA256(), model.GetTitle(), info.is_deletable));
     }

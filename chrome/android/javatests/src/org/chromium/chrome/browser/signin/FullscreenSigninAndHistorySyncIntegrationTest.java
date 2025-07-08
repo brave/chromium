@@ -51,10 +51,10 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.ApplicationTestUtils;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -469,9 +469,6 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
 
     @Test
     @MediumTest
-    // There is an issue causing {@link Activity.setRequestedOrientation} to throw an exception in
-    // Android 8 which was fixed in Android 8.1. See b/70718000 for example.
-    @MinAndroidSdkLevel(Build.VERSION_CODES.O_MR1)
     @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
     public void testScreenRotation() {
         when(mHistorySyncHelperMock.shouldSuppressHistorySync()).thenReturn(false);
@@ -523,6 +520,10 @@ public class FullscreenSigninAndHistorySyncIntegrationTest {
 
     @Test
     @MediumTest
+    // TODO(crbug.com/428056054): The top content is blocked by system UI on B+.
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.VANILLA_ICE_CREAM,
+            message = "crbug.com/428056054")
     public void testAddAccount() {
         launchActivity();
 

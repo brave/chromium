@@ -42,8 +42,7 @@ struct FakeOnDeviceServiceSettings final {
   // If non-zero this amount of delay is added before the response is sent.
   base::TimeDelta execute_delay;
 
-  // The delay before running the GetEstimatedPerformanceClass() response
-  // callback.
+  // The delay before running the GetDevicePerformanceInfo() response callback.
   base::TimeDelta estimated_performance_delay;
 
   // If non-empty, used as the output from Execute().
@@ -51,7 +50,7 @@ struct FakeOnDeviceServiceSettings final {
 
   std::optional<ServiceDisconnectReason> service_disconnect_reason;
 
-  bool drop_connection_request = false;
+  std::optional<ModelDisconnectReason> drop_connection_request;
 
   void set_execute_delay(base::TimeDelta delay) { execute_delay = delay; }
 
@@ -63,7 +62,7 @@ struct FakeOnDeviceServiceSettings final {
     model_execute_result = result;
   }
 
-  void set_drop_connection_request(bool value) {
+  void set_drop_connection_request(std::optional<ModelDisconnectReason> value) {
     drop_connection_request = value;
   }
 };
@@ -230,8 +229,8 @@ class FakeOnDeviceModelService : public mojom::OnDeviceModelService {
   void LoadTextSafetyModel(
       mojom::TextSafetyModelParamsPtr params,
       mojo::PendingReceiver<mojom::TextSafetyModel> model) override;
-  void GetEstimatedPerformanceClass(
-      GetEstimatedPerformanceClassCallback callback) override;
+  void GetDevicePerformanceInfo(
+      GetDevicePerformanceInfoCallback callback) override;
 
   raw_ptr<FakeOnDeviceServiceSettings> settings_;
   FakeTsHolder ts_holder_;

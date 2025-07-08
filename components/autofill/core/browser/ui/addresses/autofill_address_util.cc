@@ -406,7 +406,6 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case PRICE:
     case NUMERIC_QUANTITY:
     case SEARCH_TERM:
-    case IMPROVED_PREDICTION:
     case PASSPORT_NAME_TAG:
     case PASSPORT_NUMBER:
     case PASSPORT_ISSUING_COUNTRY:
@@ -427,6 +426,10 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case DRIVERS_LICENSE_NUMBER:
     case DRIVERS_LICENSE_EXPIRATION_DATE:
     case DRIVERS_LICENSE_ISSUE_DATE:
+    case NATIONAL_ID_CARD_NUMBER:
+    case NATIONAL_ID_CARD_EXPIRATION_DATE:
+    case NATIONAL_ID_CARD_ISSUE_DATE:
+    case NATIONAL_ID_CARD_ISSUING_COUNTRY:
     case MAX_VALID_FIELD_TYPE:
     case DELIVERY_INSTRUCTIONS:
     case ADDRESS_HOME_SUBPREMISE:
@@ -445,6 +448,8 @@ AddressUIComponentIconType GetAddressUIComponentIconTypeForFieldType(
     case ADDRESS_HOME_CITY:
     case ADDRESS_HOME_STATE:
     case ADDRESS_HOME_ZIP:
+    case ADDRESS_HOME_ZIP_PREFIX:
+    case ADDRESS_HOME_ZIP_SUFFIX:
     case ADDRESS_HOME_COUNTRY:
     case ADDRESS_HOME_DEPENDENT_LOCALITY:
     case ADDRESS_HOME_STREET_NAME:

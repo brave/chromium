@@ -221,7 +221,6 @@
 <translation id="181434555916624618">सध्यासाठी, लोक असलेले परिणाम दाखवले जाणार नाहीत. दुसरा प्रॉम्प्ट वापरून पहा.</translation>
 <translation id="1815850098929213707"><ph name="KEYS" /> की निवडलेली आहे. नियंत्रण संपादित करण्यासाठी बटणावर टॅप करा</translation>
 <translation id="1818174214124933000">तुम्ही पाठवा निवडता, तेव्हा तुमचा फीडबॅक आणि आशय (खाली दाखवलेला) <ph name="LINK_POLICY_BEGIN" />गोपनीयता धोरण<ph name="LINK_POLICY_END" /> आणि <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google सेवा अटी<ph name="LINK_TERMS_OF_SERVICE_END" /> यांच्या अधीन राहून Google ला पाठवला जाईल, त्याचे लोकांद्वारे पुनरावलोकन केले जाईल आणि आमची उत्पादने व सेवांना प्रशिक्षण देण्यासाठी किंवा त्यांमध्ये सुधारणा करण्यासाठी वापरला जाईल.</translation>
-<translation id="1821075635029692203">तुमच्या शिक्षकांनी सपोर्ट नसलेला स्रोत पाठवला आहे. त्यांना कळू द्या.</translation>
 <translation id="1823120442877418684">पात्रे</translation>
 <translation id="1827738518074806965">आर्ट गॅलरी</translation>
 <translation id="183287940576828840">आक्षेपार्ह/असुरक्षित</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">लेआउट स्विच</translation>
 <translation id="224421911978987610">लाँग एक्स्पोझर</translation>
 <translation id="2244834438220057800">हिरवा</translation>
+<translation id="2248689665683494517">काळ्या बॅकग्राउंडवर काचेच्या फुलदाणीमध्ये पापाव्हर रियाच्या फुलांचे अतिसूक्ष्मवादी स्थिर वस्तुचित्र</translation>
 <translation id="225692081236532131">सक्रियन स्थिती</translation>
 <translation id="2267285889943769271">स्क्रीनशॉट जोडा</translation>
 <translation id="2268044343513325586">सुधारित करा</translation>
@@ -758,6 +758,7 @@
 <translation id="430786093962686457">शिफॉन</translation>
 <translation id="4310735698903592804">Google AI द्वारे समर्थित अलीकडील वॉलपेपर</translation>
 <translation id="4320904097188876154">निऑन पिंक</translation>
+<translation id="432961742358282111">व्याख्या, भाषांतरे किंवा युनिट रूपांतरे मिळवण्यासाठी राइट-क्लिक करा अथवा प्रेस करून धरून ठेवा. हे वैशिष्ट्य व्यवस्थापित करण्यासाठी लेफ्ट किंवा राइट अ‍ॅरो की वापरा.</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> की दाबली</translation>
 <translation id="4334293042716981313">तुम्ही <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />तुमचा स्वतःचा प्रॉम्प्ट लिहिणे<ph name="END_LINK_FREEFORM_SUBPAGE" /> हेदेखील करू शकता</translation>
 <translation id="4354430579665871434">की</translation>
@@ -1437,7 +1438,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Chromebook मदत फोरममध्ये तज्ञांना विचारा</translation>
-<translation id="7309823890857024809">काळ्या बॅकग्राउंडवर काचेच्या फुलदाणीमध्ये पापाव्हर रियाच्या काही देठांचे अतिसूक्ष्मवादी स्थिर वस्तुचित्र</translation>
 <translation id="7311368985037279727">कीबोर्डचा रंग</translation>
 <translation id="7317831949569936035">शाळेशी संबंधित नोंदणी</translation>
 <translation id="7319430975418800333">A3</translation>

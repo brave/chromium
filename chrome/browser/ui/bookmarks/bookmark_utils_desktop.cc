@@ -27,6 +27,7 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -291,8 +292,9 @@ void OpenAllIfAllowed(
           auto* const single_web_contents = *(opened_web_contents.begin());
           const int opened_web_contents_index =
               model->GetIndexOfWebContents(single_web_contents);
-          model->AddToNewSplit({opened_web_contents_index},
-                               split_tabs::SplitTabVisualData());
+          model->AddToNewSplit(
+              {opened_web_contents_index}, split_tabs::SplitTabVisualData(),
+              split_tabs::SplitTabCreatedSource::kBookmarkContextMenu);
         } else if (folder_title.has_value()) {
           TabStripModel* model = browser->tab_strip_model();
 
@@ -349,7 +351,7 @@ void OpenAllIfAllowed(
   // since if |browser| is closed, the message box will be destroyed
   // before the user can answer "Yes".
 
-  chrome::ShowQuestionMessageBox(
+  chrome::ShowQuestionMessageBoxAsync(
       browser->window()->GetNativeWindow(),
       l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
       l10n_util::GetStringFUTF16(IDS_BOOKMARK_BAR_SHOULD_OPEN_ALL,

@@ -8,24 +8,93 @@ import("//extensions/buildflags/buildflags.gni")
 import("//third_party/jni_zero/jni_zero.gni")
 
 android_library("java") {
-  sources = [ "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionKeybindingRegistry.java" ]
+  sources = [
+    "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionUi.java",
+    "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionUiBackend.java",
+  ]
+  srcjar_deps = [ ":generate_buildflags" ]
+
   deps = [
+    "//base:base_java",
     "//base:lifetime_java",
     "//base:service_loader_java",
     "//chrome/browser/profiles/android:java",
+    "//chrome/browser/tab:java",
+    "//chrome/browser/ui/android/theme:java",
+    "//third_party/android_deps:material_design_java",
+    "//ui/android:ui_full_java",
   ]
 
   if (enable_extensions_core) {
     deps += [
       "//chrome/browser/flags:java",
+      "//content/public/android:content_full_java",
+      "//third_party/androidx:androidx_annotation_annotation_java",
       "//third_party/jni_zero:jni_zero_java",
     ]
-    sources += [ "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionKeybindingRegistryAndroid.java" ]
-    srcjar_deps = [ ":jni_headers" ]
+    sources += [
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionAction.java",
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionActionPopupContents.java",
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionActionsBridge.java",
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionUiBackendImpl.java",
+    ]
+    srcjar_deps += [
+      ":jni_headers",
+      "//extensions/browser:extension_action_enums",
+    ]
     resources_package = "org.chromium.chrome.browser.ui.extensions"
   }
 }
 
-generate_jni("jni_headers") {
-  sources = [ "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionKeybindingRegistryAndroid.java" ]
+if (enable_extensions_core) {
+  generate_jni("jni_headers") {
+    sources = [
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionAction.java",
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionActionPopupContents.java",
+      "java/src/org/chromium/chrome/browser/ui/extensions/ExtensionActionsBridge.java",
+    ]
+  }
+}
+
+# Generate feature-specific flags to avoid dependency cycles with the main
+# BuildConfig.
+java_cpp_template("generate_buildflags") {
+  sources = [ "java/templates/ExtensionsBuildflags.template" ]
+  if (enable_desktop_android_extensions) {
+    defines = [ "_ENABLE_DESKTOP_ANDROID_EXTENSIONS" ]
+  }
+}
+
+if (enable_extensions_core) {
+  android_library("test_support_java") {
+    testonly = true
+    sources = [
+      "javatests/src/org/chromium/chrome/browser/ui/extensions/FakeExtensionActionsBridge.java",
+      "javatests/src/org/chromium/chrome/browser/ui/extensions/FakeExtensionActionsBridgeRule.java",
+    ]
+    deps = [
+      ":java",
+      "//base:base_java",
+      "//chrome/browser/profiles/android:java",
+      "//content/public/android:content_full_java",
+      "//extensions/browser:extension_action_enums",
+      "//third_party/junit",
+    ]
+  }
+
+  robolectric_library("junit") {
+    sources = [ "javatests/src/org/chromium/chrome/browser/ui/extensions/FakeExtensionActionsBridgeTest.java" ]
+
+    deps = [
+      ":java",
+      ":test_support_java",
+      "//base:base_java",
+      "//base:base_java_test_support",
+      "//base:base_junit_test_support",
+      "//chrome/browser/profiles/android:java",
+      "//content/public/android:content_full_java",
+      "//third_party/junit",
+      "//third_party/mockito:mockito_java",
+    ]
+  }
 }

@@ -38,6 +38,9 @@ void BlobUrlRegistry::AddReceiver(
         void(const GURL&, std::optional<blink::mojom::PartitioningBlobURLInfo>)>
         partitioning_blob_url_closure,
     base::RepeatingCallback<bool()> storage_access_check_callback,
+    std::optional<GURL> top_level_blob_navigation_document_url,
+    const char* context_type_for_debugging,
+    base::RepeatingCallback<std::string()> storage_key_debug_string_callback,
     bool partitioning_disabled_by_policy) {
   mojo::ReceiverId receiver_id = frame_receivers_.Add(
       std::make_unique<storage::BlobURLStoreImpl>(
@@ -45,7 +48,9 @@ void BlobUrlRegistry::AddReceiver(
           storage::BlobURLValidityCheckBehavior::DEFAULT,
           std::move(partitioning_blob_url_closure),
           std::move(storage_access_check_callback),
-          partitioning_disabled_by_policy),
+          std::move(top_level_blob_navigation_document_url),
+          partitioning_disabled_by_policy, context_type_for_debugging,
+          std::move(storage_key_debug_string_callback)),
       std::move(receiver));
 
   if (g_url_store_creation_hook) {
@@ -58,6 +63,8 @@ void BlobUrlRegistry::AddReceiver(
     const url::Origin& renderer_origin,
     int render_process_host_id,
     mojo::PendingReceiver<blink::mojom::BlobURLStore> receiver,
+    const char* context_type_for_debugging,
+    base::RepeatingCallback<std::string()> storage_key_debug_string_callback,
     base::RepeatingCallback<bool()> storage_access_check_callback,
     bool partitioning_disabled_by_policy,
     BlobURLValidityCheckBehavior validity_check_behavior) {
@@ -66,7 +73,12 @@ void BlobUrlRegistry::AddReceiver(
           storage_key, renderer_origin, render_process_host_id, AsWeakPtr(),
           validity_check_behavior, base::DoNothing(),
           std::move(storage_access_check_callback),
-          partitioning_disabled_by_policy),
+          // We shouldn't pass a value here because this method is not used for
+          // top-level document contexts (only for workers and threaded
+          // worklets).
+          /*top_level_blob_navigation_document_url=*/std::nullopt,
+          partitioning_disabled_by_policy, context_type_for_debugging,
+          std::move(storage_key_debug_string_callback)),
       std::move(receiver));
 }
 

@@ -47,7 +47,6 @@ enum class CalculationOperator {
   kAcos,
   kAtan,
   kAtan2,
-  kInvalid
 };
 
 // Represents an expression composed of numbers, |PixelsAndPercent| and multiple
@@ -95,15 +94,6 @@ class PLATFORM_EXPORT CalculationExpressionNode
 
   virtual ~CalculationExpressionNode() = default;
 
-#if DCHECK_IS_ON()
-  enum class ResultType { kInvalid, kNumber, kPixelsAndPercent, kIdent };
-
-  virtual ResultType ResolvedResultType() const = 0;
-
- protected:
-  ResultType result_type_;
-#endif
-
  protected:
   virtual bool Equals(const CalculationExpressionNode& other) const = 0;
 
@@ -117,11 +107,7 @@ class PLATFORM_EXPORT CalculationExpressionNode
 class PLATFORM_EXPORT CalculationExpressionNumberNode final
     : public CalculationExpressionNode {
  public:
-  CalculationExpressionNumberNode(float value) : value_(value) {
-#if DCHECK_IS_ON()
-    result_type_ = ResultType::kNumber;
-#endif
-  }
+  explicit CalculationExpressionNumberNode(float value) : value_(value) {}
 
   float Value() const { return value_; }
 
@@ -131,10 +117,6 @@ class PLATFORM_EXPORT CalculationExpressionNumberNode final
   const CalculationExpressionNode* Zoom(double factor) const final;
   bool IsNumber() const final { return true; }
   ~CalculationExpressionNumberNode() final = default;
-
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final;
-#endif
 
  private:
   float value_;
@@ -151,11 +133,7 @@ class PLATFORM_EXPORT CalculationExpressionIdentifierNode final
     : public CalculationExpressionNode {
  public:
   explicit CalculationExpressionIdentifierNode(AtomicString identifier)
-      : identifier_(std::move(identifier)) {
-#if DCHECK_IS_ON()
-    result_type_ = ResultType::kIdent;
-#endif
-  }
+      : identifier_(std::move(identifier)) {}
 
   const AtomicString& Value() const { return identifier_; }
 
@@ -172,10 +150,6 @@ class PLATFORM_EXPORT CalculationExpressionIdentifierNode final
     return this;
   }
   bool IsIdentifier() const final { return true; }
-
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final { return ResultType::kIdent; }
-#endif
 
  private:
   AtomicString identifier_;
@@ -240,12 +214,6 @@ class PLATFORM_EXPORT CalculationExpressionSizingKeywordNode final
            keyword_ == Keyword::kWebkitFitContent;
   }
 
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final {
-    return ResultType::kPixelsAndPercent;
-  }
-#endif
-
  private:
   Keyword keyword_;
 };
@@ -278,10 +246,6 @@ class PLATFORM_EXPORT CalculationExpressionColorChannelKeywordNode final
   }
   bool IsColorChannelKeyword() const final { return true; }
 
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final { return ResultType::kNumber; }
-#endif
-
  private:
   ColorChannelKeyword channel_;
 };
@@ -296,11 +260,8 @@ struct DowncastTraits<CalculationExpressionColorChannelKeywordNode> {
 class PLATFORM_EXPORT CalculationExpressionPixelsAndPercentNode final
     : public CalculationExpressionNode {
  public:
-  CalculationExpressionPixelsAndPercentNode(PixelsAndPercent value)
+  explicit CalculationExpressionPixelsAndPercentNode(PixelsAndPercent value)
       : value_(value) {
-#if DCHECK_IS_ON()
-    result_type_ = ResultType::kPixelsAndPercent;
-#endif
     if (value.has_explicit_percent) {
       has_percent_ = true;
     }
@@ -318,10 +279,6 @@ class PLATFORM_EXPORT CalculationExpressionPixelsAndPercentNode final
   const CalculationExpressionNode* Zoom(double factor) const final;
   bool IsPixelsAndPercent() const final { return true; }
   ~CalculationExpressionPixelsAndPercentNode() final = default;
-
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final;
-#endif
 
  private:
   PixelsAndPercent value_;
@@ -363,10 +320,6 @@ class PLATFORM_EXPORT CalculationExpressionOperationNode final
   bool HasMaxContent() const final;
   bool HasFitContent() const final;
   ~CalculationExpressionOperationNode() final = default;
-
-#if DCHECK_IS_ON()
-  ResultType ResolvedResultType() const final;
-#endif
 
  private:
   Children children_;

@@ -7,9 +7,11 @@
 #import "ios/chrome/browser/home_customization/model/background_customization_configuration.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_mutator.h"
 #import "ios/chrome/browser/ntp/ui_bundled/logo_vendor.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_color_palette.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
+#import "url/gurl.h"
 
 // Define constants within the namespace
 namespace {
@@ -87,7 +89,7 @@ const CGFloat kFeedsWidth = 70.0;
 
 @implementation HomeCustomizationBackgroundCell {
   // Associated background configuration.
-  BackgroundCustomizationConfiguration* _backgroundConfiguration;
+  id<BackgroundCustomizationConfiguration> _backgroundConfiguration;
 
   // The background image of the cell.
   UIImageView* _backgroundImageView;
@@ -192,11 +194,25 @@ const CGFloat kFeedsWidth = 70.0;
 }
 
 - (void)configureWithBackgroundOption:
-            (BackgroundCustomizationConfiguration*)option
-                           logoVendor:(id<LogoVendor>)logoVendor {
-  _backgroundConfiguration = option;
+            (id<BackgroundCustomizationConfiguration>)option
+                           logoVendor:(id<LogoVendor>)logoVendor
+                         colorPalette:(NewTabPageColorPalette*)colorPalette {
+  if (_backgroundConfiguration) {
+    return;
+  }
+
+  BOOL imageBackground = !option.thumbnailURL.is_empty();
+
+  logoVendor.usesMonochromeLogo = colorPalette || imageBackground;
   UIView* logoView = logoVendor.view;
   logoView.translatesAutoresizingMaskIntoConstraints = NO;
+
+  // Change the tint of the logo based on the background.
+  if (imageBackground) {
+    logoView.tintColor = [UIColor whiteColor];
+  } else if (colorPalette) {
+    logoView.tintColor = colorPalette.darkColor;
+  }
 
   // Insert the logo view right after the spacer.
   [self.innerContentView insertArrangedSubview:logoView atIndex:1];
@@ -207,6 +223,8 @@ const CGFloat kFeedsWidth = 70.0;
   ]];
 
   [self.innerContentView setCustomSpacing:kOmniboxTopMargin afterView:logoView];
+
+  _backgroundConfiguration = option;
 }
 
 - (void)updateBackgroundImage:(UIImage*)image {

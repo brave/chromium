@@ -40,16 +40,14 @@ class ContentUiEventHandler {
   bool ScrollTo(float x, float y);
 
   void SendMouseWheelEvent(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& obj,
+                           const base::android::JavaParamRef<jobject>& event,
                            jlong time_ns,
                            jfloat x,
                            jfloat y,
                            jfloat ticks_x,
-                           jfloat ticks_y,
-                           jint meta_state,
-                           jint source);
+                           jfloat ticks_y);
   void SendMouseEvent(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj,
+                      const base::android::JavaParamRef<jobject>& event,
                       jlong time_ns,
                       jint android_action,
                       jfloat x,
@@ -60,16 +58,12 @@ class ContentUiEventHandler {
                       jfloat tilt,
                       jint android_action_button,
                       jint android_button_state,
-                      jint android_meta_state,
                       jint android_tool_type);
   void SendScrollEvent(JNIEnv* env,
-                       const base::android::JavaParamRef<jobject>& jobj,
                        jlong time_ms,
                        jfloat delta_x,
                        jfloat delta_y);
-  void CancelFling(JNIEnv* env,
-                   const base::android::JavaParamRef<jobject>& jobj,
-                   jlong time_ms);
+  void CancelFling(JNIEnv* env, jlong time_ms);
 
  private:
   RenderWidgetHostViewAndroid* GetRenderWidgetHostView();

@@ -27,6 +27,7 @@
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -837,9 +838,9 @@ VideoFrameExternalResource VideoResourceUpdater::CreateForHardwareFrame(
     transfer_resource.synchronization_type =
         viz::TransferableResource::SynchronizationType::kGpuCommandsCompleted;
   }
-  transfer_resource.ycbcr_info = video_frame->ycbcr_info();
 
 #if BUILDFLAG(IS_ANDROID)
+  transfer_resource.ycbcr_info = video_frame->ycbcr_info();
   transfer_resource.is_backed_by_surface_view =
       video_frame->metadata().in_surface_view;
 #endif
@@ -870,15 +871,15 @@ viz::SharedImageFormat VideoResourceUpdater::GetSoftwareOutputFormat(
     // Unable to display directly as yuv planes so convert it to RGB.
     return PaintCanvasVideoRenderer::GetRGBPixelsOutputFormat();
   }
-  const auto& caps = context_provider_->ContextCapabilities();
-  if (caps.disable_one_component_textures) {
+  const auto& shared_image_caps =
+      context_provider_->SharedImageInterface()->GetCapabilities();
+  if (shared_image_caps.disable_one_component_textures) {
     // If GPU compositing is enabled, we need to convert texture to RGB if one
     // component textures are disabled.
     return PaintCanvasVideoRenderer::GetRGBPixelsOutputFormat();
   }
 
-  const auto& shared_image_caps =
-      context_provider_->SharedImageInterface()->GetCapabilities();
+  const auto& caps = context_provider_->ContextCapabilities();
   // Get the multiplanar shared image format for `input_frame_format`.
   auto yuv_si_format =
       VideoPixelFormatToMultiPlanarSharedImageFormat(input_frame_format);
@@ -966,9 +967,13 @@ bool VideoResourceUpdater::WriteRGBPixelsToTexture(
     auto* dest_ptr = upload_pixels_[0].get() +
                      video_frame->visible_rect().y() * bytes_per_row +
                      video_frame->visible_rect().x() * sizeof(uint32_t);
+    // Alpha can be premul for videos that can be delegated/overlaid.
+    bool premultiply_alpha =
+        hardware_resource->shared_image()->alpha_type() == kPremul_SkAlphaType
+            ? true
+            : false;
     PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
-        video_frame.get(), dest_ptr, bytes_per_row,
-        /*premultiply_alpha=*/false);
+        video_frame.get(), dest_ptr, bytes_per_row, premultiply_alpha);
     source_pixels = upload_pixels_[0].get();
   }
 
@@ -983,7 +988,8 @@ bool VideoResourceUpdater::WriteRGBPixelsToTexture(
       viz::ToClosestSkColorType(resource_format, /*plane_index=*/0);
   auto info = SkImageInfo::Make(
       gfx::SizeToSkISize(hardware_resource->size()), color_type,
-      hardware_resource->shared_image()->alpha_type());
+      hardware_resource->shared_image()->alpha_type(),
+      hardware_resource->shared_image()->color_space().ToSkColorSpace());
   SkPixmap pixmap(info, source_pixels, bytes_per_row);
   ri->WritePixels(
       hardware_resource->shared_image()->mailbox(), /*dst_x_offset=*/0,
@@ -1174,6 +1180,13 @@ VideoFrameExternalResource VideoResourceUpdater::CreateForSoftwareFrame(
   gfx::ColorSpace output_color_space = video_frame->ColorSpace();
   SkAlphaType output_alpha_type =
       software_compositor() ? kPremul_SkAlphaType : kUnpremul_SkAlphaType;
+  if (!software_compositor() && use_gpu_memory_buffer_resources_ &&
+      context_provider_->SharedImageInterface()
+          ->GetCapabilities()
+          .supports_scanout_shared_images) {
+    // Overlays can only work with Premul alpha types.
+    output_alpha_type = kPremul_SkAlphaType;
+  }
 
   // `output_si_format` can be single plane if we're using software compositor
   // or frame format is 32 bit RGB or we are unable to display frame format as

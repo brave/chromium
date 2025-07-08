@@ -119,6 +119,7 @@
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_object.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/legacy_layout_tree_walking.h"
@@ -943,7 +944,7 @@ gfx::SizeF LocalFrameView::ViewportSizeForMediaQueries() const {
   }
   if (frame_->ShouldUsePaginatedLayout()) {
     if (const LayoutView* layout_view = GetLayoutView()) {
-      return layout_view->DefaultPageAreaSize();
+      return layout_view->PaginationViewportSizeForMediaQueries();
     }
   }
   gfx::SizeF viewport_size(layout_size_);
@@ -1961,17 +1962,18 @@ void LocalFrameView::DryRunPaintingForPrerender() {
   return;
 }
 
-void LocalFrameView::UpdateLifecyclePhasesForPrinting() {
+bool LocalFrameView::UpdateLifecyclePhasesForPrinting() {
   auto* local_frame_view_root = GetFrame().LocalFrameRoot().View();
-  local_frame_view_root->UpdateLifecyclePhases(
+  bool result = local_frame_view_root->UpdateLifecyclePhases(
       DocumentLifecycle::kPrePaintClean, DocumentUpdateReason::kPrinting);
 
   if (local_frame_view_root != this && !IsAttached()) {
     // We are printing a detached frame which is not reached above. Make sure
     // the frame is ready for painting.
-    UpdateLifecyclePhases(DocumentLifecycle::kPrePaintClean,
-                          DocumentUpdateReason::kPrinting);
+    result = UpdateLifecyclePhases(DocumentLifecycle::kPrePaintClean,
+                                   DocumentUpdateReason::kPrinting);
   }
+  return result;
 }
 
 bool LocalFrameView::UpdateLifecycleToLayoutClean(DocumentUpdateReason reason) {
@@ -2998,28 +3000,15 @@ void LocalFrameView::PushPaintArtifactToCompositor(bool repainted) {
   }
 
   StackScrollTranslationVector scroll_translation_nodes;
-  ForAllNonThrottledLocalFrameViews(
-      [&scroll_translation_nodes](LocalFrameView& frame_view) {
-        if (RuntimeEnabledFeatures::ScrollableAreaOptimizationEnabled()) {
-          for (const auto& area :
-               frame_view.scrollable_areas_with_scroll_node_) {
-            const auto* paint_properties =
-                area->GetLayoutBox()->FirstFragment().PaintProperties();
-            CHECK(paint_properties && paint_properties->Scroll());
-            scroll_translation_nodes.push_back(
-                paint_properties->ScrollTranslation());
-          }
-        } else {
-          for (const auto& area : frame_view.ScrollableAreas().Values()) {
-            const auto* paint_properties =
-                area->GetLayoutBox()->FirstFragment().PaintProperties();
-            if (paint_properties && paint_properties->Scroll()) {
-              scroll_translation_nodes.push_back(
-                  paint_properties->ScrollTranslation());
-            }
-          }
-        }
-      });
+  ForAllNonThrottledLocalFrameViews([&scroll_translation_nodes](
+                                        LocalFrameView& frame_view) {
+    for (const auto& area : frame_view.scrollable_areas_with_scroll_node_) {
+      const auto* paint_properties =
+          area->GetLayoutBox()->FirstFragment().PaintProperties();
+      CHECK(paint_properties && paint_properties->Scroll());
+      scroll_translation_nodes.push_back(paint_properties->ScrollTranslation());
+    }
+  });
 
   WTF::Vector<std::unique_ptr<ViewTransitionRequest>> view_transition_requests;
   AppendViewTransitionRequests(view_transition_requests);
@@ -3598,7 +3587,6 @@ void LocalFrameView::RemoveAnimatingScrollableArea(
 
 void LocalFrameView::AddScrollableArea(
     PaintLayerScrollableArea& scrollable_area) {
-  CHECK(RuntimeEnabledFeatures::ScrollableAreaOptimizationEnabled());
   scrollable_areas_.insert(scrollable_area.GetScrollElementId(),
                            scrollable_area);
 }
@@ -3609,20 +3597,6 @@ void LocalFrameView::RemoveScrollableArea(
   RemoveScrollAnchoringScrollableArea(&scrollable_area);
   RemoveAnimatingScrollableArea(&scrollable_area);
   RemovePendingSnapUpdate(&scrollable_area);
-  RemoveScrollableAreaWithScrollNode(scrollable_area);
-}
-
-void LocalFrameView::AddUserScrollableArea(
-    PaintLayerScrollableArea& scrollable_area) {
-  CHECK(!RuntimeEnabledFeatures::ScrollableAreaOptimizationEnabled());
-  scrollable_areas_.insert(scrollable_area.GetScrollElementId(),
-                           &scrollable_area);
-}
-
-void LocalFrameView::RemoveUserScrollableArea(
-    PaintLayerScrollableArea& scrollable_area) {
-  CHECK(!RuntimeEnabledFeatures::ScrollableAreaOptimizationEnabled());
-  scrollable_areas_.erase(scrollable_area.GetScrollElementId());
   RemoveScrollableAreaWithScrollNode(scrollable_area);
 }
 
@@ -3777,17 +3751,6 @@ void LocalFrameView::DidChangeScrollOffset() {
 
 ScrollableArea* LocalFrameView::ScrollableAreaWithElementId(
     const CompositorElementId& id) {
-  if (!RuntimeEnabledFeatures::ScrollableAreaOptimizationEnabled()) {
-    // Check for the layout viewport, which may not be in scrollable_areas_
-    // if it is styled overflow: hidden.  (Other overflow: hidden elements won't
-    // have composited scrolling layers per crbug.com/784053, so we don't have
-    // to worry about them.)
-    ScrollableArea* viewport = LayoutViewport();
-    if (id == viewport->GetScrollElementId()) {
-      return viewport;
-    }
-  }
-
   // We cannot use `scrollable_areas_with_scroll_node_` because the scroll node
   // may have been removed, but we still need to look up the scrollable area.
   auto it = scrollable_areas_.find(id);
@@ -4268,17 +4231,13 @@ bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
   // frame is display locked or the layout is dirty, this will create a
   // degenerate "not intersecting" notification or schedule a delayed update
   // if needed.
-  if (RuntimeEnabledFeatures::ForceDelayedIntersectionUpdateEnabled() ||
-      !NeedsLayout() || IsDisplayLocked()) {
-    if (controller) {
-      needs_occlusion_tracking = controller->ComputeIntersections(
-          flags, *this,
-          accumulated_scroll_delta_since_last_intersection_update_, context);
-      accumulated_scroll_delta_since_last_intersection_update_ =
-          gfx::Vector2dF();
-    }
-    intersection_observation_state_ = kNotNeeded;
+  if (controller) {
+    needs_occlusion_tracking = controller->ComputeIntersections(
+        flags, *this, accumulated_scroll_delta_since_last_intersection_update_,
+        context);
+    accumulated_scroll_delta_since_last_intersection_update_ = gfx::Vector2dF();
   }
+  intersection_observation_state_ = kNotNeeded;
 
   {
     SCOPED_UMA_AND_UKM_TIMER(
@@ -4320,14 +4279,10 @@ void LocalFrameView::DeliverSynchronousIntersectionObservations() {
 }
 
 void LocalFrameView::ScheduleDelayedIntersection(base::TimeDelta delay) {
-  if (RuntimeEnabledFeatures::ForceDelayedIntersectionUpdateEnabled()) {
-    auto& timer = frame_->LocalFrameRoot().View()->delayed_intersection_timer_;
-    if (!timer.IsActive() || timer.NextFireInterval() > delay) {
-      timer.Stop();
-      timer.StartOneShot(delay, FROM_HERE);
-    }
-  } else {
-    ScheduleAnimation(delay);
+  auto& timer = frame_->LocalFrameRoot().View()->delayed_intersection_timer_;
+  if (!timer.IsActive() || timer.NextFireInterval() > delay) {
+    timer.Stop();
+    timer.StartOneShot(delay, FROM_HERE);
   }
 }
 
@@ -4336,7 +4291,6 @@ bool LocalFrameView::HasScheduledDelayedIntersectionForTesting() const {
 }
 
 void LocalFrameView::DelayedIntersectionTimerFired(TimerBase*) {
-  CHECK(RuntimeEnabledFeatures::ForceDelayedIntersectionUpdateEnabled());
   DCHECK(frame_->IsLocalRoot());
   needs_update_delayed_intersection_ = true;
   ScheduleAnimation();
@@ -4713,9 +4667,14 @@ void LocalFrameView::MapLocalToRemoteMainFrame(
                                  TransformState::kAccumulateTransform);
 }
 
-LayoutUnit LocalFrameView::CaretWidth() const {
+LayoutUnit LocalFrameView::BarCaretWidth() const {
   return LayoutUnit(std::max<float>(
       1.0f, GetChromeClient()->WindowToViewportScalar(&GetFrame(), 1.0f)));
+}
+
+LayoutUnit LocalFrameView::ScaleCssPixelForCaret(float width) const {
+  return LayoutUnit(std::max<float>(
+      width, GetChromeClient()->WindowToViewportScalar(&GetFrame(), width)));
 }
 
 void LocalFrameView::RegisterTapEvent(Element* target) {

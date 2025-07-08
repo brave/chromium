@@ -17,8 +17,8 @@
 class BookmarkBarView;
 class BrowserView;
 class BrowserViewLayoutDelegate;
-class ImmersiveModeController;
 class InfoBarContainerView;
+class MultiContentsView;
 class TabStrip;
 class TabStripRegionView;
 class WebAppFrameToolbarView;
@@ -58,11 +58,11 @@ class BrowserViewLayout : public views::LayoutManager {
                     views::View* toolbar,
                     InfoBarContainerView* infobar_container,
                     views::View* contents_container,
+                    MultiContentsView* multi_contents_view,
                     views::View* left_aligned_side_panel_separator,
                     views::View* unified_side_panel,
                     views::View* right_aligned_side_panel_separator,
                     views::View* side_panel_rounded_corner,
-                    ImmersiveModeController* immersive_mode_controller,
                     views::View* contents_separator);
 
   BrowserViewLayout(const BrowserViewLayout&) = delete;
@@ -162,6 +162,8 @@ class BrowserViewLayout : public views::LayoutManager {
   // Returns the minimum acceptable width for the browser web contents.
   int GetMinWebContentsWidth() const;
 
+  void UpdateSplitViewInsets();
+
   // The delegate interface. May be a mock in tests.
   const std::unique_ptr<BrowserViewLayoutDelegate> delegate_;
 
@@ -179,11 +181,11 @@ class BrowserViewLayout : public views::LayoutManager {
   const raw_ptr<views::View> toolbar_;
   const raw_ptr<InfoBarContainerView> infobar_container_;
   const raw_ptr<views::View> contents_container_;
+  const raw_ptr<MultiContentsView> multi_contents_view_;
   const raw_ptr<views::View> left_aligned_side_panel_separator_;
   const raw_ptr<views::View> unified_side_panel_;
   const raw_ptr<views::View> right_aligned_side_panel_separator_;
   const raw_ptr<views::View> side_panel_rounded_corner_;
-  const raw_ptr<ImmersiveModeController> immersive_mode_controller_;
   const raw_ptr<views::View> contents_separator_;
 
   // These views are dynamically set.

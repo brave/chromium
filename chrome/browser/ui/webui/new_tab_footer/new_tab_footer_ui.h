@@ -13,6 +13,7 @@
 #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
 #include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "ui/webui/resources/cr_components/color_change_listener/color_change_listener.mojom.h"
 
 namespace ui {
@@ -24,6 +25,7 @@ class NewTabFooterHandler;
 class NewTabFooterUI;
 class PrefRegistrySimple;
 class Profile;
+class WebuiLoadTimer;
 
 class NewTabFooterUIConfig
     : public DefaultTopChromeWebUIConfig<NewTabFooterUI> {
@@ -66,6 +68,9 @@ class NewTabFooterUI
                      customize_buttons::mojom::CustomizeButtonsHandlerFactory>
                          pending_receiver);
 
+  // Passthrough that calls the NewTabFooterDocument's AttachedTabStateUpdated.
+  void AttachedTabStateUpdated(const GURL& url);
+
  private:
   // new_tab_footer::mojom::NewTabFooterHandlerFactory:
   void CreateNewTabFooterHandler(
@@ -81,6 +86,8 @@ class NewTabFooterUI
       mojo::PendingReceiver<customize_buttons::mojom::CustomizeButtonsHandler>
           pending_page_handler) override;
 
+  GURL source_tab_url_;
+  std::unique_ptr<WebuiLoadTimer> webui_load_timer_;
   std::unique_ptr<NewTabFooterHandler> handler_;
   mojo::Receiver<new_tab_footer::mojom::NewTabFooterHandlerFactory>
       document_factory_receiver_{this};

@@ -67,7 +67,7 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
       const override;
   bool enable_ip_based_pooling() const override;
   bool enable_alternative_services() const override;
-  bool is_http1_allowed() const override;
+  NextProtoSet allowed_alpns() const override;
   const ProxyInfo& proxy_info() const override;
   const NetLogWithSource& net_log() const override;
   void OnStreamReady(Job* job,
@@ -101,6 +101,15 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
     QuicSessionAliasKey quic_key;
   };
 
+  struct StreamWithProtocol {
+    StreamWithProtocol(std::unique_ptr<HttpStream> stream,
+                       NextProto negotiated_protocol);
+    ~StreamWithProtocol();
+
+    std::unique_ptr<HttpStream> stream;
+    NextProto negotiated_protocol;
+  };
+
   // Calculate an alternative endpoint for the request.
   static std::optional<Alternative> CalculateAlternative(
       HttpStreamPool* pool,
@@ -111,14 +120,27 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
   QuicSessionPool* quic_session_pool();
   SpdySessionPool* spdy_session_pool();
 
+  // Returns an HttpStream and its negotiated protocol if there is an
+  // existing session or an idle stream that can serve the request. Otherwise,
+  // returns std::nullopt.
+  std::optional<StreamWithProtocol> MaybeCreateStreamFromExistingSession();
+
   // When there is a QUIC session that can serve an HttpStream for the request,
   // creates an HttpStream and returns it.
   std::unique_ptr<HttpStream> MaybeCreateStreamFromExistingQuicSession();
   std::unique_ptr<HttpStream> MaybeCreateStreamFromExistingQuicSessionInternal(
       const QuicSessionAliasKey& key);
 
+  // May start an alternative job. Returns true when an alternative job is
+  // started.
+  bool MaybeStartAlternativeJob();
+
   // Returns true when a QUIC session can be used for the request.
   bool CanUseExistingQuicSession();
+
+  // Starts a QUIC preconnect job when an alternative service is advertised via
+  // Alt-Svc but the current request is not using it.
+  void StartAltSvcQuicPreconnect();
 
   // Calls the request's Complete() and tells the delegate that `stream` is
   // ready. Used when there is an existing QUIC/SPDY session that can serve
@@ -162,7 +184,7 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
   const bool enable_ip_based_pooling_;
   const bool enable_alternative_services_;
   const RespectLimits respect_limits_;
-  const bool is_http1_allowed_;
+  NextProtoSet allowed_alpns_;
   const ProxyInfo proxy_info_;
   const AlternativeServiceInfo alternative_service_info_;
 

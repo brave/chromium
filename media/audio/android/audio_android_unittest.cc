@@ -40,6 +40,7 @@
 #include "media/audio/mock_audio_source_callback.h"
 #include "media/audio/test_audio_thread.h"
 #include "media/base/audio_glitch_info.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/seekable_buffer.h"
 #include "media/base/test_data_util.h"
@@ -70,11 +71,13 @@ constexpr size_t kBytesPerSample = 2;
 constexpr SampleFormat kSampleFormat = kSampleFormatS16;
 
 constexpr int kAudioDeviceTypeIntUnknown =
-    0;  // android.media.AudioDeviceInfo.TYPE_UNKNOWN
-constexpr int kAudioDeviceTypeIntBuiltinSpeaker =
-    2;  // android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+    0;  // `android.media.AudioDeviceInfo.TYPE_UNKNOWN`
+constexpr int kAudioDeviceTypeIntBluetoothSco =
+    7;  // `android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO`
+constexpr int kAudioDeviceTypeIntBluetoothA2dp =
+    8;  // `android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`
 constexpr int kAudioDeviceTypeIntBuiltinMic =
-    15;  // android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC
+    15;  // `android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC`
 
 // Converts AudioParameters::Format enumerator to readable string.
 std::string FormatToString(AudioParameters::Format format) {
@@ -169,24 +172,36 @@ class MockJniDelegate : public JniDelegate {
 
   ~MockJniDelegate() override = default;
 
-  MOCK_METHOD(std::vector<JniAudioDevice>, GetDevices, (bool));
+  MOCK_METHOD(std::vector<JniAudioDevice>, GetDevices, (bool), (override));
   MOCK_METHOD(std::optional<std::vector<JniAudioDevice>>,
               GetCommunicationDevices,
-              ());
-  MOCK_METHOD(bool, IsAudioSinkConnected, ());
-  MOCK_METHOD(int, GetMinInputFrameSize, (int sample_rate, int channels));
-  MOCK_METHOD(bool, AcousticEchoCancelerIsAvailable, ());
-  MOCK_METHOD(base::TimeDelta, GetOutputLatency, ());
-  MOCK_METHOD(void, SetCommunicationAudioModeOn, (bool on));
-  MOCK_METHOD(bool, SetCommunicationDevice, (std::string_view device_id));
-  MOCK_METHOD(bool, IsBluetoothScoOn, ());
-  MOCK_METHOD(void, MaybeSetBluetoothScoState, (bool state));
-  MOCK_METHOD(int, GetNativeOutputSampleRate, ());
-  MOCK_METHOD(bool, IsAudioLowLatencySupported, ());
-  MOCK_METHOD(int, GetAudioLowLatencyOutputFrameSize, ());
-  MOCK_METHOD(int, GetMinOutputFrameSize, (int sample_rate, int channels));
-  MOCK_METHOD(int, GetSinkAudioEncodingFormats, ());
-  MOCK_METHOD(int, GetLayoutWithMaxChannels, ());
+              (),
+              (override));
+  MOCK_METHOD(int,
+              GetMinInputFrameSize,
+              (int sample_rate, int channels),
+              (override));
+  MOCK_METHOD(bool, AcousticEchoCancelerIsAvailable, (), (override));
+  MOCK_METHOD(base::TimeDelta, GetOutputLatency, (), (override));
+  MOCK_METHOD(void, SetCommunicationAudioModeOn, (bool on), (override));
+  MOCK_METHOD(bool,
+              SetCommunicationDevice,
+              (std::string_view device_id),
+              (override));
+  MOCK_METHOD(bool, IsBluetoothScoOn, (), (override));
+  MOCK_METHOD(void, MaybeSetBluetoothScoState, (bool state), (override));
+  MOCK_METHOD(int, GetNativeOutputSampleRate, (), (override));
+  MOCK_METHOD(bool, IsAudioLowLatencySupported, (), (override));
+  MOCK_METHOD(int, GetAudioLowLatencyOutputFrameSize, (), (override));
+  MOCK_METHOD(int,
+              GetMinOutputFrameSize,
+              (int sample_rate, int channels),
+              (override));
+  MOCK_METHOD(AudioParameters::Format,
+              GetHdmiOutputEncodingFormats,
+              (),
+              (override));
+  MOCK_METHOD(int, GetLayoutWithMaxChannels, (), (override));
 };
 
 // Gmock implementation of AudioInputStream::AudioInputCallback.
@@ -994,7 +1009,7 @@ TEST_F(AudioAndroidOutputTest,
           {/* id= */ 30, /* name= */ std::nullopt,
            /* type= */ kAudioDeviceTypeIntUnknown},
           {/* id= */ 40, /* name= */ std::nullopt,
-           /* type= */ kAudioDeviceTypeIntBuiltinSpeaker},
+           /* type= */ kAudioDeviceTypeIntBluetoothSco},
       }));
 
   AudioDeviceDescriptions devices =
@@ -1011,9 +1026,48 @@ TEST_F(AudioAndroidOutputTest,
   EXPECT_EQ(devices[2].unique_id, "30");
   EXPECT_NE(devices[2].group_id, "");
 
-  EXPECT_EQ(devices[3].device_name, "Nameless audio device (internal speaker)");
+  EXPECT_EQ(devices[3].device_name, "Nameless audio device (Bluetooth)");
   EXPECT_EQ(devices[3].unique_id, "40");
   EXPECT_NE(devices[3].group_id, "");
+}
+
+// Verify output device enumeration when using per-stream device selection and
+// with a Bluetooth A2DP/SCO device pair present.
+TEST_F(AudioAndroidOutputTest,
+       GetBluetoothAudioOutputDeviceDescriptionsWithPerStreamDeviceSelection) {
+  InitFeatures(AudioApi::AAudioWithPerStreamDeviceSelection);
+  if (IsSkipped()) {
+    return;
+  }
+
+  // Test both orderings of the A2DP and SCO devices.
+  MockJniDelegate& jni_delegate = UseMockJniDelegate();
+  EXPECT_CALL(jni_delegate, GetDevices(/* inputs= */ false))
+      .WillOnce(Return(std::vector<JniAudioDevice>{
+          {/* id= */ 10, /* name= */ "Out A2DP",
+           /* type= */ kAudioDeviceTypeIntBluetoothA2dp},
+          {/* id= */ 20, /* name= */ "Out SCO",
+           /* type= */ kAudioDeviceTypeIntBluetoothSco},
+      }))
+      .WillOnce(Return(std::vector<JniAudioDevice>{
+          {/* id= */ 20, /* name= */ "Out SCO",
+           /* type= */ kAudioDeviceTypeIntBluetoothSco},
+          {/* id= */ 10, /* name= */ "Out A2DP",
+           /* type= */ kAudioDeviceTypeIntBluetoothA2dp},
+      }));
+
+  for (int i = 0; i < 2; i++) {
+    AudioDeviceDescriptions devices =
+        GetAudioOutputDeviceDescriptionsOnAudioThread();
+    ASSERT_EQ(devices.size(), 2u);
+
+    EXPECT_TRUE(AudioDeviceDescription::IsDefaultDevice(devices[0].unique_id));
+
+    // Only the A2DP device should be listed in this case.
+    EXPECT_EQ(devices[1].device_name, "Out A2DP");
+    EXPECT_EQ(devices[1].unique_id, "10");
+    EXPECT_NE(devices[1].group_id, "");
+  }
 }
 
 // Ensure that a default input stream can be created and closed.

@@ -206,6 +206,7 @@ class HTMLMetaElement;
 class HitTestRequest;
 class HttpRefreshScheduler;
 class IntersectionObserverController;
+class InvalidateNodeListCachesScope;
 class ImportNodeOptions;
 class LayoutUpgrade;
 class LayoutView;
@@ -262,6 +263,7 @@ class TreeWalker;
 class TrustedHTML;
 class V8DocumentReadyState;
 class V8NodeFilter;
+class V8UnionElementCreationOptionsOrString;
 class V8UnionStringOrTrustedHTML;
 class ViewportData;
 class VisitedLinkState;
@@ -488,6 +490,28 @@ class CORE_EXPORT Document : public ContainerNode,
                    CustomElementRegistry*,
                    ExceptionState&);
 
+  Element* CreateElementForBinding(const AtomicString& local_name,
+                                   ExceptionState& = ASSERT_NO_EXCEPTION);
+  Element* CreateElementForBinding(
+      const AtomicString& local_name,
+      const V8UnionElementCreationOptionsOrString* string_or_options,
+      ExceptionState& exception_state);
+
+  // "create an element" defined in DOM standard. This supports both of
+  // autonomous custom elements and customized built-in elements.
+  Element* CreateElement(const QualifiedName&,
+                         const CreateElementFlags,
+                         const AtomicString& is);
+
+  Element* createElementNS(const AtomicString& namespace_uri,
+                           const AtomicString& qualified_name,
+                           ExceptionState&);
+  Element* createElementNS(
+      const AtomicString& namespace_uri,
+      const AtomicString& qualified_name,
+      const V8UnionElementCreationOptionsOrString* string_or_options,
+      ExceptionState& exception_state);
+
   CustomElementRegistry* customElementRegistry() const override;
 
   // Creates an element without custom element processing.
@@ -518,7 +542,6 @@ class CORE_EXPORT Document : public ContainerNode,
   // [1] https://drafts.csswg.org/scroll-animations-1/#avoiding-cycles
   Element* ScrollingElementNoLayout();
 
-  bool KeyboardFocusableScrollersEnabled();
   bool StandardizedBrowserZoomEnabled() const;
 
   V8DocumentReadyState readyState() const;
@@ -853,6 +876,17 @@ class CORE_EXPORT Document : public ContainerNode,
   void Abort();
 
   void CheckCompleted();
+
+  enum class BeforeUnloadUse {
+    kNoDialogNoText,
+    kNoDialogNoUserGesture,
+    kNoDialogMultipleConfirmationForNavigation,
+    kNoDialogSandboxedIframe,
+    kShowDialog,
+    kNoDialogAutoCancelTrue,
+    kNotSupportedInDocumentPictureInPicture,
+    kMaxValue = kNotSupportedInDocumentPictureInPicture,
+  };
 
   // Dispatches beforeunload into this document. Returns true if the
   // beforeunload handler indicates that it is safe to proceed with an unload,
@@ -1326,13 +1360,22 @@ class CORE_EXPORT Document : public ContainerNode,
   // or move it and make it sensitive to the type of document.
   static bool IsValidName(const StringView&);
 
+  // https://github.com/whatwg/dom/pull/1079
+  static bool IsValidAttributeLocalNameNewSpec(const StringView&);
+  static bool IsValidElementLocalNameNewSpec(const StringView&);
+
   // The following breaks a qualified name into a prefix and a local name.
   // It also does a validity check, and returns false if the qualified name
-  // is invalid.  It also sets ExceptionCode when name is invalid.
+  // is invalid. It also sets ExceptionCode when name is invalid.
+  enum class QualifiedNameParsingMode {
+    kParsingAttribute,
+    kParsingElement,
+  };
   static bool ParseQualifiedName(const AtomicString& qualified_name,
                                  AtomicString& prefix,
                                  AtomicString& local_name,
-                                 ExceptionState&);
+                                 ExceptionState&,
+                                 QualifiedNameParsingMode parsing_mode);
 
   // Checks to make sure prefix and namespace do not conflict (per DOM Core 3)
   static bool HasValidNamespaceForElements(const QualifiedName&);
@@ -1452,9 +1495,7 @@ class CORE_EXPORT Document : public ContainerNode,
   void FinishedParsing();
 
   void SetEncodingData(const DocumentEncodingData& new_data);
-  const WTF::TextEncoding& Encoding() const {
-    return encoding_data_.Encoding();
-  }
+  const TextEncoding& Encoding() const { return encoding_data_.Encoding(); }
 
   bool EncodingWasDetectedHeuristically() const {
     return encoding_data_.WasDetectedHeuristically();
@@ -1678,8 +1719,6 @@ class CORE_EXPORT Document : public ContainerNode,
   HeapLinkedHashSet<Member<HTMLDialogElement>>& AllOpenDialogs() {
     return all_open_dialogs_;
   }
-
-  HeapLinkedHashSet<Member<Element>>& CurrentInterestTargetElements();
 
   // https://crbug.com/1453291
   // The DOM Parts API:
@@ -2122,7 +2161,7 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // https://github.com/whatwg/html/pull/9538
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    ExceptionState& exception_state);
 
   // https://wicg.github.io/sanitizer-api/#framework
@@ -2131,7 +2170,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // the |options| parameter. Long-term, the two parseHTMLUnsage methods
   // should be merged.
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    SetHTMLUnsafeOptions* options,
                                    ExceptionState& exception_state);
   static Document* parseHTML(ExecutionContext* context,
@@ -2159,21 +2198,21 @@ class CORE_EXPORT Document : public ContainerNode,
   void UnscheduleShadowTreeCreation(HTMLInputElement& element);
 
   // Traverses DOM tree and collects HTMLAnchorElements to closest ancestor
-  // element with scroll-marker-contain property.
-  void UpdateScrollMarkerGroupRelations();
-  void SetNeedsScrollMarkerGroupRelationsUpdate() {
-    needs_scroll_marker_contain_relations_update_ = true;
+  // element with scroll-target-group property.
+  void UpdateScrollTargetGroupRelations();
+  void SetNeedsScrollTargetGroupRelationsUpdate() {
+    needs_scroll_target_group_relations_update_ = true;
   }
 
   // Subscribes each ScrollMarkerGroupData to all scrollers
   // that own corresponding scroll marker's scroll target (see
-  // scroll_marker_group_to_scrollable_areas_ for details), so that the scroller
+  // scroll_target_group_to_scrollable_areas_ for details), so that the scroller
   // will notify ScrollMarkerGroupData of updates.
-  void UpdateScrollMarkerGroupToScrollableAreasMap();
-  void AddScrollMarkerGroup(ScrollMarkerGroupData* scroll_marker_group);
-  void RemoveScrollMarkerGroup(ScrollMarkerGroupData* scroll_marker_group);
-  void SetNeedsScrollMarkerGroupsMapUpdate() {
-    needs_scroll_marker_groups_map_update_ = true;
+  void UpdateScrollTargetGroupToScrollableAreasMap();
+  void AddScrollTargetGroup(ScrollMarkerGroupData* scroll_target_group);
+  void RemoveScrollTargetGroup(ScrollMarkerGroupData* scroll_target_group);
+  void SetNeedsScrollTargetGroupsMapUpdate() {
+    needs_scroll_target_groups_map_update_ = true;
   }
 
   void ScheduleSelectionchangeEvent();
@@ -2234,6 +2273,7 @@ class CORE_EXPORT Document : public ContainerNode,
   friend class OffscreenCanvasRenderingAPIUkmMetricsTest;
   friend class TapFriendlinessCheckerTest;
   friend class DocumentStorageAccess;
+  friend class InvalidateNodeListCachesScope;
   FRIEND_TEST_ALL_PREFIXES(LazyLoadAutomaticImagesTest,
                            LoadAllImagesIfPrinting);
   FRIEND_TEST_ALL_PREFIXES(FrameFetchContextSubresourceFilterTest,
@@ -2447,6 +2487,17 @@ class CORE_EXPORT Document : public ContainerNode,
       CheckPseudoHasCacheScope* check_pseudo_has_cache_scope) {
     DCHECK(!check_pseudo_has_cache_scope_ || !check_pseudo_has_cache_scope);
     check_pseudo_has_cache_scope_ = check_pseudo_has_cache_scope;
+  }
+
+  InvalidateNodeListCachesScope* GetInvalidateNodeListCachesScope() const {
+    return invalidate_node_list_caches_scope_;
+  }
+
+  void SetInvalidateNodeListCachesScope(
+      InvalidateNodeListCachesScope* invalidate_node_list_caches_scope) {
+    DCHECK_NE(!invalidate_node_list_caches_scope_,
+              !invalidate_node_list_caches_scope);
+    invalidate_node_list_caches_scope_ = invalidate_node_list_caches_scope;
   }
 
   // See CheckPseudoHasCacheScope constructor.
@@ -2776,6 +2827,13 @@ class CORE_EXPORT Document : public ContainerNode,
   GC_PLUGIN_IGNORE("https://crbug.com/669058")
   CheckPseudoHasCacheScope* check_pseudo_has_cache_scope_ = nullptr;
 
+  // This is an untraced pointer to the first stack-allocated scoping object
+  // that defers invalidation of the node list caches. It is set upon the first
+  // object being allocated on the stack, and cleared upon leaving its
+  // allocated scope. The object's references will be traced by a stack walk.
+  GC_PLUGIN_IGNORE("https://crbug.com/40874584")
+  InvalidateNodeListCachesScope* invalidate_node_list_caches_scope_ = nullptr;
+
   bool in_pseudo_has_checking_ = false;
 
   DocumentClassFlags document_classes_;
@@ -2830,7 +2888,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // is distinct from popover_pointerdown_target_ because the same pointer
   // action could trigger light dismiss on a containing popover and not a
   // containing dialog, or vice versa. This will be nullptr for a click on
-  // the ::backdrop pseudo element for a dialog.
+  // the ::backdrop pseudo-element for a dialog.
   Member<const HTMLDialogElement> dialog_pointerdown_target_;
   // A set of popovers for which hidePopover() has been called, but animations
   // are still running.
@@ -2840,13 +2898,6 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // The ordered list of currently-open dialogs, in order they were opened.
   HeapLinkedHashSet<Member<HTMLDialogElement>> all_open_dialogs_;
-
-  // The current list of elements in the document that have interest (in the
-  // `interesttarget` sense). This is used to "lose" interest if the keyboard
-  // activation key (ESC) or other actions should cause a loss of interest.
-  // This collection holds the *invokers* (the elements with `interesttarget`)
-  // and not the *targets* of those invokers.
-  HeapLinkedHashSet<Member<Element>> current_interest_target_elements_;
 
   Member<DocumentPartRoot> document_part_root_;
 
@@ -3048,16 +3099,16 @@ class CORE_EXPORT Document : public ContainerNode,
   unsigned disabled_fieldset_count_ = 0;
 
   // True if the document has scroll marker groups that need to be
-  // recalculated due to e.g. a new element with scroll-marker-contain
+  // recalculated due to e.g. a new element with scroll-target-group
   // property was added or removed, hence it can now be a container
   // for some html anchor scroll marker elements of other container.
-  bool needs_scroll_marker_contain_relations_update_ = false;
-  // True if the document has elements with scroll-marker-contain property
+  bool needs_scroll_target_group_relations_update_ = false;
+  // True if the document has elements with scroll-target-group property
   // and some html anchor scroll marker elements. It is a signal to update a
   // map between scroll marker groups and scrollable areas to subscribe scroll
   // marker groups to scrollable areas changes.
-  bool needs_scroll_marker_groups_map_update_ = false;
-  // Every element with scroll-marker-contain property set collects
+  bool needs_scroll_target_groups_map_update_ = false;
+  // Every element with scroll-target-group property set collects
   // HTMLAnchorElements as scroll markers inside its ScrollMarkerGroupData.
   // This is the map of ScrollMarkerGroupData to all scrollers that is the
   // closest scroller to scroll marker's scroll target (e.g. scroll marker is <a
@@ -3066,7 +3117,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // It's needed to subscribe ScrollMarkerGroupData to changes in scrollers.
   HeapHashMap<Member<ScrollMarkerGroupData>,
               HeapHashSet<Member<PaintLayerScrollableArea>>>
-      scroll_marker_group_to_scrollable_areas_;
+      scroll_target_group_to_scrollable_areas_;
 
   // For rendering media URLs in a top-level context that use the
   // Content-Security-Policy header to sandbox their content. This causes

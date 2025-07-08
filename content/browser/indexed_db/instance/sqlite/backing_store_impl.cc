@@ -15,17 +15,23 @@
 namespace content::indexed_db::sqlite {
 
 std::tuple<std::unique_ptr<BackingStore>, Status, IndexedDBDataLossInfo, bool>
-BackingStoreImpl::OpenAndVerify(base::FilePath data_path) {
+BackingStoreImpl::OpenAndVerify(
+    base::FilePath data_path,
+    storage::mojom::BlobStorageContext& blob_storage_context) {
   return {
-      std::make_unique<BackingStoreImpl>(std::move(data_path)),
+      std::make_unique<BackingStoreImpl>(std::move(data_path),
+                                         blob_storage_context),
       Status::OK(),
       IndexedDBDataLossInfo(),
       false,
   };
 }
 
-BackingStoreImpl::BackingStoreImpl(base::FilePath data_path)
-    : data_path_(std::move(data_path)) {}
+BackingStoreImpl::BackingStoreImpl(
+    base::FilePath data_path,
+    storage::mojom::BlobStorageContext& blob_storage_context)
+    : data_path_(std::move(data_path)),
+      blob_storage_context_(blob_storage_context) {}
 
 BackingStoreImpl::~BackingStoreImpl() = default;
 
@@ -51,10 +57,18 @@ int64_t BackingStoreImpl::GetInMemorySize() const {
 }
 
 StatusOr<std::vector<std::u16string>> BackingStoreImpl::GetDatabaseNames() {
+  // TODO(crbug.com/419203257): Remove this method from the BackingStore
+  // interface. This is only used to determine if a database of a given name
+  // already exists. For on-disk databases, it will be much more efficient to
+  // determine if a database with a given name exists than to create a list of
+  // all existing databases.
   std::vector<std::u16string> names;
-  // TODO(crbug.com/40253999): Support on-disk databases.
-  for (const auto& [name, _] : open_connections_) {
-    names.push_back(name);
+  for (const auto& [name, db] : open_connections_) {
+    // Zygotic SQLite databases have already been deleted from the perspective
+    // of the IDB frontend.
+    if (!db->IsZygotic()) {
+      names.push_back(name);
+    }
   }
   return names;
 }
@@ -64,8 +78,15 @@ BackingStoreImpl::GetDatabaseNamesAndVersions() {
   std::vector<blink::mojom::IDBNameAndVersionPtr> names_and_versions;
   // TODO(crbug.com/40253999): Support on-disk databases.
   for (const auto& [name, db] : open_connections_) {
+    // indexedDB.databases() is meant to return *committed* database state, i.e.
+    // should not include in-progress VersionChange updates. This is verified by
+    // external/wpt/IndexedDB/get-databases.any.html
+    int64_t version = db->GetCommittedVersion();
+    if (version == blink::IndexedDBDatabaseMetadata::NO_VERSION) {
+      continue;
+    }
     names_and_versions.push_back(
-        blink::mojom::IDBNameAndVersion::New(name, db->metadata().version));
+        blink::mojom::IDBNameAndVersion::New(name, version));
   }
   return names_and_versions;
 }
@@ -75,7 +96,7 @@ BackingStoreImpl::CreateOrOpenDatabase(const std::u16string& name) {
   auto it = open_connections_.find(name);
   if (it == open_connections_.end()) {
     ASSIGN_OR_RETURN(std::unique_ptr<DatabaseConnection> db,
-                     DatabaseConnection::Open(name, data_path_));
+                     DatabaseConnection::Open(name, data_path_, *this));
     it = open_connections_.emplace(name, std::move(db)).first;
   }
   return std::make_unique<BackingStoreDatabaseImpl>(it->second->GetWeakPtr());
@@ -88,6 +109,10 @@ uintptr_t BackingStoreImpl::GetIdentifierForMemoryDump() {
 
 void BackingStoreImpl::FlushForTesting() {
   NOTIMPLEMENTED();
+}
+
+void BackingStoreImpl::DestroyConnection(const std::u16string& name) {
+  CHECK(open_connections_.erase(name) == 1);
 }
 
 }  // namespace content::indexed_db::sqlite

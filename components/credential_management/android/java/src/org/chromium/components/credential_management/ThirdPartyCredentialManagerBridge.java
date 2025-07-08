@@ -59,9 +59,14 @@ class ThirdPartyCredentialManagerBridge {
                 sCredentialManagerForTesting == null
                         ? CredentialManager.create(context)
                         : sCredentialManagerForTesting;
+        // We're currently preventing silent access for every get request by
+        // default in 3rd party mode so isAutoSelectAllowed is always set to
+        // false.
         GetPasswordOption passwordOption =
                 new GetPasswordOption(
-                        Collections.emptySet(), isAutoSelectAllowed, Collections.emptySet());
+                        Collections.emptySet(),
+                        /* isAutoSelectAllowed= */ false,
+                        Collections.emptySet());
         GetCredentialRequest.Builder getCredentialRequestBuilder =
                 new GetCredentialRequest.Builder();
         if (includePasswords) {
@@ -73,13 +78,19 @@ class ThirdPartyCredentialManagerBridge {
                 credentialCallback =
                         new CredentialManagerCallback<>() {
                             @Override
-                            public void onError(GetCredentialException e) {
+                            public void onError(GetCredentialException error) {
                                 callback.onResult(new PasswordCredentialResponse(false, "", ""));
+                                ThirdPartyCredentialManagerMetricsRecorder
+                                        .recordCredentialManagerGetResult(
+                                                /* success= */ false, /* error= */ error);
                             }
 
                             @Override
                             public void onResult(GetCredentialResponse result) {
                                 onGetCredentialResponse(result, callback);
+                                ThirdPartyCredentialManagerMetricsRecorder
+                                        .recordCredentialManagerGetResult(
+                                                /* success= */ true, /* error= */ null);
                             }
                         };
         credentialManager.getCredentialAsync(
@@ -100,13 +111,19 @@ class ThirdPartyCredentialManagerBridge {
                 credentialCallback =
                         new CredentialManagerCallback<>() {
                             @Override
-                            public void onError(CreateCredentialException e) {
+                            public void onError(CreateCredentialException error) {
                                 callback.onResult(false);
+                                ThirdPartyCredentialManagerMetricsRecorder
+                                        .recordCredentialManagerStoreResult(
+                                                /* success= */ false, /* error= */ error);
                             }
 
                             @Override
                             public void onResult(CreateCredentialResponse response) {
                                 callback.onResult(true);
+                                ThirdPartyCredentialManagerMetricsRecorder
+                                        .recordCredentialManagerStoreResult(
+                                                /* success= */ true, /* error= */ null);
                             }
                         };
         credentialManager.createCredentialAsync(

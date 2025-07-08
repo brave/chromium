@@ -54,11 +54,11 @@ GinPort::GinPort(v8::Local<v8::Context> context,
 
 GinPort::~GinPort() = default;
 
-gin::WrapperInfo GinPort::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo GinPort::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 gin::ObjectTemplateBuilder GinPort::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return Wrappable<GinPort>::GetObjectTemplateBuilder(isolate)
+  return DeprecatedWrappable<GinPort>::GetObjectTemplateBuilder(isolate)
       .SetMethod("disconnect", &GinPort::DisconnectHandler)
       .SetMethod("postMessage", &GinPort::PostMessageHandler)
       .SetLazyDataProperty("name", &GinPort::GetName)
@@ -75,7 +75,7 @@ void GinPort::DispatchOnMessage(v8::Local<v8::Context> context,
                                 const Message& message) {
   DCHECK_EQ(State::kActive, state_);
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context);
 
@@ -105,7 +105,7 @@ void GinPort::DispatchOnDisconnect(v8::Local<v8::Context> context) {
   // from the event handler.
   state_ = State::kDisconnected;
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context);
 
@@ -124,7 +124,7 @@ void GinPort::SetSender(v8::Local<v8::Context> context,
   DCHECK(!accessed_sender_)
       << "|sender| can only be set before its first access.";
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Object> wrapper = GetWrapper(isolate).ToLocalChecked();
@@ -211,7 +211,7 @@ v8::Local<v8::Value> GinPort::GetSender(gin::Arguments* arguments) {
 v8::Local<v8::Object> GinPort::GetEvent(v8::Local<v8::Context> context,
                                         std::string_view event_name) {
   DCHECK(event_name == kOnMessageEvent || event_name == kOnDisconnectEvent);
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
 
   if (state_ == State::kInvalidated) {
     ThrowError(isolate, kContextInvalidatedError);
@@ -244,13 +244,13 @@ v8::Local<v8::Object> GinPort::GetEvent(v8::Local<v8::Context> context,
 void GinPort::DispatchEvent(v8::Local<v8::Context> context,
                             v8::LocalVector<v8::Value>* args,
                             std::string_view event_name) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Value> on_message = GetEvent(context, event_name);
   EventEmitter* emitter = nullptr;
   gin::Converter<EventEmitter*>::FromV8(isolate, on_message, &emitter);
   CHECK(emitter);
-
-  emitter->Fire(context, args, nullptr, JSRunner::ResultCallback());
+  emitter->Fire(context, args, /*filter=*/nullptr,
+                /*callback=*/v8::Local<v8::Function>());
 }
 
 void GinPort::OnContextInvalidated() {

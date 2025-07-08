@@ -329,7 +329,7 @@ class MODULES_EXPORT AudioContext final
   // https://webaudio.github.io/web-audio-api/#dom-audiocontext-suspended-by-user-slot
   bool suspended_by_user_ = false;
 
-  unsigned context_id_;
+  uint32_t context_id_;
   Member<ScriptPromiseResolver<IDLUndefined>> close_resolver_;
 
   AudioIOPosition output_position_;
@@ -470,6 +470,10 @@ class MODULES_EXPORT AudioContext final
   base::TimeTicks audible_start_timestamp_;
   // Total accumulated time this audio context has been audible.
   base::TimeDelta total_audible_duration_;
+
+  // Set to true when the DidClose() method is called. Used to detect if the
+  // context is destroyed without being properly closed.
+  bool is_closed_ = false;
 
   SEQUENCE_CHECKER(main_thread_sequence_checker_);
 };

@@ -117,7 +117,7 @@ class TabGroupsApiUnitTest : public ExtensionServiceTestBase {
   void WaitForTabGroupSyncServiceInitialized() {
     auto observer =
         std::make_unique<tab_groups::TabGroupSyncServiceInitializedObserver>(
-            tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile()));
+            tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile()));
     observer->Wait();
   }
 
@@ -144,7 +144,7 @@ void TabGroupsApiUnitTest::SetUp() {
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
   params.window = browser_window_.get();
-  browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+  browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser_.get());
 
   // Add several tabs to the browser and get their tab IDs and web contents.
@@ -194,7 +194,7 @@ TEST_F(TabGroupsApiUnitTest, TabStripModelWithNoTabGroupFails) {
   // |window2|.
   new TestBrowserWindowOwner(std::move(window2));
 
-  std::unique_ptr<Browser> browser2(Browser::Create(params));
+  auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
 
   ASSERT_FALSE(browser2->tab_strip_model()->SupportsTabGroups());
@@ -317,7 +317,7 @@ class SharedTabGroupExtensionsTabUtilTest : public TabGroupsApiUnitTest {
   }
 
   void ShareTabGroup(const tab_groups::TabGroupId& group_id,
-                     const std::string& collaboration_id) {
+                     const syncer::CollaborationId& collaboration_id) {
     tab_groups::TabGroupSyncService* service =
         static_cast<tab_groups::TabGroupSyncService*>(
             tab_groups::TabGroupSyncServiceFactory::GetForProfile(
@@ -363,7 +363,7 @@ TEST_F(SharedTabGroupExtensionsTabUtilTest, TabGroupsQueryShared) {
     ASSERT_EQ(0u, groups_list.size());
   }
 
-  ShareTabGroup(group1, "collaboration_id_1");
+  ShareTabGroup(group1, syncer::CollaborationId("collaboration_id_1"));
 
   {  // Query unshared groups.
     scoped_refptr<const Extension> extension = CreateTabGroupsExtension();
@@ -670,7 +670,7 @@ TEST_F(TabGroupsApiUnitTest, TabGroupsMoveAcrossWindows) {
   // |window2|.
   new TestBrowserWindowOwner(std::move(window2));
 
-  std::unique_ptr<Browser> browser2(Browser::Create(params));
+  auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
   int window_id2 = ExtensionTabUtil::GetWindowId(browser2.get());
 

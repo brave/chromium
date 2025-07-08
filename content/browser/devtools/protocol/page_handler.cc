@@ -779,7 +779,7 @@ void PageHandler::Reload(std::optional<bool> bypassCache,
   }
 }
 
-static network::mojom::ReferrerPolicy ParsePolicyFromString(
+static std::optional<network::mojom::ReferrerPolicy> ParsePolicyFromString(
     const std::string& policy) {
   if (policy == Page::ReferrerPolicyEnum::NoReferrer)
     return network::mojom::ReferrerPolicy::kNever;
@@ -798,9 +798,7 @@ static network::mojom::ReferrerPolicy ParsePolicyFromString(
   }
   if (policy == Page::ReferrerPolicyEnum::UnsafeUrl)
     return network::mojom::ReferrerPolicy::kAlways;
-
-  DCHECK(policy.empty());
-  return network::mojom::ReferrerPolicy::kDefault;
+  return std::nullopt;
 }
 
 namespace {
@@ -906,9 +904,18 @@ void PageHandler::Navigate(const std::string& url,
     return;
   }
 
-  NavigationController::LoadURLParams params(gurl);
   network::mojom::ReferrerPolicy policy =
-      ParsePolicyFromString(referrer_policy.value_or(""));
+      network::mojom::ReferrerPolicy::kDefault;
+  if (referrer_policy.has_value()) {
+    const auto& parsed_policy = ParsePolicyFromString(referrer_policy.value());
+    if (!parsed_policy.has_value()) {
+      callback->sendFailure(Response::InvalidParams("Invalid referrerPolicy"));
+      return;
+    }
+    policy = parsed_policy.value();
+  }
+
+  NavigationController::LoadURLParams params(gurl);
   params.referrer = Referrer(GURL(referrer.value_or("")), policy);
   params.transition_type = type;
   params.frame_tree_node_id = frame_tree_node->frame_tree_node_id();
@@ -1877,6 +1884,8 @@ Page::BackForwardCacheNotRestoredReason NotRestoredReasonToProtocol(
     case Reason::kCacheControlNoStoreDeviceBoundSessionTerminated:
       return Page::BackForwardCacheNotRestoredReasonEnum::
           CacheControlNoStoreDeviceBoundSessionTerminated;
+    case Reason::kSharedWorkerMessage:
+      return Page::BackForwardCacheNotRestoredReasonEnum::SharedWorkerMessage;
   }
 }
 
@@ -2000,6 +2009,8 @@ Page::BackForwardCacheNotRestoredReason BlocklistedFeatureToProtocol(
     case WebSchedulerTrackedFeature::kWebAuthentication:
       return Page::BackForwardCacheNotRestoredReasonEnum::
           ContentWebAuthenticationAPI;
+    case WebSchedulerTrackedFeature::kSharedWorkerMessage:
+      return Page::BackForwardCacheNotRestoredReasonEnum::SharedWorkerMessage;
   }
 }
 
@@ -2089,7 +2100,7 @@ DisableForRenderFrameHostReasonToProtocol(
           return Page::BackForwardCacheNotRestoredReasonEnum::
               EmbedderOfflinePage;
         case back_forward_cache::DisabledReasonId::
-            kChromePasswordManagerClient_BindCredentialManager:
+            kContentCredentialManager_BindCredentialManager:
           return Page::BackForwardCacheNotRestoredReasonEnum::
               EmbedderChromePasswordManagerClientBindCredentialManager;
         case back_forward_cache::DisabledReasonId::kPermissionRequestManager:
@@ -2167,6 +2178,7 @@ Page::BackForwardCacheNotRestoredReasonType MapNotRestoredReasonToType(
     case Reason::kWebViewDocumentStartJavascriptChanged:
     case Reason::kCacheLimitPrunedOnModerateMemoryPressure:
     case Reason::kCacheLimitPrunedOnCriticalMemoryPressure:
+    case Reason::kSharedWorkerMessage:
       return Page::BackForwardCacheNotRestoredReasonTypeEnum::Circumstantial;
     case Reason::kCacheControlNoStore:
     case Reason::kCacheControlNoStoreCookieModified:
@@ -2191,6 +2203,7 @@ Page::BackForwardCacheNotRestoredReasonType MapBlocklistedFeatureToType(
     case WebSchedulerTrackedFeature::kBroadcastChannel:
     case WebSchedulerTrackedFeature::kWebXR:
     case WebSchedulerTrackedFeature::kSharedWorker:
+    case WebSchedulerTrackedFeature::kSharedWorkerMessage:
     case WebSchedulerTrackedFeature::kWebHID:
     case WebSchedulerTrackedFeature::kWebShare:
     case WebSchedulerTrackedFeature::kPaymentManager:

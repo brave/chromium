@@ -14,13 +14,9 @@
 #include "third_party/blink/renderer/platform/bindings/v8_binding_macros.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "v8/include/v8.h"
-
-namespace WTF {
-class TextEncoding;
-class TextPosition;
-}  // namespace WTF
 
 namespace blink {
 
@@ -30,6 +26,7 @@ class ClassicScript;
 class KURL;
 class ModuleRecordProduceCacheData;
 class ScriptState;
+class TextEncoding;
 
 class CORE_EXPORT V8CodeCache final {
   STATIC_ONLY(V8CodeCache);
@@ -135,7 +132,7 @@ class CORE_EXPORT V8CodeCache final {
       ScriptState*,
       const String& script_string,
       const KURL& source_url,
-      const WTF::TextEncoding&,
+      const TextEncoding&,
       OpaqueMode);
 
   // These values are persisted to logs. Entries should not be renumbered and

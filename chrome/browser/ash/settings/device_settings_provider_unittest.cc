@@ -1227,6 +1227,16 @@ TEST_F(DeviceSettingsProviderTest, DeviceAllowedBluetoothServices) {
             provider_->Get(kDeviceAllowedBluetoothServices)->GetList());
 }
 
+TEST_F(DeviceSettingsProviderTest, DeviceBluetoothJustWorksPairingEnabled) {
+  em::BooleanPolicyProto* proto =
+      device_policy_->payload()
+          .mutable_devicebluetoothjustworkspairingenabled();
+  proto->set_value(true);
+  BuildAndInstallDevicePolicy();
+  EXPECT_EQ(base::Value(true),
+            *provider_->Get(kDeviceBluetoothJustWorksPairingEnabled));
+}
+
 // Check valid JSON for DeviceScheduledReboot.
 TEST_F(DeviceSettingsProviderTest, DeviceScheduledReboot) {
   const std::string json_string =
@@ -1377,6 +1387,18 @@ TEST_F(DeviceSettingsProviderTest, DeviceUserInitiatedFirmwareUpdatesEnabled) {
   BuildAndInstallDevicePolicy();
   EXPECT_EQ(base::Value(true),
             *provider_->Get(kDeviceUserInitiatedFirmwareUpdatesEnabled));
+}
+
+TEST_F(DeviceSettingsProviderTest,
+       DeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled) {
+  em::BooleanPolicyProto* proto =
+      device_policy_->payload()
+          .mutable_deviceuserinitiatedflexsystemfirmwareupdatesenabled();
+  proto->set_value(true);
+  BuildAndInstallDevicePolicy();
+  EXPECT_EQ(
+      base::Value(true),
+      *provider_->Get(kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled));
 }
 
 TEST_F(DeviceSettingsProviderTest, DeviceDlcPredownloadListUnset) {

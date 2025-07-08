@@ -728,7 +728,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="AdsInterestGroup.AuctionLatency.V2">
-  <owner>orrb@google.com</owner>
+  <owner>morlovich@chromium.org</owner>
   <owner>chrome-ads-core@google.com</owner>
   <summary>
     Captures latency-relevant metrics associated with a single FLEDGE auction.
@@ -1811,6 +1811,34 @@ be describing additional metrics about the same event.
   </metric>
 </event>
 
+<event name="Android.AssistContent.PageContextRequest">
+  <owner>ssid@google.com</owner>
+  <owner>salg@google.com</owner>
+  <summary>
+    This event is recorded when page context provider is queried by the
+    Assistant app.
+  </summary>
+  <metric name="PageContextRequested" enum="Boolean">
+    <summary>
+      Whether the page context was requested based on the structured Assist data
+      provided.
+    </summary>
+  </metric>
+</event>
+
+<event name="Android.AssistContent.Request">
+  <owner>ssid@google.com</owner>
+  <owner>salg@google.com</owner>
+  <summary>
+    This event is recorded when AssistContent was requested by Android OS.
+  </summary>
+  <metric name="WebPageStructuredDataAttached" enum="Boolean">
+    <summary>
+      Whether structured data is attached to the AssistContent.
+    </summary>
+  </metric>
+</event>
+
 <event name="Android.DarkTheme.AutoDarkMode">
   <owner>nemco@google.com</owner>
   <owner>wenyufu@chromium.org</owner>
@@ -2366,7 +2394,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.DeveloperEngagement">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when we parse a form to log whether developer has used autocomplete
     markup or UPI-VPA hints. The value is a bitmask of
@@ -2515,7 +2543,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.FormEvent">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when user interacted with autofill.
   </summary>
@@ -2613,7 +2641,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.InteractedWithForm">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when we parse a form to log form metadata and autofill settings
     that apply to all subsequent events for this form.
@@ -2728,7 +2756,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.SuggestionFilled">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when user selects a suggestion and we fill the form with that
     suggestion.
@@ -2762,7 +2790,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.SuggestionsShown">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when a suggestion is shown to user.
   </summary>
@@ -2800,7 +2828,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Autofill.TextFieldDidChange">
-  <owner>jsaul@google.com</owner>
+  <owner>osaul@google.com</owner>
   <summary>
     Recorded when user edits a text field. The text field may have been
     autofilled.
@@ -3486,6 +3514,20 @@ be describing additional metrics about the same event.
     quality. They are recorded on navigation if a form was submitted before,
     only if the submitted form had Autofill AI prediction.
   </summary>
+  <metric name="AutofillAiFilledFieldCount">
+    <summary>
+      The number of fields at form submission that are autofilled and that were
+      autofilled by AutofillAi. Fields filled with any other source will be
+      excluded from this count.
+    </summary>
+  </metric>
+  <metric name="AutofillFilledFieldCount">
+    <summary>
+      The number of fields at form submission that are autofilled. This will
+      include fields that are autofilled by any source except Autocomplete,
+      including AutofillAi.
+    </summary>
+  </metric>
   <metric name="FillingAcceptance">
     <summary>
       Has value 1 if user accepted the suggestion to fill values on a submitted
@@ -5904,6 +5946,16 @@ be describing additional metrics about the same event.
       took place.
     </summary>
   </metric>
+  <metric name="SiteHadUserActivation" enum="BooleanHasUserActivation">
+    <summary>
+      Whether the site has previously had a user activation.
+    </summary>
+  </metric>
+  <metric name="SiteHadWebAuthnAssertion" enum="BooleanHasWebAuthnAssertion">
+    <summary>
+      Whether the site has previously had a WebAuthn assertion.
+    </summary>
+  </metric>
   <metric name="WebAuthnAssertionRequestSucceeded"
       enum="BooleanWebAuthnAssertionRequestSucceeded">
     <summary>
@@ -8075,6 +8127,8 @@ be describing additional metrics about the same event.
   </metric>
   <metric name="SiteEngagementLevel" enum="SiteEngagementLevel">
     <summary>
+      Deprecated as of M139.
+
       The site engagement level of the redirect URL, at the time the redirect
       took place.
     </summary>
@@ -12925,6 +12979,19 @@ be describing additional metrics about the same event.
       </history>
     </aggregation>
   </metric>
+  <metric name="HomeworkActionChip">
+    <summary>
+      Time to first interaction when overlay invoked through the omnibox Lens
+      homework page action suggestion.
+    </summary>
+    <aggregation>
+      <history>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
   <metric name="Omnibox">
     <summary>
       Time to first interaction when overlay invoked through the omnibox.
@@ -14489,6 +14556,23 @@ be describing additional metrics about the same event.
   <metric name="IsMainFrame">
     <summary>
       Indicates whether the event is fired from main frame.
+    </summary>
+  </metric>
+</event>
+
+<event name="Media.WebAudio.ScriptProcessorNode">
+  <owner>hongchan@chromium.org</owner>
+  <owner>mjwilson@chromium.org</owner>
+  <owner>webaudio-dev@chromium.org</owner>
+  <summary>
+    Records the creation of a ScriptProcessorNode to monitor usage of this
+    deprecated API. ScriptProcessorNode has been deprecated and developers are
+    strongly encouraged to use AudioWorklet instead. This data helps gauge
+    migration progress and the impact if it were to be removed.
+  </summary>
+  <metric name="Creation" enum="Boolean">
+    <summary>
+      Fired and set to true when a ScriptProcessorNode is constructed.
     </summary>
   </metric>
 </event>
@@ -16160,10 +16244,9 @@ be describing additional metrics about the same event.
   <owner>hayato@chromium.org</owner>
   <owner>chrome-loading@google.com</owner>
   <summary>
-    Metrics to measure the navigation timings. These metrics correspond to the
-    UMAs under Navigation.Timeline.*. This is recorded at the frequency of
-    0.001. These metrics are based on the equivalent UMA metrics defined under
-    Navigation.Timeline.{DurationFromTo}.Duration.
+    Metrics to measure the navigation timings. These are recorded for 1 out of
+    1,000 navigations. These metrics are based on the equivalent UMA metrics
+    defined under Navigation.Timeline.{DurationFromTo}.Duration.
   </summary>
   <metric name="BeforeUnloadPhase1Duration">
     <summary>
@@ -16746,6 +16829,18 @@ be describing additional metrics about the same event.
       The amount of time, in milliseconds, since the user first began modifying
       the text in the omnibox until they searched or navigated from the omnibox.
       Bucketed into exponential intervals with a standard bucket_spacing of 2.0.
+    </summary>
+  </metric>
+  <metric name="ZeroPrefixContextualSearchShown" enum="Boolean">
+    <summary>
+      Whether at least one zero-prefix Contextual Search suggestion was shown in
+      the Omnibox session.
+    </summary>
+  </metric>
+  <metric name="ZeroPrefixLensActionShown" enum="Boolean">
+    <summary>
+      Whether at least one zero-prefix Lens Action suggestion was shown in the
+      Omnibox session.
     </summary>
   </metric>
   <metric name="ZeroPrefixSearchShown" enum="Boolean">
@@ -19619,7 +19714,7 @@ be describing additional metrics about the same event.
   <metric name="PredictionsApiResponse.GrantLikelihood"
       enum="PredictionGrantLikelihood">
     <summary>
-      An enum of type PermissionUmaUtil::PredictionGrantLikelihood describing
+      An enum of type PermissionUiSelector::PredictionGrantLikelihood describing
       the likelihood returned by the Web Permission Predictions Service, if the
       service was successfully queried.
     </summary>
@@ -23357,22 +23452,6 @@ be describing additional metrics about the same event.
   </metric>
 </event>
 
-<event name="SiteInstance">
-  <owner>bashi@chromium.org</owner>
-  <owner>chrome-site-isolation@google.com</owner>
-  <summary>
-    Records how likely a tab can share processes with other tabs.
-  </summary>
-  <metric name="NewProcessUsedForNavigationWhenSameSiteProcessExists"
-      enum="Boolean">
-    <summary>
-      Records whether a new process is used for navigation when there are other
-      same site process(es). Recorded for the outer-most main frame navigation
-      when navigation is committed (cross-origin redirects are not recorded).
-    </summary>
-  </metric>
-</event>
-
 <event name="SmartCharging">
   <owner>thanhdng@chromium.org</owner>
   <owner>jiameng@chromium.org</owner>
@@ -23744,6 +23823,22 @@ be describing additional metrics about the same event.
     <summary>
       Enumerates the different results possible for subresource redirection,
       such as redirectable or different reasons of ineligibility.
+    </summary>
+  </metric>
+</event>
+
+<event name="SuspiciousNotificationInteraction">
+  <owner>skrakowi@chromium.org</owner>
+  <owner>chrome-counter-abuse-core@google.com</owner>
+  <summary>
+    Recorded when the user takes an action on a suspicious notification whose
+    contents were replaced by a warning.
+  </summary>
+  <metric name="SuspiciousInteractionType"
+      enum="SuspiciousNotificationWarningInteractions">
+    <summary>
+      The type of action that the user has taken after receiving a notification
+      content detection warning.
     </summary>
   </metric>
 </event>
@@ -24590,6 +24685,215 @@ be describing additional metrics about the same event.
       <history>
         <statistics>
           <enumeration/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+</event>
+
+<event name="TrustedWebActivity.Startup">
+  <owner>ishitatsuyuki@google.com</owner>
+  <owner>uekawa@chromium.org</owner>
+  <owner>cros-virt-devices-guests@google.com</owner>
+  <summary>
+    Page load metrics for the first page load in a Trusted Web Activity (TWA).
+
+    The startup is considered Cold if the browser process was not running and
+    had to be started, and Warm if the process was already running in the
+    background. Timings are relative to the Activity initialization timestamp
+    passed from android-browser-helper.
+  </summary>
+  <metric name="AndroidBrowserHelper.Version">
+    <summary>
+      The version code of android-browser-helper used by the TWA wrapper
+      associated with the origin.
+    </summary>
+  </metric>
+  <metric name="TimeToFirstCommitNavigation2.Cold">
+    <summary>
+      The timestamp of the first navigation commit, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToFirstCommitNavigation2.Warm">
+    <summary>
+      The timestamp of the first navigation commit, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was already running in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToFirstContentfulPaint.Cold">
+    <summary>
+      The timestamp of the first contentful paint, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToFirstContentfulPaint.Warm">
+    <summary>
+      The timestamp of the first contentful paint, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was already running in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToLargestContentfulPaint.Cold">
+    <summary>
+      The timestamp of the largest contentful paint, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToLargestContentfulPaint.Warm">
+    <summary>
+      The timestamp of the largest contentful paint, relative to the Activity
+      initialization timestamp passed from android-browser-helper. Split by
+      startups where the browser process was already running in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkFullyLoaded.Cold">
+    <summary>
+      Timestamp of performance.mark('mark_fully_loaded'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkFullyLoaded.Warm">
+    <summary>
+      Timestamp of performance.mark('mark_fully_loaded'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was already running in the
+      background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkFullyVisible.Cold">
+    <summary>
+      Timestamp of performance.mark('mark_fully_visible'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkFullyVisible.Warm">
+    <summary>
+      Timestamp of performance.mark('mark_fully_visible'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was already running in the
+      background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkInteractive.Cold">
+    <summary>
+      Timestamp of performance.mark('mark_interactive'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was not in the background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
+  <metric name="TimeToMarkInteractive.Warm">
+    <summary>
+      Timestamp of performance.mark('mark_interactive'), relative to the
+      Activity initialization timestamp passed from android-browser-helper.
+      Recorded only if the web page supports the respective performance marker.
+      Split by startups where the browser process was already running in the
+      background.
+    </summary>
+    <aggregation>
+      <history>
+        <index fields="profile.form_factor"/>
+        <statistics>
+          <quantiles type="std-percentiles"/>
         </statistics>
       </history>
     </aggregation>

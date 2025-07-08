@@ -43,6 +43,7 @@
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/types/strong_alias.h"
 #include "third_party/blink/public/mojom/websockets/websocket_connector.mojom-blink.h"
@@ -230,7 +231,7 @@ struct WebSocketChannelImpl::ConnectInfo {
 WebSocketChannelImpl* WebSocketChannelImpl::CreateForTesting(
     ExecutionContext* execution_context,
     WebSocketChannelClient* client,
-    std::unique_ptr<SourceLocation> location,
+    SourceLocation* location,
     std::unique_ptr<WebSocketHandshakeThrottle> handshake_throttle) {
   auto* channel = MakeGarbageCollected<WebSocketChannelImpl>(
       execution_context, client, std::move(location));
@@ -242,7 +243,7 @@ WebSocketChannelImpl* WebSocketChannelImpl::CreateForTesting(
 WebSocketChannelImpl* WebSocketChannelImpl::Create(
     ExecutionContext* execution_context,
     WebSocketChannelClient* client,
-    std::unique_ptr<SourceLocation> location) {
+    SourceLocation* location) {
   auto* channel = MakeGarbageCollected<WebSocketChannelImpl>(
       execution_context, client, std::move(location));
   channel->handshake_throttle_ =
@@ -250,16 +251,15 @@ WebSocketChannelImpl* WebSocketChannelImpl::Create(
   return channel;
 }
 
-WebSocketChannelImpl::WebSocketChannelImpl(
-    ExecutionContext* execution_context,
-    WebSocketChannelClient* client,
-    std::unique_ptr<SourceLocation> location)
+WebSocketChannelImpl::WebSocketChannelImpl(ExecutionContext* execution_context,
+                                           WebSocketChannelClient* client,
+                                           SourceLocation* location)
     : client_(client),
       identifier_(CreateUniqueIdentifier()),
       message_chunks_(MakeGarbageCollected<WebSocketMessageChunkAccumulator>(
           execution_context->GetTaskRunner(TaskType::kNetworking))),
       execution_context_(execution_context),
-      location_at_construction_(std::move(location)),
+      location_at_construction_(location),
       websocket_(execution_context),
       handshake_client_receiver_(this, execution_context),
       client_receiver_(this, execution_context),
@@ -467,18 +467,18 @@ void WebSocketChannelImpl::Close(int code, const String& reason) {
 
 void WebSocketChannelImpl::Fail(const String& reason,
                                 mojom::ConsoleMessageLevel level,
-                                std::unique_ptr<SourceLocation> location) {
+                                SourceLocation* location) {
   DVLOG(1) << this << " Fail(" << reason << ")";
   probe::DidReceiveWebSocketMessageError(execution_context_, identifier_,
                                          reason);
-  const String message =
-      "WebSocket connection to '" + url_.ElidedString() + "' failed: " + reason;
+  const String message = StrCat(
+      {"WebSocket connection to '", url_.ElidedString(), "' failed: ", reason});
 
-  std::unique_ptr<SourceLocation> captured_location = CaptureSourceLocation();
+  SourceLocation* captured_location = CaptureSourceLocation();
   if (!captured_location->IsUnknown()) {
     // If we are in JavaScript context, use the current location instead
     // of passed one - it's more precise.
-    location = std::move(captured_location);
+    location = captured_location;
   } else if (location->IsUnknown()) {
     // No information is specified by the caller. Use the line number at the
     // connection.
@@ -486,8 +486,7 @@ void WebSocketChannelImpl::Fail(const String& reason,
   }
 
   execution_context_->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-      mojom::ConsoleMessageSource::kNetwork, level, message,
-      std::move(location)));
+      mojom::ConsoleMessageSource::kNetwork, level, message, location));
   // |reason| is only for logging and should not be provided for scripts,
   // hence close reason must be empty in tearDownFailedConnection.
   execution_context_->GetTaskRunner(TaskType::kNetworking)
@@ -661,6 +660,7 @@ void WebSocketChannelImpl::Trace(Visitor* visitor) const {
   visitor->Trace(handshake_client_receiver_);
   visitor->Trace(client_receiver_);
   visitor->Trace(message_chunks_);
+  visitor->Trace(location_at_construction_);
   WebSocketChannel::Trace(visitor);
 }
 
@@ -965,8 +965,8 @@ void WebSocketChannelImpl::DidFailLoadingBlob(FileErrorCode error_code) {
     return;
   }
   // FIXME: Generate human-friendly reason message.
-  FailAsError("Failed to load Blob: error code = " +
-              String::Number(static_cast<unsigned>(error_code)));
+  FailAsError(StrCat({"Failed to load Blob: error code = ",
+                      String::Number(static_cast<unsigned>(error_code))}));
 }
 
 void WebSocketChannelImpl::TearDownFailedConnection() {

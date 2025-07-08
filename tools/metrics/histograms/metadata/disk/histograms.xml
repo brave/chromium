@@ -34,7 +34,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DiskCache.0.TotalIOTimeRead" units="ms"
-    expires_after="2025-10-26">
+    expires_after="2025-12-28">
   <owner>jam@chromium.org</owner>
   <owner>swarm-team@google.com</owner>
   <summary>
@@ -45,13 +45,23 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DiskCache.0.TotalIOTimeWrite" units="ms"
-    expires_after="2025-10-26">
+    expires_after="2025-12-28">
   <owner>jam@chromium.org</owner>
   <owner>swarm-team@google.com</owner>
   <summary>
     The total time it takes to perform a write IO operation. This is emitted at
     each cache read, and measures from the IO thread to background thread,
     optionally waiting for the disk write, and back to the IO thread.
+  </summary>
+</histogram>
+
+<histogram name="DiskCache.HashBucketOK.Sampled" enum="Boolean"
+    expires_after="2025-12-28">
+  <owner>morlovich@chromium.org</owner>
+  <owner>src/net/disk_cache/OWNERS</owner>
+  <summary>
+    Whenever an entry is looked for in the index hash table, reports whether
+    it's in the right bucket. Sampled to report 1% of the time.
   </summary>
 </histogram>
 

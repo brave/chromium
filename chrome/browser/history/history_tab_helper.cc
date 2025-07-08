@@ -217,6 +217,8 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
     content::NavigationHandle* navigation_handle) {
   const ui::PageTransition page_transition =
       navigation_handle->GetPageTransition();
+  // Response headers can be null for navigations that don't commit or that
+  // bypass the network (e.g., about:blank).
   int http_response_code =
       navigation_handle->GetResponseHeaders()
           ? navigation_handle->GetResponseHeaders()->response_code()
@@ -282,7 +284,7 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
   // information to avoid storing ephemeral navigations from
   // credentialless iframes in the history backend. Currently, this is
   // behavior which will be tested behind the partitioned :visited links
-  // experiments flags (PartitionVisitedLinkDatabase and
+  // experiments flag (
   // PartitionVisitedLinkDatabaseWithSelfLinks). HOWEVER, due to layering
   // constraints, we do not have the ability to check these blink::feature
   // flags in any code found in components/history/core/ (which is where
@@ -295,8 +297,6 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
   // credentialless iframe.
   const bool are_partitioned_visited_links_enabled =
       base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase) ||
-      base::FeatureList::IsEnabled(
           blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks);
   const bool is_ephemeral = are_partitioned_visited_links_enabled &&
                                     navigation_handle->GetRenderFrameHost()
@@ -305,6 +305,19 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
                                       .nonce()
                                       .has_value()
                                 : false;
+
+  // If `blink::features::kVisitedLinksOnErrorNavigation` is enabled, visits to
+  // reachable URLs that result in a 404 response will be saved to history. We
+  // don't want to count error navigations as visits when calculating the Most
+  // Visited, so we filter them out here.
+  const bool status_code_qualifies_for_ntp_most_visited =
+      !(base::FeatureList::IsEnabled(
+            blink::features::kVisitedLinksOnErrorNavigation) &&
+        status_code_is_error) &&
+      http_response_code != 0;
+  const bool should_consider_for_ntp_most_visited =
+      status_code_qualifies_for_ntp_most_visited &&
+      ShouldConsiderForNtpMostVisited(*web_contents(), navigation_handle);
 
   // Reloads do not result in calling TitleWasSet() (which normally sets
   // the title), so a reload needs to set the title. This is
@@ -389,8 +402,8 @@ history::HistoryAddPageArgs HistoryTabHelper::CreateHistoryAddPageArgs(
       navigation_handle->GetNavigationId(), referrer_url,
       navigation_handle->GetRedirectChain(), page_transition, hidden,
       history::SOURCE_BROWSED, navigation_handle->DidReplaceEntry(),
-      ShouldConsiderForNtpMostVisited(*web_contents(), navigation_handle),
-      is_ephemeral, title, top_level_url, frame_url, opener,
+      should_consider_for_ntp_most_visited, is_ephemeral, title, top_level_url,
+      frame_url, opener,
       chrome_ui_data == nullptr ? std::nullopt : chrome_ui_data->bookmark_id(),
       app_id_, std::move(context_annotations));
 

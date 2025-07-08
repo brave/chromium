@@ -101,12 +101,13 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(
       return {kReadingListTypeName, READING_LIST, {READING_LIST}};
     case UserSelectableType::kTabs:
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-      return {kTabsTypeName,
-              SESSIONS,
-              {SESSIONS, SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA,
-               COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA}};
+      return {
+          kTabsTypeName,
+          SESSIONS,
+          {SESSIONS, SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA,
+           COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA, WORKSPACE_DESK}};
 #else
-      return {kTabsTypeName, SESSIONS, {SESSIONS}};
+      return {kTabsTypeName, SESSIONS, {SESSIONS, WORKSPACE_DESK}};
 #endif
     case UserSelectableType::kSavedTabGroups:
       // Note: Tab groups is presented as a separate type only on desktop.
@@ -150,7 +151,7 @@ UserSelectableTypeInfo GetUserSelectableOsTypeInfo(UserSelectableOsType type) {
       return {kOsPreferencesTypeName,
               OS_PREFERENCES,
               {OS_PREFERENCES, OS_PRIORITY_PREFERENCES, PRINTERS,
-               PRINTERS_AUTHORIZATION_SERVERS, WORKSPACE_DESK}};
+               PRINTERS_AUTHORIZATION_SERVERS}};
     case UserSelectableOsType::kOsWifiConfigurations:
       return {kOsWifiConfigurationsTypeName,
               WIFI_CONFIGURATIONS,
@@ -223,6 +224,32 @@ std::string UserSelectableTypeSetToString(UserSelectableTypeSet types) {
 
 DataTypeSet UserSelectableTypeToAllDataTypes(UserSelectableType type) {
   return GetUserSelectableTypeInfo(type).data_type_group;
+}
+
+base::Value::List UserSelectableTypeSetToValueList(
+    syncer::UserSelectableTypeSet user_selected_types) {
+  base::Value::List value_list;
+  for (syncer::UserSelectableType type : user_selected_types) {
+    if (const char* name = syncer::GetUserSelectableTypeName(type)) {
+      value_list.Append(name);
+    }
+  }
+  return value_list;
+}
+
+syncer::UserSelectableTypeSet ValueListToUserSelectableTypeSet(
+    const base::Value::List& value_list) {
+  syncer::UserSelectableTypeSet user_selected_types;
+  for (const base::Value& value : value_list) {
+    if (!value.is_string()) {
+      continue;
+    }
+    if (std::optional<syncer::UserSelectableType> type =
+            syncer::GetUserSelectableTypeFromString(value.GetString())) {
+      user_selected_types.Put(type.value());
+    }
+  }
+  return user_selected_types;
 }
 
 DataType UserSelectableTypeToCanonicalDataType(UserSelectableType type) {

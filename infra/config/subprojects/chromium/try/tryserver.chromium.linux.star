@@ -23,9 +23,7 @@ try_.defaults.set(
     execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
     orchestrator_cores = 2,
     orchestrator_siso_remote_jobs = siso.remote_jobs.HIGH_JOBS_FOR_CQ,
-    reclient_enabled = False,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
-    siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_linking = True,
 )
@@ -80,23 +78,6 @@ try_.builder(
         "size_threshold_mib": 300,
     },
     tryjob = try_.job(),
-)
-
-try_.builder(
-    name = "linux-blink-leak-rel",
-    mirrors = [
-        "ci/linux-blink-leak-rel",
-    ],
-    gn_args = gn_args.config(
-        configs = [
-            "release_try_builder",
-            "remoteexec",
-            "linux",
-            "x64",
-        ],
-    ),
-    contact_team_email = "chrome-sanitizer-builder-owners@google.com",
-    siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
 
 try_.builder(
@@ -526,11 +507,11 @@ try_.builder(
 )
 
 try_.builder(
-    name = "linux-wayland-rel",
+    name = "linux-wayland-weston-rel",
     branch_selector = branches.selector.LINUX_BRANCHES,
     mirrors = [
         "ci/Linux Builder (Wayland)",
-        "ci/Linux Tests (Wayland)",
+        "ci/linux-wayland-weston-rel-tests",
     ],
     gn_args = gn_args.config(
         configs = [
@@ -544,18 +525,11 @@ try_.builder(
     # TODO(crbug.com/329118490): Re-enable flake endorser.
     check_for_flakiness = False,
     check_for_flakiness_with_resultdb = False,
+    contact_team_email = "chrome-linux-engprod@google.com",
     coverage_test_types = ["unit", "overall"],
     tryjob = try_.job(
         location_filters = [
-            "chrome/browser/.+(ui|browser)test.+",
-            "chrome/browser/ui/views/.+test.+",
-            "chrome/browser/ui/views/tabs/.+",
-            "testing/xvfb\\.py",
-            "third_party/wayland/.+",
-            "third_party/wayland-protocols/.+",
             "third_party/weston/.+",
-            "ui/ozone/platform/wayland/.+",
-            "ui/views/widget/.+test.+",
         ],
     ),
     use_clang_coverage = True,
@@ -582,19 +556,24 @@ try_.builder(
     check_for_flakiness_with_resultdb = False,
     contact_team_email = "chrome-linux-engprod@google.com",
     coverage_test_types = ["unit", "overall"],
-    # TODO(crbug.com/401284929): Uncomment to add this try builder to CQ once tests are stable on mutter.
-    # tryjob = try_.job(
-    #     location_filters = [
-    #         "chrome/browser/.+(ui|browser)test.+",
-    #         "chrome/browser/ui/views/.+test.+",
-    #         "chrome/browser/ui/views/tabs/.+",
-    #         "testing/xvfb\\.py",
-    #         "third_party/wayland/.+",
-    #         "third_party/wayland-protocols/.+",
-    #         "ui/ozone/platform/wayland/.+",
-    #         "ui/views/widget/.+test.+",
-    #     ],
-    # ),
+    tryjob = try_.job(
+        location_filters = [
+            "chrome/browser/.+(ui|browser)test.+",
+            "chrome/browser/ui/views/.+test.+",
+            "chrome/browser/ui/views/tabs/.+",
+            "testing/xvfb\\.py",
+            "third_party/glib/.+",
+            "third_party/gvdb/.+",
+            "third_party/libdisplay-info/.+",
+            "third_party/libgudev/.+",
+            "third_party/libinput/.+",
+            "third_party/mutter/.+",
+            "third_party/wayland/.+",
+            "third_party/wayland-protocols/.+",
+            "ui/ozone/platform/wayland/.+",
+            "ui/views/widget/.+test.+",
+        ],
+    ),
     use_clang_coverage = True,
 )
 
@@ -616,6 +595,16 @@ try_.builder(
         "ci/linux-blink-asan-rel",
     ],
     gn_args = "ci/linux-blink-asan-rel",
+    contact_team_email = "chrome-sanitizer-builder-owners@google.com",
+    siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
+)
+
+try_.builder(
+    name = "linux-blink-leak-rel",
+    mirrors = [
+        "ci/linux-blink-leak-rel",
+    ],
+    gn_args = "ci/linux-blink-leak-rel",
     contact_team_email = "chrome-sanitizer-builder-owners@google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )

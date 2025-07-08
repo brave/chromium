@@ -5,7 +5,9 @@
 #include "chrome/browser/enterprise/connectors/analysis/page_print_request_handler.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
 #include "chrome/browser/enterprise/connectors/analysis/page_print_analysis_request.h"
 #include "chrome/browser/enterprise/connectors/analysis/request_handler_base.h"
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
@@ -18,11 +20,21 @@ namespace enterprise_connectors {
 
 namespace {
 
+constexpr size_t kMaxPagePrintUploadSizeMetricsKB = 500 * 1024;
+
 bool ShouldNotUploadLargePage(const AnalysisSettings& settings,
                               size_t page_size) {
+  size_t max_page_size_bytes =
+      safe_browsing::BinaryUploadService::kMaxUploadSizeBytes;
+  if (base::FeatureList::IsEnabled(
+          enterprise_connectors::kEnableNewUploadSizeLimit)) {
+    max_page_size_bytes =
+        1024 * 1024 *
+        enterprise_connectors::kMaxContentAnalysisFileSizeMB.Get();
+  }
+
   return settings.cloud_or_local_settings.is_cloud_analysis() &&
-         page_size > safe_browsing::BinaryUploadService::kMaxUploadSizeBytes &&
-         settings.block_large_files;
+         page_size > max_page_size_bytes && settings.block_large_files;
 }
 
 PagePrintRequestHandler::TestFactory* TestFactoryStorage() {
@@ -79,7 +91,7 @@ PagePrintRequestHandler::PagePrintRequestHandler(
                          upload_service,
                          profile,
                          url,
-                         safe_browsing::DeepScanAccessPoint::PRINT),
+                         DeepScanAccessPoint::PRINT),
       page_region_(std::move(page_region)),
       printer_name_(printer_name),
       page_content_type_(page_content_type),
@@ -94,8 +106,9 @@ void PagePrintRequestHandler::ReportWarningBypass(
       /*sha256*/ std::string(),
       /*mime_type*/ std::string(),
       extensions::SafeBrowsingPrivateEventRouter::kTriggerPagePrint,
-      /*content_tranfer_method*/ "", safe_browsing::DeepScanAccessPoint::PRINT,
-      /*content_size*/ -1, response_, user_justification);
+      /*content_tranfer_method*/ "",
+      /*content_size*/ -1, content_analysis_info_->referrer_chain(), response_,
+      user_justification);
 }
 
 void PagePrintRequestHandler::UploadForDeepScanning(
@@ -123,6 +136,12 @@ bool PagePrintRequestHandler::UploadDataImpl() {
     request->set_content_type(page_content_type_);
   }
 
+  // Create a histogram to track the size of printed pages being scanned up to
+  // 500MB.
+  base::UmaHistogramCustomCounts(
+      "Enterprise.FileAnalysisRequest.PrintedPageSize", page_size_bytes_ / 1024,
+      1, kMaxPagePrintUploadSizeMetricsKB, 50);
+
   if (ShouldNotUploadLargePage(content_analysis_info_->settings(),
                                page_size_bytes_)) {
     // The request shouldn't be finished early synchronously so that
@@ -148,7 +167,7 @@ void PagePrintRequestHandler::OnContentAnalysisResponse(
 
   RecordDeepScanMetrics(content_analysis_info_->settings()
                             .cloud_or_local_settings.is_cloud_analysis(),
-                        safe_browsing::DeepScanAccessPoint::PRINT,
+                        DeepScanAccessPoint::PRINT,
                         base::TimeTicks::Now() - upload_start_time_,
                         page_size_bytes_, result, response_);
 
@@ -166,8 +185,10 @@ void PagePrintRequestHandler::OnContentAnalysisResponse(
       /*sha256*/ std::string(),
       /*mime_type*/ std::string(),
       extensions::SafeBrowsingPrivateEventRouter::kTriggerPagePrint,
-      /*content_tranfer_method*/ "", safe_browsing::DeepScanAccessPoint::PRINT,
-      /*content_size*/ -1, result, response_,
+      /*content_tranfer_method*/ "",
+      content_analysis_info_->GetContentAreaAccountEmail(),
+      /*content_size*/ -1, content_analysis_info_->referrer_chain(), result,
+      response_,
       CalculateEventResult(content_analysis_info_->settings(),
                            request_handler_result.complies, should_warn));
 

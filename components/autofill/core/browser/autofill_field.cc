@@ -192,11 +192,14 @@ bool PreferHeuristicOverServer(FieldType heuristic_type,
   }
   // Until we gain confidence in the precision of AutofillAI predictions, they
   // should not overrule local heuristics. The AutofillAI prediction itself can
-  // always be retrieved via `GetAutofillAiServerTypePredictions`.
+  // always be retrieved via `GetAutofillAiServerTypePredictions`. The
+  // killswitch below is meant to experiment with removing this logic.
   return base::Contains(kAutofillHeuristicsVsServerOverrides,
                         std::make_pair(heuristic_type, server_type)) ||
          (heuristic_type != UNKNOWN_TYPE &&
-          GroupTypeOfFieldType(server_type) == FieldTypeGroup::kAutofillAi);
+          GroupTypeOfFieldType(server_type) == FieldTypeGroup::kAutofillAi &&
+          !base::FeatureList::IsEnabled(
+              features::kAutofillAiPreferModelResponseOverHeuristics));
 }
 
 // Util function for `ComputedType`. Returns the values of HtmlFieldType that
@@ -344,8 +347,7 @@ std::optional<FieldType> AutofillField::GetAutofillAiServerTypePredictions()
   for (const FieldPrediction& prediction : server_predictions_) {
     FieldType predicted_type =
         ToSafeFieldType(prediction.type(), NO_SERVER_DATA);
-    if (predicted_type != IMPROVED_PREDICTION &&
-        GroupTypeOfFieldType(predicted_type) == FieldTypeGroup::kAutofillAi) {
+    if (GroupTypeOfFieldType(predicted_type) == FieldTypeGroup::kAutofillAi) {
       return predicted_type;
     }
   }
@@ -379,7 +381,17 @@ void AutofillField::MaybeAddServerPrediction(
     server_predictions_.clear();
   }
 
-  prediction.set_type(ToSafeFieldType(prediction.type(), NO_SERVER_DATA));
+  const FieldType field_type =
+      ToSafeFieldType(prediction.type(), NO_SERVER_DATA);
+  prediction.set_type(field_type);
+
+  // LOYALTY_MEMBERSHIP_ID server predictions are only available for clients
+  // with the flag `kAutofillEnableLoyaltyCardsFilling` enabled.
+  if (field_type == LOYALTY_MEMBERSHIP_ID &&
+      !base::FeatureList::IsEnabled(
+          features::kAutofillEnableLoyaltyCardsFilling)) {
+    return;
+  }
 
   if (!prediction.has_source()) {
     // TODO(crbug.com/40243028): captured tests store old autofill api
@@ -403,7 +415,9 @@ void AutofillField::MaybeAddServerPrediction(
   if (IsDefaultPrediction(prediction)) {
     server_predictions_.push_back(std::move(prediction));
   } else if (IsAutofillAiPrediction(prediction)) {
-    if (base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema)) {
+    if (base::FeatureList::IsEnabled(features::kAutofillAiWithDataSchema) &&
+        (!IsTagType(field_type) ||
+         !base::FeatureList::IsEnabled(features::kAutofillAiNoTagTypes))) {
       server_predictions_.push_back(std::move(prediction));
     }
   } else {
@@ -544,6 +558,12 @@ AutofillField::PredictionResult AutofillField::GetComputedPredictionResult()
     // For international bank account number (IBAN) fields the heuristic
     // predictions get precedence over the server predictions.
     believe_server = believe_server && (heuristic_type_local != IBAN_VALUE);
+
+    // For loyalty card fields the heuristic predictions get precedence over
+    // `UNKNOWN_TYPE` server prediction.
+    believe_server =
+        believe_server && !(heuristic_type_local == LOYALTY_MEMBERSHIP_ID &&
+                            server_type_local == UNKNOWN_TYPE);
 
     if (believe_server) {
       return {AutofillType(server_type_local),

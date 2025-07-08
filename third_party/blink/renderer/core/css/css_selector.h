@@ -23,6 +23,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -37,11 +38,8 @@
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "third_party/blink/renderer/platform/wtf/bit_field.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
-
-namespace WTF {
-class StringBuilder;
-}  // namespace WTF
 
 namespace blink {
 
@@ -196,10 +194,10 @@ class CORE_EXPORT CSSSelector {
     // ~ combinator
     kIndirectAdjacent,
     // The relation types below are implicit combinators inserted at parse time
-    // before pseudo elements which match another flat tree element than the
+    // before pseudo-elements which match another flat tree element than the
     // rest of the compound.
     //
-    // Implicit combinator inserted before pseudo elements matching an element
+    // Implicit combinator inserted before pseudo-elements matching an element
     // inside a UA shadow tree. This combinator allows the selector matching to
     // cross a shadow root.
     //
@@ -342,11 +340,11 @@ class CORE_EXPORT CSSSelector {
     kPseudoPictureInPicture,
     kPseudoPlaying,
     kPseudoXrOverlay,
-    // Pseudo elements in UA ShadowRoots. Available in any stylesheets.
+    // Pseudo-elements in UA ShadowRoots. Available in any stylesheets.
     kPseudoWebKitCustomElement,
-    // Pseudo elements in UA ShadowRoots. Available only in UA stylesheets.
+    // Pseudo-elements in UA ShadowRoots. Available only in UA stylesheets.
     kPseudoBlinkInternalElement,
-    // Pseudo element for fragment styling
+    // Pseudo-element for fragment styling
     kPseudoColumn,
     kPseudoCue,
     kPseudoDefined,
@@ -378,15 +376,15 @@ class CORE_EXPORT CSSSelector {
     // https://drafts.csswg.org/css-overflow-5/#active-scroll-marker
     kPseudoTargetCurrent,
 
-    // The following selectors are used to target pseudo elements created for
+    // The following selectors are used to target pseudo-elements created for
     // ViewTransition.
     // See https://drafts.csswg.org/css-view-transitions-1/#pseudo
     // and https://drafts.csswg.org/css-view-transitions-2
     // for details.
     kPseudoViewTransition,
     kPseudoViewTransitionGroup,
-    kPseudoViewTransitionImagePair,
     kPseudoViewTransitionGroupChildren,
+    kPseudoViewTransitionImagePair,
     kPseudoViewTransitionNew,
     kPseudoViewTransitionOld,
     // Scroll markers pseudos for Carousel
@@ -589,6 +587,8 @@ class CORE_EXPORT CSSSelector {
   // True if :link or :visited pseudo-classes are found anywhere in
   // the selector.
   bool HasLinkOrVisited() const;
+  // True if :visited pseudo-classes are found anywhere in the selector.
+  bool HasVisited() const;
 
   bool HasRareData() const { return bits_.get<HasRareDataField>(); }
 
@@ -639,7 +639,7 @@ class CORE_EXPORT CSSSelector {
   // and these could happen concurrently. This trips up TSan,
   // even though the race is benign, so use an atomic read
   // instead of C++ bitfields.
-  using BitField = WTF::ConcurrentlyReadBitField<uint32_t>;
+  using BitField = ConcurrentlyReadBitField<uint32_t>;
   using RelationField =
       BitField::DefineFirstValue<uint32_t, 4>;  // RelationType
   using MatchField = RelationField::DefineNextValue<uint32_t, 4>;  // MatchType
@@ -698,16 +698,16 @@ class CORE_EXPORT CSSSelector {
   unsigned SpecificityForPage() const;
 
   template <bool expand_pseudo_references>
-  bool SerializeSimpleSelector(WTF::StringBuilder& builder,
+  bool SerializeSimpleSelector(StringBuilder& builder,
                                uintptr_t scope_id) const;
 
   template <bool expand_pseudo_references>
-  const CSSSelector* SerializeCompound(WTF::StringBuilder&,
+  const CSSSelector* SerializeCompound(StringBuilder&,
                                        uintptr_t scope_id) const;
 
   template <bool expand_pseudo_references>
   static void SerializeSelectorList(const CSSSelectorList* selector_list,
-                                    WTF::StringBuilder& builder,
+                                    StringBuilder& builder,
                                     uintptr_t scope_id);
 
   template <bool expand_pseudo_references>
@@ -789,7 +789,7 @@ class CORE_EXPORT CSSSelector {
     explicit DataUnion(ConstructEmptyValueTag) : value_() {}
 
     // A string `value` is used by many different selectors to store the string
-    // part of the selector. For example the name of a pseudo class (without
+    // part of the selector. For example the name of a pseudo-class (without
     // the colon), the class name of a class selector (without the dot),
     // the attribute of an attribute selector (without the brackets), etc.
     explicit DataUnion(const AtomicString& value) : value_(value) {}

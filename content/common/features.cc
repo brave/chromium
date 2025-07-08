@@ -147,10 +147,9 @@ BASE_FEATURE(kCommittedOriginEnforcements,
 // Turn on the tracking of origins committed in each renderer process in
 // ChildProcessSecurityPolicy. This is required for committed origin
 // enforcements, which is gated behind kCommittedOriginEnforcements.
-// Temporarily disabled while investigating https://crbug.com/377793089.
 BASE_FEATURE(kCommittedOriginTracking,
              "CommittedOriginTracking",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables support for the `Critical-CH` response header.
 // https://github.com/WICG/client-hints-infrastructure/blob/master/reliability.md#critical-ch
@@ -198,7 +197,7 @@ BASE_FEATURE(kFedCmSameSiteLax,
 // Enables installed web app matching for getInstalledRelatedApps API.
 BASE_FEATURE(kFilterInstalledAppsWebAppMatching,
              "FilterInstalledAppsWebAppMatching",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #if BUILDFLAG(IS_WIN)
 // Enables installed windows app matching for getInstalledRelatedApps API.
 // Note: This is enabled by default as a kill switch, since the functionality
@@ -301,23 +300,10 @@ BASE_FEATURE(kIOSurfaceCapturer,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
-// If enabled, set a soft limit on the number of renderer processes on
-// Android, after which Chrome will reuse existing processes when possible.
-// This diverges from current Clank behavior, where we do not set any upper
-// bound and instead delegate that to the system. 42 is approximated from
-// 8GBs ((8192 - 1024) / (16384 / 96)), and has nothing to do with Douglas
-// Adams' book. 1GB is a carve-out for integrated GPU VRAM.
-#if BUILDFLAG(IS_ANDROID)
-BASE_FEATURE(kRendererProcessLimitOnAndroid,
-             "RendererProcessLimitOnAndroid",
+// When enabled, child process will not terminate itself when IPC is reset.
+BASE_FEATURE(kKeepChildProcessAfterIPCReset,
+             "KeepChildProcessAfterIPCReset",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE_PARAM(size_t,
-                   kRendererProcessLimitOnAndroidCount,
-                   &kRendererProcessLimitOnAndroid,
-                   "count",
-                   42u);
-#endif  // BUILDFLAG(IS_ANDROID)
 
 // If this feature is enabled, media-device enumerations use a cache that is
 // invalidated upon notifications sent by base::SystemMonitor. If disabled, the
@@ -354,6 +340,12 @@ BASE_FEATURE_PARAM(size_t,
                    "count",
                    1u);
 
+// When enabled, NavigationThrottleRegistry will cache attribute query results
+// for the next same query. See https://crbug.com/424460302.
+BASE_FEATURE(kNavigationThrottleRegistryAttributeCache,
+             "NavigationThrottleRegistryAttributeCache",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // This feature enables Permissions Policy verification in the Browser process
 // in content/. Additionally only for //chrome Permissions Policy verification
 // is enabled in components/permissions/permission_context_base.cc
@@ -362,6 +354,12 @@ BASE_FEATURE(kPermissionsPolicyVerificationInContent,
              "kPermissionsPolicyVerificationInContent",
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+// If enabled, responses with an operative Cookie-Indices will not be used
+// if the relevant cookie values have changed.
+BASE_FEATURE(kPrefetchCookieIndices,
+             "PrefetchCookieIndices",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Preloading holdback feature disables preloading (e.g., preconnect, prefetch,
 // and prerender) on all predictors. This is useful in comparing the impact of

@@ -196,7 +196,7 @@ bool ParseHTMLInteger(const String& input, int& value) {
     DCHECK_LT(position, chars.size());
 
     bool ok;
-    constexpr auto kOptions = WTF::NumberParsingOptions()
+    constexpr auto kOptions = NumberParsingOptions()
                                   .SetAcceptTrailingGarbage()
                                   .SetAcceptLeadingPlus();
     int wtf_value = CharactersToInt(chars.subspan(position), kOptions, &ok);
@@ -207,12 +207,12 @@ bool ParseHTMLInteger(const String& input, int& value) {
   });
 }
 
-static WTF::NumberParsingResult ParseHTMLNonNegativeIntegerInternal(
+static NumberParsingResult ParseHTMLNonNegativeIntegerInternal(
     const String& input,
     unsigned& value) {
   unsigned length = input.length();
   if (length == 0)
-    return WTF::NumberParsingResult::kError;
+    return NumberParsingResult::kError;
 
   return WTF::VisitCharacters(
       input, [&](auto chars) {
@@ -232,19 +232,20 @@ static WTF::NumberParsingResult ParseHTMLNonNegativeIntegerInternal(
 
         // Step 5: If position is past the end of input, return an error.
         if (position == chars.size()) {
-          return WTF::NumberParsingResult::kError;
+          return NumberParsingResult::kError;
         }
         DCHECK_LT(position, chars.size());
 
-        WTF::NumberParsingResult result;
-        constexpr auto kOptions = WTF::NumberParsingOptions()
+        NumberParsingResult result;
+        constexpr auto kOptions = NumberParsingOptions()
                                       .SetAcceptTrailingGarbage()
                                       .SetAcceptLeadingPlus()
                                       .SetAcceptMinusZeroForUnsigned();
         unsigned wtf_value =
             CharactersToUInt(chars.subspan(position), kOptions, &result);
-        if (result == WTF::NumberParsingResult::kSuccess)
+        if (result == NumberParsingResult::kSuccess) {
           value = wtf_value;
+        }
         return result;
       });
 }
@@ -252,7 +253,7 @@ static WTF::NumberParsingResult ParseHTMLNonNegativeIntegerInternal(
 // https://html.spec.whatwg.org/C/#rules-for-parsing-non-negative-integers
 bool ParseHTMLNonNegativeInteger(const String& input, unsigned& value) {
   return ParseHTMLNonNegativeIntegerInternal(input, value) ==
-         WTF::NumberParsingResult::kSuccess;
+         NumberParsingResult::kSuccess;
 }
 
 bool ParseHTMLClampedNonNegativeInteger(const String& input,
@@ -261,14 +262,14 @@ bool ParseHTMLClampedNonNegativeInteger(const String& input,
                                         unsigned& value) {
   unsigned parsed_value;
   switch (ParseHTMLNonNegativeIntegerInternal(input, parsed_value)) {
-    case WTF::NumberParsingResult::kError:
+    case NumberParsingResult::kError:
       return false;
-    case WTF::NumberParsingResult::kOverflowMin:
+    case NumberParsingResult::kOverflowMin:
       NOTREACHED() << input;
-    case WTF::NumberParsingResult::kOverflowMax:
+    case NumberParsingResult::kOverflowMax:
       value = max;
       return true;
-    case WTF::NumberParsingResult::kSuccess:
+    case NumberParsingResult::kSuccess:
       value = std::max(min, std::min(parsed_value, max));
       return true;
   }
@@ -383,8 +384,7 @@ enum class MetaAttribute {
   kPragma,
 };
 
-WTF::TextEncoding EncodingFromMetaAttributes(
-    const HTMLAttributeList& attributes) {
+TextEncoding EncodingFromMetaAttributes(const HTMLAttributeList& attributes) {
   bool got_pragma = false;
   bool has_charset = false;
   MetaAttribute mode = MetaAttribute::kNone;
@@ -411,9 +411,9 @@ WTF::TextEncoding EncodingFromMetaAttributes(
 
   if (mode == MetaAttribute::kCharset ||
       (mode == MetaAttribute::kPragma && got_pragma))
-    return WTF::TextEncoding(StripLeadingAndTrailingHTMLSpaces(charset));
+    return TextEncoding(StripLeadingAndTrailingHTMLSpaces(charset));
 
-  return WTF::TextEncoding();
+  return TextEncoding();
 }
 
 static bool ThreadSafeEqual(const StringImpl* a, const StringImpl* b) {
@@ -441,10 +441,10 @@ inline StringImpl* FindStringIfStatic(base::span<const CharType> characters) {
   // ComputeHashAndMaskTop8Bits is the function StringImpl::Hash() uses.
   unsigned hash = StringHasher::ComputeHashAndMaskTop8Bits(
       reinterpret_cast<const char*>(characters.data()), characters.size());
-  const WTF::StaticStringsTable& table = StringImpl::AllStaticStrings();
+  const StaticStringsTable& table = StringImpl::AllStaticStrings();
   DCHECK(!table.empty());
 
-  WTF::StaticStringsTable::const_iterator it = table.find(hash);
+  StaticStringsTable::const_iterator it = table.find(hash);
   if (it == table.end())
     return nullptr;
   // It's possible to have hash collisions between arbitrary strings and known

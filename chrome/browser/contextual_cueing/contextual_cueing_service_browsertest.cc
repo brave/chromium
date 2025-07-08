@@ -23,6 +23,7 @@
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/optimization_guide/proto/contextual_cueing_metadata.pb.h"
@@ -60,9 +61,11 @@ class ContextualCueingServiceBrowserTestZSSFlag
     : public ContextualCueingServiceBrowserTest {
  public:
   ContextualCueingServiceBrowserTestZSSFlag() {
-    scoped_feature_list_.InitWithFeatures(
-        {kGlicZeroStateSuggestions, features::kGlic,
-         features::kTabstripComboButton},
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {{kGlicZeroStateSuggestions,
+          {{"ZSSAllowContextualSuggestionsForSearchResultsPages", "false"}}},
+         {features::kGlic, {}},
+         {features::kTabstripComboButton, {}}},
         {});
   }
 
@@ -89,8 +92,9 @@ class ZeroStateSuggestionsFetcher : public content::WebContentsObserver {
     ContextualCueingService* service =
         ContextualCueingServiceFactory::GetForProfile(
             Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
-    service->GetContextualGlicZeroStateSuggestions(
-        web_contents(), /*is_fre=*/false, std::move(callback_));
+    service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+        web_contents(), /*is_fre=*/false, /*supported_tools=*/{},
+        std::move(callback_));
   }
 
   void set_callback(GlicSuggestionsCallback callback) {
@@ -148,8 +152,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSFlag,
 
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
   auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  service->GetContextualGlicZeroStateSuggestions(web_contents, /*is_fre=*/true,
-                                                 future.GetCallback());
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/true,
+      /*supported_tools=*/{}, future.GetCallback());
   ASSERT_TRUE(future.Wait());
 
   histogram_tester.ExpectUniqueSample(
@@ -176,8 +181,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSFlag,
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
         browser(),
         embedded_test_server()->GetURL("/optimization_guide/zss_page.html")));
-    service->GetContextualGlicZeroStateSuggestions(
-        web_contents, /*is_fre=*/true, future.GetCallback());
+    service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+        web_contents, /*is_fre=*/true, /*supported_tools=*/{},
+        future.GetCallback());
     ASSERT_TRUE(future.Wait());
 
     histogram_tester.ExpectTotalCount(
@@ -279,8 +285,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSFlag,
 
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
   auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  service->GetContextualGlicZeroStateSuggestions(web_contents, /*is_fre=*/false,
-                                                 future.GetCallback());
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/false,
+      /*supported_tools=*/{}, future.GetCallback());
   ASSERT_TRUE(future.Wait());
   histogram_tester.ExpectTotalCount(
       "ContextualCueing.ZeroStateSuggestions.ContextExtractionDone", 0);
@@ -306,8 +313,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSFlag,
 
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
   auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  service->GetContextualGlicZeroStateSuggestions(web_contents, /*is_fre=*/false,
-                                                 future.GetCallback());
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/false,
+      /*supported_tools=*/{}, future.GetCallback());
   ASSERT_TRUE(future.Wait());
   histogram_tester.ExpectTotalCount(
       "ContextualCueing.ZeroStateSuggestions.ContextExtractionDone", 0);
@@ -315,6 +323,56 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSFlag,
       "OptimizationGuide.ModelExecutionFetcher.RequestStatus."
       "ZeroStateSuggestions",
       0);
+}
+
+class ContextualCueingServiceBrowserTestAllowZSSForSrp
+    : public ContextualCueingServiceBrowserTest {
+ public:
+  ContextualCueingServiceBrowserTestAllowZSSForSrp() {
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {{kGlicZeroStateSuggestions,
+          {{"ZSSAllowContextualSuggestionsForSearchResultsPages", "true"}}},
+         {features::kGlic, {}},
+         {features::kTabstripComboButton, {}}},
+        {});
+  }
+
+  void SetUpOnMainThread() override {
+    browser()->profile()->GetPrefs()->SetBoolean(
+        glic::prefs::kGlicTabContextEnabled, true);
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(switches::kGlicDev);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestAllowZSSForSrp,
+                       AllowsSearchResultsPage) {
+  base::HistogramTester histogram_tester;
+
+  auto* service =
+      ContextualCueingServiceFactory::GetForProfile(browser()->profile());
+  auto* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(browser()->profile());
+
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(),
+      template_url_service->GenerateSearchURLForDefaultSearchProvider(u"foo")));
+
+  base::test::TestFuture<std::optional<std::vector<std::string>>> future;
+  auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/false,
+      /*supported_tools=*/{}, future.GetCallback());
+  ASSERT_TRUE(future.Wait());
+  histogram_tester.ExpectUniqueSample(
+      "ContextualCueing.ZeroStateSuggestions.ContextExtractionDone", true, 1);
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.ModelExecutionFetcher.RequestStatus."
+      "ZeroStateSuggestions",
+      1);
 }
 
 class ContextualCueingServiceBrowserTestZSSHistogram
@@ -398,8 +456,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSHistogram,
 
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
   auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  service->GetContextualGlicZeroStateSuggestions(web_contents, /*is_fre=*/true,
-                                                 future.GetCallback());
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/true,
+      /*supported_tools=*/{}, future.GetCallback());
   ASSERT_TRUE(future.Wait());
 
   histogram_tester.ExpectTotalCount(
@@ -427,8 +486,9 @@ IN_PROC_BROWSER_TEST_F(ContextualCueingServiceBrowserTestZSSHistogram,
 
   base::test::TestFuture<std::optional<std::vector<std::string>>> future;
   auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
-  service->GetContextualGlicZeroStateSuggestions(web_contents, /*is_fre=*/true,
-                                                 future.GetCallback());
+  service->GetContextualGlicZeroStateSuggestionsForFocusedTab(
+      web_contents, /*is_fre=*/true,
+      /*supported_tools=*/{}, future.GetCallback());
   ASSERT_TRUE(future.Wait());
 
   histogram_tester.ExpectTotalCount(

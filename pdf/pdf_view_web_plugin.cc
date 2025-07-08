@@ -16,7 +16,6 @@
 
 #include "base/auto_reset.h"
 #include "base/check_op.h"
-#include "base/compiler_specific.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/containers/queue.h"
 #include "base/containers/span.h"
@@ -30,6 +29,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/escape.h"
@@ -142,14 +142,6 @@ constexpr double kMinZoom = 0.01;
 constexpr base::TimeDelta kAccessibilityPageDelay = base::Milliseconds(100);
 
 constexpr base::TimeDelta kFindResultCooldown = base::Milliseconds(100);
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-// This constant should have the same value as the one in
-// `pdf_view_web_plugin_unittest.cc`.
-// LINT.IfChange(searchify_state_propagation_delay)
-constexpr base::TimeDelta kSearchifyStatePropagationDelay = base::Seconds(1);
-// LINT.ThenChange(//pdf/pdf_view_web_plugin_unittest.cc:searchify_state_propagation_delay)
-#endif
 
 constexpr std::string_view kChromeExtensionHost =
     "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/";
@@ -1031,6 +1023,16 @@ void PdfViewWebPlugin::ImeFinishComposingTextForPlugin(
   HandleImeCommit(composition_text_);
 }
 
+bool PdfViewWebPlugin::SupportsAnnotation() const {
+  return true;
+}
+
+void PdfViewWebPlugin::BindAnnotationAgentContainer(
+    blink::CrossVariantMojoReceiver<
+        blink::mojom::AnnotationAgentContainerInterfaceBase> pending_receiver) {
+  annotation_agent_container_receiver_.Bind(std::move(pending_receiver));
+}
+
 void PdfViewWebPlugin::ProposeDocumentLayout(const DocumentLayout& layout) {
   base::Value::List page_dimensions;
   page_dimensions.reserve(layout.page_count());
@@ -1549,48 +1551,52 @@ bool PdfViewWebPlugin::IsInAnnotationMode() const {
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 void PdfViewWebPlugin::OnSearchifyStateChange(bool busy) {
-  if (!busy) {
-    if (show_searchify_in_progress_) {
-      show_searchify_in_progress_ = false;
-      // The UI is asked to hide the progress indicator with 1s delay, so that
-      // when the OCR process finishes in less than 1s, the indicator would not
-      // flicker.
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+  switch (searchify_state_) {
+    case SearchifyState::kNotStarted:
+      // Expected to be called only to say searchify started.
+      CHECK(busy);
+      pdf_host_->OnSearchifyStarted();
+      searchify_state_ = SearchifyState::kStarted;
+      break;
+
+    case SearchifyState::kStarted:
+      // Expected to be called only to say searchify stopped.
+      CHECK(!busy);
+      searchify_state_ = SearchifyState::kStopped;
+      break;
+
+    case SearchifyState::kShowingInProgress:
+      // Expected to be called only to say searchify stopped.
+      CHECK(!busy);
+      // Executing the script directly may cause a crash in blink as it might be
+      // during layout change, hence posting it (crbug.com/401142034).
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
           base::BindOnce(&PdfViewWebPlugin::SetShowSearchifyInProgress,
-                         weak_factory_.GetWeakPtr(), /*show=*/false),
-          kSearchifyStatePropagationDelay);
-    }
-    return;
-  }
+                         weak_factory_.GetWeakPtr(), /*show=*/false));
+      searchify_state_ = SearchifyState::kStopped;
+      break;
 
-  if (!searchify_started_) {
-    searchify_started_ = true;
-    pdf_host_->OnSearchifyStarted();
+    case SearchifyState::kStopped:
+      // Expected to be called only to say searchify started again.
+      CHECK(busy);
+      searchify_state_ = SearchifyState::kStarted;
+      break;
   }
+}
 
-  if (!show_searchify_in_progress_) {
-    show_searchify_in_progress_ = true;
+void PdfViewWebPlugin::MaybeShowSearchifyInProgress() {
+  if (searchify_state_ == SearchifyState::kStarted) {
+    searchify_state_ = SearchifyState::kShowingInProgress;
     // Executing the script directly may cause a crash in blink as it might be
     // during layout change, hence posting it (crbug.com/401142034).
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&PdfViewWebPlugin::SetShowSearchifyInProgress,
                                   weak_factory_.GetWeakPtr(), /*show=*/true));
-    return;
   }
 }
 
 void PdfViewWebPlugin::SetShowSearchifyInProgress(bool show) {
-  // Searchify tasks are expected to be quite fast most of the times, and if so,
-  // progress indicator should be kept visible for at least 1s to avoiding
-  // flickering.
-  // A false `show` and a true `show_searchify_in_progress_` means that during
-  // the 1s after OCR stopped, it started again and hence the UI should keep the
-  // progress bar visible.
-  if (!show && show_searchify_in_progress_) {
-    return;
-  }
-
   client_->PostMessage(base::Value::Dict()
                            .Set("type", "showSearchifyInProgress")
                            .Set("show", show));
@@ -1752,11 +1758,9 @@ void PdfViewWebPlugin::HandleGetNamedDestinationMessage(
     std::ostringstream view_stream;
     view_stream << named_destination->view;
     if (named_destination->xyz_params.empty()) {
-      UNSAFE_TODO({
-        for (unsigned long i = 0; i < named_destination->num_params; ++i) {
-          view_stream << "," << named_destination->params[i];
-        }
-      });
+      for (unsigned long i = 0; i < named_destination->num_params; ++i) {
+        view_stream << "," << named_destination->params[i];
+      }
     } else {
       view_stream << "," << named_destination->xyz_params;
     }
@@ -2928,6 +2932,28 @@ void PdfViewWebPlugin::SendPrintPreviewLoadedNotification() {
   client_->PostMessage(base::Value::Dict().Set("type", "printPreviewLoaded"));
 }
 
+void PdfViewWebPlugin::CreateAgent(
+    mojo::PendingRemote<blink::mojom::AnnotationAgentHost> host_remote,
+    mojo::PendingReceiver<blink::mojom::AnnotationAgent> agent_receiver,
+    blink::mojom::AnnotationType type,
+    blink::mojom::SelectorPtr selector,
+    std::optional<int> search_range_start_node_id) {
+  // TODO(crbug.com/395859365): Implement this.
+}
+
+void PdfViewWebPlugin::CreateAgentFromSelection(
+    blink::mojom::AnnotationType type,
+    CreateAgentFromSelectionCallback callback) {
+  // Currently, there is no immediate plan to support the "Copy Link to
+  // Highlight" context menu.
+  NOTIMPLEMENTED();
+}
+
+void PdfViewWebPlugin::RemoveAgentsOfType(blink::mojom::AnnotationType type) {
+  // TODO(crbug.com/395859365): Implement the "Remove highlight" from the
+  // right-click's context menu.
+}
+
 void PdfViewWebPlugin::SendThumbnailForTesting(base::Value::Dict reply,
                                                int page_index,
                                                Thumbnail thumbnail) {
@@ -3007,7 +3033,7 @@ void PdfViewWebPlugin::PrepareAndSetAccessibilityPageInfo(int32_t page_index) {
   // Ensure page is loaded so that it can schedule a searchify operation if
   // needed.
   engine_->GetPage(page_index)->GetPage();
-  if (engine_->PageNeedsSearchify(page_index)) {
+  if (engine_->IsPageScheduledForSearchify(page_index)) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&PdfViewWebPlugin::PrepareAndSetAccessibilityPageInfo,

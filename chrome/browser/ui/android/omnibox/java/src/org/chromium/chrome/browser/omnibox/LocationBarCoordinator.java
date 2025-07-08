@@ -30,6 +30,7 @@ import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lens.LensController;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
@@ -118,6 +119,7 @@ public class LocationBarCoordinator
     private @Nullable View mDeleteButton;
     private @Nullable View mMicButton;
     private @Nullable View mLensButton;
+    private @Nullable View mComposeplateButton;
     private @Nullable View mBookmarksButton;
     private @Nullable View mSaveOfflineButton;
     private CallbackController mCallbackController = new CallbackController();
@@ -320,6 +322,11 @@ public class LocationBarCoordinator
         mLensButton = mLocationBarLayout.findViewById(R.id.lens_camera_button);
         mLensButton.setOnClickListener(mLocationBarMediator::lensButtonClicked);
 
+        mComposeplateButton = mLocationBarLayout.findViewById(R.id.composeplate_button);
+        if (ChromeFeatureList.sAndroidComposeplate.isEnabled()) {
+            mComposeplateButton.setOnClickListener(mLocationBarMediator::composeplateButtonClicked);
+        }
+
         mSaveOfflineButton = mLocationBarLayout.findViewById(R.id.save_offline_button);
         if (mSaveOfflineButton != null) {
             mSaveOfflineButton.setOnClickListener(mLocationBarMediator::saveOfflineButtonClicked);
@@ -369,6 +376,11 @@ public class LocationBarCoordinator
         // and can be instantiated on phones *or* tablets.
     }
 
+    @Override
+    public float getUrlBarHeight() {
+        return mUrlBar.getHeight();
+    }
+
     @SuppressWarnings("NullAway")
     @Override
     public void destroy() {
@@ -388,6 +400,9 @@ public class LocationBarCoordinator
 
         mLensButton.setOnClickListener(null);
         mLensButton = null;
+
+        mComposeplateButton.setOnClickListener(null);
+        mComposeplateButton = null;
 
         if (mBookmarksButton != null) {
             mBookmarksButton.setOnClickListener(null);
@@ -544,6 +559,11 @@ public class LocationBarCoordinator
     @Override
     public void setHideStatusIconForSecureOrigins(boolean hideStatusIconForSecureOrigins) {
         mStatusCoordinator.setHideStatusIconForSecureOrigins(hideStatusIconForSecureOrigins);
+    }
+
+    @Override
+    public void maybeShowOrClearCursorInLocationBar() {
+        mLocationBarMediator.maybeShowOrClearCursorInLocationBar();
     }
 
     // AutocompleteDelegate implementation.
@@ -763,13 +783,6 @@ public class LocationBarCoordinator
         mLocationBarMediator.updateButtonVisibility();
     }
 
-    /**
-     * @param show Whether the status icon background should be shown.
-     */
-    public void setStatusIconBackgroundVisibility(boolean show) {
-        mStatusCoordinator.setStatusIconBackgroundVisibility(show);
-    }
-
     /** Returns whether the layout is RTL. */
     public boolean isLayoutRtl() {
         return mLocationBarLayout.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
@@ -850,7 +863,7 @@ public class LocationBarCoordinator
     }
 
     public void onUrlChangedForTesting() {
-        mLocationBarMediator.onUrlChanged();
+        mLocationBarMediator.onUrlChanged(false);
     }
 
     public void setLensControllerForTesting(LensController lensController) {

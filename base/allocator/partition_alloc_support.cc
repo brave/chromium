@@ -26,6 +26,7 @@
 #include "base/functional/callback.h"
 #include "base/immediate_crash.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/memory/post_delayed_memory_reduction_task.h"
 #include "base/memory/raw_ptr_asan_service.h"
 #include "base/metrics/histogram_functions.h"
@@ -41,11 +42,12 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "partition_alloc/allocation_guard.h"
 #include "partition_alloc/buildflags.h"
 #include "partition_alloc/dangling_raw_ptr_checks.h"
+#include "partition_alloc/in_slot_metadata.h"
 #include "partition_alloc/memory_reclaimer.h"
 #include "partition_alloc/page_allocator.h"
 #include "partition_alloc/partition_alloc_base/debug/alias.h"
@@ -139,17 +141,6 @@ void RunThreadCachePeriodicPurge() {
 
 }  // namespace
 
-// When enabled, disable the memory reclaimer in background.
-BASE_FEATURE(kDisableMemoryReclaimerInBackground,
-             "DisableMemoryReclaimerInBackground",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// When enabled, limit the time memory reclaimer may take, returning early when
-// exceeded.
-BASE_FEATURE(kPartitionAllocShortMemoryReclaim,
-             "PartitionAllocShortMemoryReclaim",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // static
 MemoryReclaimerSupport& MemoryReclaimerSupport::Instance() {
   static base::NoDestructor<MemoryReclaimerSupport> instance;
@@ -207,16 +198,7 @@ void MemoryReclaimerSupport::Run() {
   TRACE_EVENT0("base", "partition_alloc::MemoryReclaimer::Reclaim()");
   has_pending_task_ = false;
 
-  {
-    // Micros, since memory reclaiming should typically take at most a few ms.
-    SCOPED_UMA_HISTOGRAM_TIMER_MICROS("Memory.PartitionAlloc.MemoryReclaim");
-    if (base::FeatureList::IsEnabled(kPartitionAllocShortMemoryReclaim)) {
-      ::partition_alloc::MemoryReclaimer::Instance()->ReclaimFast();
-    } else {
-      ::partition_alloc::MemoryReclaimer::Instance()->ReclaimNormal();
-    }
-  }
-
+  ::partition_alloc::MemoryReclaimer::Instance()->ReclaimFast();
   MaybeScheduleTask();
 }
 
@@ -232,10 +214,7 @@ TimeDelta MemoryReclaimerSupport::GetInterval() {
 }
 
 void MemoryReclaimerSupport::MaybeScheduleTask(TimeDelta delay) {
-  if (has_pending_task_ ||
-      (base::FeatureList::IsEnabled(kDisableMemoryReclaimerInBackground) &&
-       !in_foreground_) ||
-      !task_runner_) {
+  if (has_pending_task_ || !in_foreground_ || !task_runner_) {
     return;
   }
 
@@ -863,7 +842,7 @@ PartitionAllocSupport::GetSchedulerLoopQuarantineConfiguration(
   }
 
   config.enable_quarantine = true;
-  config.quarantine_config.branch_capacity_in_bytes = static_cast<size_t>(
+  config.branch_capacity_in_bytes = static_cast<size_t>(
       base::features::kPartitionAllocSchedulerLoopQuarantineBranchCapacity
           .Get());
   config.enable_zapping = base::FeatureList::IsEnabled(
@@ -871,16 +850,14 @@ PartitionAllocSupport::GetSchedulerLoopQuarantineConfiguration(
 
   switch (branch_type) {
     case features::internal::SchedulerLoopQuarantineBranchType::kGlobal:
-      config.quarantine_config.leak_on_destruction = true;
-      config.quarantine_config.lock_required = true;
+      config.leak_on_destruction = true;
       break;
     case features::internal::SchedulerLoopQuarantineBranchType::
         kThreadLocalDefault:
     case features::internal::SchedulerLoopQuarantineBranchType::kMain:
-      config.quarantine_config.leak_on_destruction = false;
-      config.quarantine_config.lock_required = false;
+      config.leak_on_destruction = false;
       if (process_type == "") {
-        config.quarantine_config.branch_capacity_in_bytes = static_cast<size_t>(
+        config.branch_capacity_in_bytes = static_cast<size_t>(
             base::features::
                 kPartitionAllocSchedulerLoopQuarantineBrowserUICapacity.Get());
       }
@@ -929,6 +906,10 @@ PartitionAllocSupport::GetBrpConfiguration(const std::string& process_type) {
         .enable_brp = true,
         .extra_extras_size = static_cast<size_t>(
             base::features::kBackupRefPtrExtraExtrasSizeParam.Get()),
+        .suppress_double_free_detected_crash = static_cast<bool>(
+            base::features::kBackupRefPtrSuppressDoubleFreeDetectedCrash.Get()),
+        .suppress_corruption_detected_crash = static_cast<bool>(
+            base::features::kBackupRefPtrSuppressCorruptionDetectedCrash.Get()),
     };
   }
 #endif
@@ -936,6 +917,8 @@ PartitionAllocSupport::GetBrpConfiguration(const std::string& process_type) {
   return {
       .enable_brp = false,
       .extra_extras_size = 0,
+      .suppress_double_free_detected_crash = false,
+      .suppress_corruption_detected_crash = false,
   };
 }
 
@@ -1037,6 +1020,14 @@ void PartitionAllocSupport::ReconfigureAfterFeatureListInit(
   DCHECK_NE(process_type, switches::kZygoteProcess);
   [[maybe_unused]] BrpConfiguration brp_config =
       GetBrpConfiguration(process_type);
+#if PA_BUILDFLAG(IS_IOS) && PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+  if (brp_config.suppress_double_free_detected_crash) {
+    partition_alloc::internal::SuppressDoubleFreeDetectedCrash();
+  }
+  if (brp_config.suppress_corruption_detected_crash) {
+    partition_alloc::internal::SuppressCorruptionDetectedCrash();
+  }
+#endif  // PA_BUILDFLAG(IS_IOS) && PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 
   // Configure ASAN hooks to report the `MiraclePtr status`. This is enabled
   // only if BackupRefPtr is normally enabled in the current process for the
@@ -1185,10 +1176,6 @@ void PartitionAllocSupport::ReconfigureAfterFeatureListInit(
 #endif  // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE) &&
         // PA_BUILDFLAG(IS_ANDROID)
 
-  allocator_shim::UseSmallSingleSlotSpans use_small_single_slot_spans(
-      base::FeatureList::IsEnabled(
-          features::kPartitionAllocUseSmallSingleSlotSpans));
-
   allocator_shim::ConfigurePartitions(
       allocator_shim::EnableBrp(brp_config.enable_brp),
       brp_config.extra_extras_size,
@@ -1197,8 +1184,7 @@ void PartitionAllocSupport::ReconfigureAfterFeatureListInit(
       scheduler_loop_quarantine_global_config,
       scheduler_loop_quarantine_thread_local_config,
       allocator_shim::EventuallyZeroFreedMemory(eventually_zero_freed_memory),
-      allocator_shim::FewerMemoryRegions(fewer_memory_regions),
-      use_small_single_slot_spans);
+      allocator_shim::FewerMemoryRegions(fewer_memory_regions));
 
   const uint32_t extras_size = allocator_shim::GetMainPartitionRootExtrasSize();
   // As per description, extras are optional and are expected not to
@@ -1437,6 +1423,15 @@ void CheckHeapIntegrity(const void* ptr) {
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   partition_alloc::PartitionRoot::CheckMetadataIntegrity(ptr);
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+}
+
+// The function here is called right before crashing with
+// `DoubleFreeOrCorruptionDetected()`. We provide an address for the slot start
+// to the function, and it may use that for debugging purpose.
+void SetDoubleFreeOrCorruptionDetectedFn(void (*fn)(uintptr_t)) {
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+  partition_alloc::internal::InSlotMetadata::SetCorruptionDetectedFn(fn);
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 }
 
 }  // namespace base::allocator

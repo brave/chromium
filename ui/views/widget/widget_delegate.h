@@ -165,11 +165,6 @@ namespace crostini {
 class AppRestartDialog;
 }
 
-namespace enterprise_connectors {
-class ContentAnalysisDialogController;
-class ContentAnalysisDialogBehaviorBrowserTest;
-}  // namespace enterprise_connectors
-
 namespace exo {
 class ShellSurfaceBase;
 }
@@ -437,9 +432,6 @@ class VIEWS_EXPORT WidgetDelegate {
     friend class ::constrained_window::BrowserModalHelper;
     friend class ::content::ShellPlatformDelegate;
     friend class ::crostini::AppRestartDialog;
-    friend class ::enterprise_connectors::ContentAnalysisDialogController;
-    friend class ::enterprise_connectors::
-        ContentAnalysisDialogBehaviorBrowserTest;
     friend class ::exo::ShellSurfaceBase;
     friend class ::extensions::WebFileHandlersPermissionHandler;
     friend class ::javascript_dialogs::AppModalDialogViewViews;
@@ -509,7 +501,7 @@ class VIEWS_EXPORT WidgetDelegate {
   // Called whenever the widget's position changes.
   virtual void OnWidgetMove();
 
-  // Called with the display changes (color depth or resolution).
+  // Called when the display changes (color depth or resolution).
   virtual void OnDisplayChanged();
 
   // Called when the work area (the desktop area minus task bars,

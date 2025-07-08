@@ -10,6 +10,7 @@
 #include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/task/bind_post_task.h"
 #include "base/time/time.h"
@@ -68,25 +69,15 @@
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "v8/include/v8.h"
 
-namespace WTF {
+namespace blink {
 
 template <>
-struct CrossThreadCopier<blink::VideoFrameLayout>
-    : public CrossThreadCopierPassThrough<blink::VideoFrameLayout> {
+struct CrossThreadCopier<VideoFrameLayout>
+    : public CrossThreadCopierPassThrough<VideoFrameLayout> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
-
-namespace blink {
-
 namespace {
-
-// Controls if VideoFrame.copyTo() reads GPU frames asynchronously when it's given a
-// SharedArrayBuffer.
-BASE_FEATURE(kVideoFrameAsyncCopyTo,
-             "VideoFrameAsyncCopyTo",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 media::VideoPixelFormat ToMediaPixelFormat(V8VideoPixelFormat::Enum fmt) {
   switch (fmt) {
@@ -119,7 +110,7 @@ media::VideoPixelFormat ToMediaPixelFormat(V8VideoPixelFormat::Enum fmt) {
     case V8VideoPixelFormat::Enum::kI444A:
       return media::PIXEL_FORMAT_I444A;
     case V8VideoPixelFormat::Enum::kI444AP10:
-      return media::PIXEL_FORMAT_YUV422AP10;
+      return media::PIXEL_FORMAT_YUV444AP10;
     case V8VideoPixelFormat::Enum::kNV12:
       return media::PIXEL_FORMAT_NV12;
     case V8VideoPixelFormat::Enum::kRGBA:
@@ -665,8 +656,6 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     transformed = transformation != media::kNoTransformation;
   }
 
-  constexpr char kAlphaDiscard[] = "discard";
-
   // Special case <video> and VideoFrame to directly use the underlying frame.
   if (source->IsVideoFrame() || source->IsHTMLVideoElement()) {
     scoped_refptr<media::VideoFrame> source_frame;
@@ -688,7 +677,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
     }
 
-    const bool force_opaque = init->alpha() == kAlphaDiscard &&
+    const bool force_opaque = init->alpha() == V8AlphaOption::Enum::kDiscard &&
                               !media::IsOpaque(source_frame->format());
 
     const auto wrapped_format =
@@ -798,7 +787,8 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
   const gfx::Size default_display_size(coded_size);
   const bool has_undiscarded_unpremultiplied_alpha =
       sk_image_info.alphaType() == kUnpremul_SkAlphaType &&
-      !image->IsOpaque() && !(init && init->alpha() == kAlphaDiscard);
+      !image->IsOpaque() &&
+      !(init && init->alpha() == V8AlphaOption::Enum::kDiscard);
 
   sk_sp<SkImage> sk_image;
   scoped_refptr<media::VideoFrame> frame;
@@ -807,7 +797,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
     DCHECK(image->IsStaticBitmapImage());
     const auto format = media::VideoPixelFormatFromSkColorType(
         paint_image.GetColorType(),
-        image->IsOpaque() || init->alpha() == kAlphaDiscard);
+        image->IsOpaque() || init->alpha() == V8AlphaOption::Enum::kDiscard);
 
     ParsedVideoFrameInit parsed_init(init, format, coded_size,
                                      default_visible_rect, default_display_size,
@@ -871,8 +861,9 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
     }
 
-    const bool force_opaque =
-        init && init->alpha() == kAlphaDiscard && !sk_image->isOpaque();
+    const bool force_opaque = init &&
+                              init->alpha() == V8AlphaOption::Enum::kDiscard &&
+                              !sk_image->isOpaque();
 
     const auto format = media::VideoPixelFormatFromSkColorType(
         sk_image->colorType(), sk_image->isOpaque() || force_opaque);
@@ -1403,12 +1394,10 @@ ScriptPromise<IDLSequence<PlaneLayout>> VideoFrame::copyTo(
   } else {
     DCHECK(local_frame->HasSharedImage());
 
-    if (base::FeatureList::IsEnabled(kVideoFrameAsyncCopyTo)) {
-      // Check if we can run copyTo() asynchronously.
-      if (CopyToAsync(resolver, local_frame, src_rect, destination,
-                      dest_layout)) {
-        return promise;
-      }
+    // Check if we can run copyTo() asynchronously.
+    if (CopyToAsync(resolver, local_frame, src_rect, destination,
+                    dest_layout)) {
+      return promise;
     }
 
     // Async version didn't work, let's copy planes synchronously.

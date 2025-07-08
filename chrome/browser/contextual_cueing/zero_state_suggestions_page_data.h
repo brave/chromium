@@ -5,16 +5,15 @@
 #ifndef CHROME_BROWSER_CONTEXTUAL_CUEING_ZERO_STATE_SUGGESTIONS_PAGE_DATA_H_
 #define CHROME_BROWSER_CONTEXTUAL_CUEING_ZERO_STATE_SUGGESTIONS_PAGE_DATA_H_
 
-#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/callback_list.h"
 #include "base/time/time.h"
 #include "components/optimization_guide/content/browser/page_content_proto_provider.h"
-#include "components/optimization_guide/core/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_metadata.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
-#include "components/optimization_guide/core/optimization_metadata.h"
 #include "content/public/browser/page_user_data.h"
 
 class OptimizationGuideKeyedService;
@@ -30,6 +29,10 @@ class ModelQualityLogEntry;
 namespace optimization_guide::proto {
 class ZeroStateSuggestionsRequest;
 }  // namespace optimization_guide::proto
+
+namespace page_content_annotations {
+class PageContentExtractionService;
+}  // namespace page_content_annotations
 
 namespace contextual_cueing {
 
@@ -50,10 +53,13 @@ class ZeroStateSuggestionsPageData
   void InitiatePageContentExtraction();
 
   // Explicitly fetch suggestions for this page.
-  void FetchSuggestions(bool is_fre, GlicSuggestionsCallback callback);
+  void FetchSuggestions(bool is_fre,
+                        std::vector<std::string> supported_tools,
+                        GlicSuggestionsCallback callback);
 
  private:
   friend class content::PageUserData<ZeroStateSuggestionsPageData>;
+  friend class ContextualCueingServiceTestZeroStateSuggestions;
   friend class ZeroStateSuggestionsPageDataTest;
 
   // Note that this constructor initiates extracting page content.
@@ -62,13 +68,19 @@ class ZeroStateSuggestionsPageData
   // Returns the URL of the primary main frame associated with this page.
   const GURL GetUrl();
 
+  // Returns the pending request if there is one.
+  std::optional<optimization_guide::proto::ZeroStateSuggestionsRequest>
+  pending_request() const {
+    return suggestions_request_;
+  }
+
   // Called when inner text is extracted.
   void OnReceivedInnerText(
       std::unique_ptr<content_extraction::InnerTextResult> result);
 
   // Called when annotated page content is received.
   void OnReceivedAnnotatedPageContent(
-      std::optional<optimization_guide::AIPageContentResult> content);
+      std::optional<optimization_guide::proto::AnnotatedPageContent> content);
 
   // Called when on-demand metadata is received.
   void OnReceivedOptimizationMetadataOnDemand(
@@ -109,7 +121,7 @@ class ZeroStateSuggestionsPageData
   bool inner_text_done_ = false;
   std::unique_ptr<content_extraction::InnerTextResult> inner_text_result_;
   bool annotated_page_content_done_ = false;
-  std::optional<optimization_guide::AIPageContentResult>
+  std::optional<optimization_guide::proto::AnnotatedPageContent>
       annotated_page_content_;
   bool optimization_metadata_done_ = false;
   optimization_guide::OptimizationGuideDecision optimization_decision_;
@@ -126,6 +138,8 @@ class ZeroStateSuggestionsPageData
   // Not owned and guaranteed to outlive `this`.
   raw_ptr<OptimizationGuideKeyedService> optimization_guide_keyed_service_ =
       nullptr;
+  raw_ptr<page_content_annotations::PageContentExtractionService>
+      page_content_extraction_service_ = nullptr;
   base::WeakPtrFactory<ZeroStateSuggestionsPageData> weak_ptr_factory_{this};
 
   PAGE_USER_DATA_KEY_DECL();

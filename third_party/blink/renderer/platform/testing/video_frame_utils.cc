@@ -45,7 +45,8 @@ scoped_refptr<media::VideoFrame> CreateTestFrame(
                            << media::VideoPixelFormatToString(pixel_format)
                            << " has no corresponding gfx::BufferFormat";
       const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
-                            gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+                            gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+                            gpu::SHARED_IMAGE_USAGE_RASTER_READ;
       auto shared_image = test_sii->CreateSharedImage(
           {viz::GetSharedImageFormat(*buffer_format), coded_size,
            gfx::ColorSpace(), gpu::SharedImageUsageSet(si_usage),
@@ -72,9 +73,16 @@ scoped_refptr<media::VideoFrame> CreateTestFrame(
       CHECK(buffer_format) << "Pixel format "
                            << media::VideoPixelFormatToString(pixel_format)
                            << " has no corresponding gfx::BufferFormat";
-      scoped_refptr<gpu::ClientSharedImage> shared_image =
-          gpu::ClientSharedImage::CreateForTesting();
 
+      gpu::SharedImageMetadata metadata;
+      metadata.format = viz::GetSharedImageFormat(*buffer_format);
+      metadata.size = coded_size;
+      metadata.color_space = gfx::ColorSpace::CreateSRGB();
+      metadata.surface_origin = kTopLeft_GrSurfaceOrigin;
+      metadata.alpha_type = kOpaque_SkAlphaType;
+      metadata.usage = gpu::SharedImageUsageSet();
+      scoped_refptr<gpu::ClientSharedImage> shared_image =
+          gpu::ClientSharedImage::CreateForTesting(metadata);
       return media::VideoFrame::WrapSharedImage(
           pixel_format, shared_image, gpu::SyncToken(), base::NullCallback(),
           coded_size, visible_rect, natural_size, timestamp);

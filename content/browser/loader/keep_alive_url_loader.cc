@@ -10,10 +10,14 @@
 
 #include "base/check_is_test.h"
 #include "base/feature_list.h"
+#include "base/features.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
@@ -23,7 +27,7 @@
 #include "content/browser/renderer_host/mixed_content_checker.h"
 #include "content/browser/renderer_host/policy_container_host.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
-#include "content/public/browser/browser_context.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/keep_alive_request_tracker.h"
@@ -32,6 +36,7 @@
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
+#include "net/url_request/redirect_util.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
 #include "services/network/public/cpp/content_security_policy/csp_context.h"
 #include "services/network/public/cpp/devtools_observer_util.h"
@@ -41,10 +46,98 @@
 #include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "services/network/public/mojom/url_request.mojom.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/blink/public/common/features.h"
+
+namespace features {
+
+// See third_party/blink/renderer/core/fetch/retry_options.idl for details of
+// each parameter.
+// Note that we allow script to set their own policies for retry, but these
+// browser-configured limits act as both lower/upper bounds and also default
+// values if not set by script.
+
+const base::FeatureParam<size_t> kMaxRetryCount{&blink::features::kFetchRetry,
+                                                "max_retry_count", 10};
+const base::FeatureParam<base::TimeDelta> kMinRetryDelta{
+    &blink::features::kFetchRetry, "min_retry_delta", base::Seconds(5)};
+const base::FeatureParam<double> kMinRetryBackoffFactor{
+    &blink::features::kFetchRetry, "min_retry_backoff", 1.0};
+const base::FeatureParam<base::TimeDelta> kMaxRetryAge{
+    &blink::features::kFetchRetry, "max_retry_age", base::Days(1)};
+
+}  // namespace features
 
 namespace content {
 namespace {
+
+// Very simple ThreadChecker to use as a static variable. Used because using
+// `base::ThreadChecker` directly is not permitted and the static keyword cannot
+// be applied to THREAD_CHECKER. When not under DCHECK this class will be empty
+// and do nothing.
+class WrappedThreadChecker {
+ public:
+  void Check() { DCHECK_CALLED_ON_VALID_THREAD(thread_checker); }
+
+ private:
+  THREAD_CHECKER(thread_checker);
+};
+
+constexpr net::NetworkTrafficAnnotationTag kKeepAliveRetryAnnotationTag =
+    net::DefineNetworkTrafficAnnotation("keepalive_fetch_retry", R"(
+  semantics {
+    sender: "KeepAlive Fetch Retry Mechanism"
+    description:
+      "This request is an automated retry of a fetch request that was "
+      "originally initiated by a website with the `keepalive: true` flag "
+      "and `retryOptions` specifying that retries should occur. This "
+      "retry is triggered by the browser process if the initial attempt or "
+      "a subsequent retry fails, and can occur even if the originating "
+      "renderer process has been closed. The purpose is to increase the "
+      "likelihood of successful data delivery for critical beacons, logs, "
+      "or other data the website intended to send reliably."
+    trigger:
+      "An initial keepalive fetch request (or a previous retry of it) "
+      "failed due to a network error or a specific HTTP 5xx server error "
+      "(if configured in RetryOptions). The RetryOptions associated with "
+      "the original request dictated that a retry should be attempted. "
+      "This specific request is triggered by an automated timer within the "
+      "browser process's KeepAliveURLLoader after a calculated backoff period."
+    data:
+      "The same HTTP method, URL, headers, and body as the original "
+      "keepalive request that is being retried. This data is determined "
+      "by the website that initiated the original fetch request."
+    destination: WEBSITE
+    internal {
+        contacts {
+          email: "chrome-loading@google.com"
+        }
+      }
+    user_data {
+      type: ARBITRARY_DATA
+      type: SENSITIVE_URL
+    }
+    last_reviewed: "2025-05-27"
+
+  }
+  policy {
+    cookies_allowed: YES
+    cookies_store: "Same as the original request. Governed by the "
+                   "credentials mode ('omit', 'same-origin', 'include') "
+                   "of the original fetch request."
+    setting:
+      "This retry mechanism is a sub-feature of the Fetch API's "
+      "`keepalive` and the proposed `retryOptions`. Websites enable this "
+      "by constructing fetch requests with these options. Users can "
+      "disable JavaScript or clear/block cookies for sites, which would "
+      "affect the original request and consequently prevent retries. "
+      "There isn't a separate browser setting to disable only the retry "
+      "aspect of keepalive fetches."
+    policy_exception_justification:
+      "This is an automated follow-up to a user-initiated (via website "
+      "JavaScript) keepalive request."
+  }
+)");
 
 // Internally enforces a limit to allow a loader outlive its renderer after
 // receiving disconnection notification from the renderer.
@@ -291,8 +384,9 @@ KeepAliveURLLoader::KeepAliveURLLoader(
     scoped_refptr<network::SharedURLLoaderFactory> network_loader_factory,
     scoped_refptr<PolicyContainerHost> policy_container_host,
     WeakDocumentPtr weak_document_ptr,
+    net::NetworkIsolationKey network_isolation_key,
     std::optional<ukm::SourceId> ukm_source_id,
-    BrowserContext* browser_context,
+    StoragePartitionImpl* storage_partition,
     URLLoaderThrottlesGetter throttles_getter,
     base::PassKey<KeepAliveURLLoaderService>,
     std::unique_ptr<KeepAliveAttributionRequestHelper>
@@ -304,11 +398,13 @@ KeepAliveURLLoader::KeepAliveURLLoader(
       forwarding_client_(
           std::make_unique<ForwardingClient>(this,
                                              std::move(forwarding_client))),
-      traffic_annotation_(traffic_annotation),
+      traffic_annotation_(net::NetworkTrafficAnnotationTag(traffic_annotation)),
       network_loader_factory_(std::move(network_loader_factory)),
       stored_url_load_(std::make_unique<StoredURLLoad>()),
       policy_container_host_(std::move(policy_container_host)),
       weak_document_ptr_(std::move(weak_document_ptr)),
+      network_isolation_key_(network_isolation_key),
+      ukm_source_id_(ukm_source_id),
       request_tracker_(
           GetContentClient()->browser()->MaybeCreateKeepAliveRequestTracker(
               resource_request,
@@ -317,7 +413,7 @@ KeepAliveURLLoader::KeepAliveURLLoader(
                                   // `this` owns `request_tracker_`, so it is
                                   // safe to use.
                                   base::Unretained(this)))),
-      browser_context_(browser_context),
+      storage_partition_(storage_partition),
       initial_url_(resource_request.url),
       last_url_(resource_request.url),
       throttles_getter_(throttles_getter),
@@ -326,11 +422,21 @@ KeepAliveURLLoader::KeepAliveURLLoader(
   CHECK(network_loader_factory_);
   CHECK(policy_container_host_);
   CHECK(!resource_request.trusted_params);
-  CHECK(browser_context_);
+  CHECK(storage_partition_);
   TRACE_EVENT("loading", "KeepAliveURLLoader::KeepAliveURLLoader", "request_id",
               request_id_, "url", last_url_);
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("loading", "KeepAliveURLLoader",
                                     request_id_, "url", last_url_);
+
+  if (resource_request_.fetch_retry_options.has_value()) {
+    // Append Retry-GUID as a header to the request if the fetch opts-in to
+    // retry. This GUID will be stable for all attempts of this fetch, from the
+    // first (non-retry) load to all potential retry attempts.
+    resource_request_.headers.SetHeader(
+        kRetryGuidHeader, base::Uuid::GenerateRandomV4().AsLowercaseString());
+  }
+  original_resource_request_ = resource_request_;
+
   LogFetchKeepAliveRequestMetric("Total");
   if (IsFetchLater()) {
     base::UmaHistogramBoolean("FetchLater.Browser.Total", true);
@@ -338,32 +444,41 @@ KeepAliveURLLoader::KeepAliveURLLoader(
 }
 
 void KeepAliveURLLoader::Start() {
-  CHECK(!is_started_);
+  StartInternal(/*is_retry=*/false);
+}
+
+void KeepAliveURLLoader::StartInternal(bool is_retry) {
+  CHECK(!is_started_ || is_retry);
   TRACE_EVENT("loading", "KeepAliveURLLoader::Start", "request_id",
               request_id_);
   is_started_ = true;
 
-  LogFetchKeepAliveRequestMetric("Started");
+  LogFetchKeepAliveRequestMetric(is_retry ? "Retried" : "Started");
   if (request_tracker_) {
     request_tracker_->AdvanceToNextStage(
         KeepAliveRequestTracker::RequestStageType::kRequestStarted);
   }
   if (IsFetchLater()) {
-    base::UmaHistogramBoolean("FetchLater.Browser.Total.Started", true);
+    if (is_retry) {
+      base::UmaHistogramBoolean("FetchLater.Browser.Total.Retried", true);
+    } else {
+      base::UmaHistogramBoolean("FetchLater.Browser.Total.Started", true);
+    }
     // Logs to DevTools only if the initiator is still alive.
-    if (auto* rfh = GetInitiator(); rfh) {
+    if (RenderFrameHostImpl* rfh = GetInitiator(); rfh) {
       devtools_instrumentation::OnFetchKeepAliveRequestWillBeSent(
           rfh->frame_tree_node(), devtools_request_id_, resource_request_);
     }
   }
 
-  GetContentClient()->browser()->OnKeepaliveRequestStarted(browser_context_);
+  GetContentClient()->browser()->OnKeepaliveRequestStarted(
+      storage_partition_->browser_context());
 
   // Asks the network service to create a URL loader with passed in params.
   url_loader_ = blink::ThrottlingURLLoader::CreateLoaderAndStart(
       network_loader_factory_, throttles_getter_.Run(), request_id_, options_,
       &resource_request_, forwarding_client_.get(),
-      net::NetworkTrafficAnnotationTag(traffic_annotation_),
+      is_retry ? kKeepAliveRetryAnnotationTag : traffic_annotation_,
       base::SingleThreadTaskRunner::GetCurrentDefault(),
       /*cors_exempt_header_list=*/std::nullopt,
       // `this`'s lifetime is at least the same as `url_loader_`.
@@ -395,12 +510,27 @@ void KeepAliveURLLoader::set_on_delete_callback(
   on_delete_callback_ = std::move(on_delete_callback);
 }
 
+void KeepAliveURLLoader::set_check_retry_eligibility_callback(
+    CheckRetryEligibilityCallback check_retry_eligibility_callback) {
+  check_retry_eligibility_callback_ =
+      std::move(check_retry_eligibility_callback);
+}
+
+void KeepAliveURLLoader::set_on_retry_scheduled_callback(
+    OnRetryScheduledCallback on_retry_scheduled_callback) {
+  on_retry_scheduled_callback_ = std::move(on_retry_scheduled_callback);
+}
+
 base::WeakPtr<KeepAliveURLLoader> KeepAliveURLLoader::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
 bool KeepAliveURLLoader::IsStarted() const {
   return is_started_;
+}
+
+bool KeepAliveURLLoader::IsAttemptingRetry() const {
+  return retry_state_ != RetryState::kNotAttemptingRetry;
 }
 
 RenderFrameHostImpl* KeepAliveURLLoader::GetInitiator() const {
@@ -455,6 +585,14 @@ void KeepAliveURLLoader::EndReceiveRedirect(
     const net::RedirectInfo& redirect_info,
     network::mojom::URLResponseHeadPtr head) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  did_encounter_redirect_ = true;
+  CHECK_GT(redirect_limit_, 0u);
+  if (--redirect_limit_ == 0) {
+    // Don't process the redirect if we've reached our limit.
+    OnComplete(network::URLLoaderCompletionStatus(net::ERR_TOO_MANY_REDIRECTS));
+    return;
+  }
+
   TRACE_EVENT("loading", "KeepAliveURLLoader::EndReceiveRedirect", "request_id",
               request_id_);
   if (request_tracker_) {
@@ -602,6 +740,22 @@ void KeepAliveURLLoader::OnReceiveResponse(
   // DO NOT touch any members after this line. `this` is already deleted.
 }
 
+void KeepAliveURLLoader::NotifyOnCompleteForTestAndDevTools(
+    const network::URLLoaderCompletionStatus& completion_status) {
+  if (observer_for_testing_) {
+    CHECK_IS_TEST();
+    observer_for_testing_->OnComplete(this, completion_status);
+  }
+
+  if (IsFetchLater()) {
+    // Logs to DevTools only if the initiator is still alive.
+    if (RenderFrameHostImpl* rfh = GetInitiator(); rfh) {
+      devtools_instrumentation::OnFetchKeepAliveRequestComplete(
+          rfh->frame_tree_node(), devtools_request_id_, completion_status);
+    }
+  }
+}
+
 void KeepAliveURLLoader::OnComplete(
     const network::URLLoaderCompletionStatus& completion_status) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -618,24 +772,21 @@ void KeepAliveURLLoader::OnComplete(
     // If the request succeeds, it should've been logged in `OnReceiveResponse`.
     LogFetchKeepAliveRequestMetric("Failed");
 
+    if (MaybeScheduleRetry(completion_status)) {
+      // Retry is scheduled. Don't process the completion, but still forward the
+      // error to test observers and DevTools.
+      NotifyOnCompleteForTestAndDevTools(completion_status);
+      return;
+    }
+
+    // Note that we don't need to reset the attribution helper if we retry.
     if (attribution_request_helper_) {
       attribution_request_helper_->OnError();
       attribution_request_helper_.reset();
     }
   }
 
-  if (observer_for_testing_) {
-    CHECK_IS_TEST();
-    observer_for_testing_->OnComplete(this, completion_status);
-  }
-
-  if (IsFetchLater()) {
-    // Logs to DevTools only if the initiator is still alive.
-    if (auto* rfh = GetInitiator(); rfh) {
-      devtools_instrumentation::OnFetchKeepAliveRequestComplete(
-          rfh->frame_tree_node(), devtools_request_id_, completion_status);
-    }
-  }
+  NotifyOnCompleteForTestAndDevTools(completion_status);
 
   // In case the renderer is alive, the stored status will be forwarded
   // at the end of `ForwardURLLoad()`.
@@ -664,6 +815,202 @@ void KeepAliveURLLoader::OnComplete(
 
   DeleteSelf();
   // DO NOT touch any members after this line. `this` is already deleted.
+}
+
+size_t KeepAliveURLLoader::GetMaxAttemptsForRetry() const {
+  CHECK(resource_request_.fetch_retry_options.has_value());
+  return std::min(
+      features::kMaxRetryCount.Get(),
+      static_cast<size_t>(resource_request_.fetch_retry_options->max_attempts));
+}
+
+base::TimeDelta KeepAliveURLLoader::GetMaxAgeForRetry() const {
+  CHECK(resource_request_.fetch_retry_options.has_value());
+  if (!resource_request_.fetch_retry_options->max_age.has_value()) {
+    return features::kMaxRetryAge.Get();
+  }
+
+  return std::min(features::kMaxRetryAge.Get(),
+                  resource_request_.fetch_retry_options->max_age.value());
+}
+
+base::TimeDelta KeepAliveURLLoader::GetInitialTimeDeltaForRetry() const {
+  CHECK(resource_request_.fetch_retry_options.has_value());
+  if (!resource_request_.fetch_retry_options->initial_delay.has_value()) {
+    return features::kMinRetryDelta.Get();
+  }
+  return std::max(features::kMinRetryDelta.Get(),
+                  resource_request_.fetch_retry_options->initial_delay.value());
+}
+
+double KeepAliveURLLoader::GetBackoffFactorForRetry() const {
+  CHECK(resource_request_.fetch_retry_options.has_value());
+  if (!resource_request_.fetch_retry_options->backoff_factor.has_value()) {
+    return features::kMinRetryBackoffFactor.Get();
+  }
+  return std::max(
+      features::kMinRetryBackoffFactor.Get(),
+      resource_request_.fetch_retry_options->backoff_factor.value());
+}
+
+base::TimeDelta KeepAliveURLLoader::UpdateNextRetryDelay() {
+  if (last_retry_delay_ == base::TimeDelta()) {
+    last_retry_delay_ = GetInitialTimeDeltaForRetry();
+  } else {
+    last_retry_delay_ *= GetBackoffFactorForRetry();
+  }
+  return last_retry_delay_;
+}
+
+bool KeepAliveURLLoader::IsEligibleForRetry(
+    std::optional<network::URLLoaderCompletionStatus> completion_status) const {
+  auto retry_options = resource_request_.fetch_retry_options;
+  if (!retry_options.has_value()) {
+    // The fetch must opt-in to retry.
+    return false;
+  }
+
+  // Don't retry if it's not HTTPs, there's already a retry scheduled, or we're
+  // over the limit.
+  if (!resource_request_.url.SchemeIs(url::kHttpsScheme) ||
+      retry_state_ == RetryState::kRetryScheduled ||
+      retry_state_ == RetryState::kWaitingForSameNetworkIsolationKeyDocument ||
+      retry_count_ >= GetMaxAttemptsForRetry() ||
+      (first_retry_initiated_time_ != base::TimeTicks() &&
+       base::TimeTicks::Now() - first_retry_initiated_time_ >
+           GetMaxAgeForRetry())) {
+    return false;
+  }
+
+  if (!retry_options->retry_non_idempotent &&
+      !net::HttpUtil::IsMethodIdempotent(resource_request_.method)) {
+    // Don't retry non-idempotent method unless the fetch explicitly opted-in to
+    // do so.
+    return false;
+  }
+
+  if (!retry_options->retry_after_unload && IsContextDetached()) {
+    return false;
+  }
+
+  CHECK(!check_retry_eligibility_callback_.is_null());
+  if (!check_retry_eligibility_callback_.Run()) {
+    return false;
+  }
+
+  if (HasReceivedResponse()) {
+    // If we've previously received and stored a response from the server, we
+    // can't hold on to the response pipe for too long because it might congest
+    // the network. So, just give up from retrying in this case.
+    return false;
+  }
+
+  if (!completion_status.has_value()) {
+    // No completion status. This can only happen when we hit the renderer
+    // disconnect timeout before getting any results. The request should be
+    // eligible to retry.
+    return true;
+  }
+
+  CHECK_NE(completion_status->error_code, net::OK);
+  // All errors should be retried, to prevent the fetch callers inferring
+  // anything about the error code.
+  return true;
+}
+
+bool KeepAliveURLLoader::MaybeScheduleRetry(
+    std::optional<network::URLLoaderCompletionStatus> completion_status) {
+  if (!IsEligibleForRetry(completion_status)) {
+    return false;
+  }
+
+  // We can retry. Reset the URLLoader to avoid scheduling another retry if we
+  // received another error signal after this (e.g. OnComplete with error
+  // happened, then the disconnection triggers CancelWithStatus).
+  url_loader_.reset();
+
+  // Update the retry-tracking states. Note that there's no need to reset any
+  // of the actual request-related state, since the retry is attempted from the
+  // last request attempt, and no state has been updated in response of the
+  // failed result yet. All states relating to previous attempts (e.g. stored
+  // loads storing previous redirects) only contain results from successful
+  // redirects/responses so there's no need to reset.
+  if (retry_count_ == 0) {
+    first_retry_initiated_time_ = base::TimeTicks::Now();
+    self_deletion_timer_.Start(FROM_HERE, GetMaxAgeForRetry(),
+                               base::BindOnce(&KeepAliveURLLoader::DeleteSelf,
+                                              base::Unretained(this)));
+  }
+  retry_count_++;
+  CHECK_LE(retry_count_, GetMaxAttemptsForRetry());
+  retry_state_ = RetryState::kRetryScheduled;
+
+  // Schedule the retry.
+  retry_timer_.Start(FROM_HERE, UpdateNextRetryDelay(),
+                     base::BindOnce(&KeepAliveURLLoader::AttemptRetryIfAllowed,
+                                    base::Unretained(this)));
+
+  CHECK(!on_retry_scheduled_callback_.is_null());
+  on_retry_scheduled_callback_.Run();
+
+  return true;
+}
+
+void KeepAliveURLLoader::AttemptRetryIfAllowed() {
+  CHECK(retry_state_ == RetryState::kRetryScheduled ||
+        retry_state_ == RetryState::kWaitingForSameNetworkIsolationKeyDocument);
+  // Don't retry when there's no active document with a same network isolation
+  // key as the initiator of the load, to avoid privacy concerns of revealing
+  // information about the user (that their browser is up, and their current
+  // IP address) to the destination origin, while there is no active document.
+  if (!storage_partition_->GetActiveDocumentCount(network_isolation_key_)) {
+    // No active document with the same NetworkIsolationKey exists. Wait until
+    // we see such a document, or delete ourselves when we can't attempt a retry
+    // anymore (we reached the max age of retries, which will run self-deletion
+    // when we first scheduled the retry attempt).
+    retry_state_ = RetryState::kWaitingForSameNetworkIsolationKeyDocument;
+    return;
+  }
+
+  // TODO(crbug.com/417930271): Check if we're offline, and if so, wait until
+  // we're online before attempting.
+  retry_state_ = RetryState::kRetryInProgress;
+  // Reset the request IDs.
+  request_id_ = GlobalRequestID::MakeBrowserInitiated().request_id;
+  devtools_request_id_ = base::UnguessableToken::Create().ToString();
+
+  // Retry using the original request, even if the failure happens after
+  // redirects.
+  resource_request_ = original_resource_request_;
+  // Add retry information in the header.
+  resource_request_.headers.SetHeader(kRetryAttemptsHeader,
+                                      base::NumberToString(retry_count_));
+
+  // TODO(crbug.com/417930271): Track the retry as a state in the
+  // KeepAliveRequestTracker too.
+  request_tracker_ =
+      GetContentClient()->browser()->MaybeCreateKeepAliveRequestTracker(
+          resource_request_, ukm_source_id_,
+          base::BindRepeating(&KeepAliveURLLoader::IsContextDetached,
+                              // `this` owns `request_tracker_`, so it is
+                              // safe to use.
+                              base::Unretained(this)));
+
+  StartInternal(/*is_retry=*/true);
+}
+
+void KeepAliveURLLoader::DidObserveNewlyActiveDocumentWithNIK(
+    const net::NetworkIsolationKey& nik) {
+  if (nik == network_isolation_key_ &&
+      retry_state_ == RetryState::kWaitingForSameNetworkIsolationKeyDocument) {
+    // We previously wanted to retry but couldn't due to there being no active
+    // document with the same Network Isolation Key. Now that we observe such a
+    // document, we can attempt the retry.
+    retry_state_ = RetryState::kRetryScheduled;
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&KeepAliveURLLoader::AttemptRetryIfAllowed,
+                                  base::Unretained(this)));
+  }
 }
 
 bool KeepAliveURLLoader::HasReceivedResponse() const {
@@ -796,6 +1143,11 @@ void KeepAliveURLLoader::CancelWithStatus(
         KeepAliveRequestTracker::RequestStageType::kRequestFailed, status);
   }
 
+  if (MaybeScheduleRetry(status)) {
+    // Retry is scheduled. Don't process the cancellation.
+    return;
+  }
+
   // This method can be triggered when one of the followings happen:
   // 1. Network -> `url_loader_` gets disconnected.
   // 2. `url_loader_` gets cancelled by throttles.
@@ -873,6 +1225,15 @@ void KeepAliveURLLoader::OnURLLoaderDisconnected() {
 }
 
 void KeepAliveURLLoader::OnDisconnectedLoaderTimerFired() {
+  if (resource_request_.fetch_retry_options.has_value() &&
+      resource_request_.fetch_retry_options->retry_after_unload &&
+      (IsAttemptingRetry() ||
+       MaybeScheduleRetry(/*completion_status=*/std::nullopt))) {
+    // A retry is already pending or we just scheduled a retry. Don't delete
+    // the loader, and instead keep it around for the retry.
+    return;
+  }
+
   if (request_tracker_) {
     request_tracker_->AdvanceToNextStage(
         KeepAliveRequestTracker::RequestStageType::
@@ -985,11 +1346,47 @@ void KeepAliveURLLoader::LogFetchKeepAliveRequestMetric(
   }
 
   CHECK(request_state_name == "Total" || request_state_name == "Started" ||
-        request_state_name == "Succeeded" || request_state_name == "Failed");
+        request_state_name == "Retried" || request_state_name == "Succeeded" ||
+        request_state_name == "Failed");
 
-  base::UmaHistogramEnumeration(base::StrCat({"FetchKeepAlive.Requests2.",
-                                              request_state_name, ".Browser"}),
-                                sample_type);
+  const std::string histogram_name = base::StrCat(
+      {"FetchKeepAlive.Requests2.", request_state_name, ".Browser"});
+
+  // When under the experiment keep a local cache of resolved histograms to
+  // avoid contention on the global lock that is taken by histogram functions.
+  if (base::features::IsReducePPMsEnabled()) {
+    static base::NoDestructor<
+        absl::flat_hash_map<std::string, base::HistogramBase*>>
+        histograms;
+
+    // Verify that `histograms` is not read/modified by more than one thread.
+    // Since it's static it will be used by any code that calls into the
+    // function.
+    static WrappedThreadChecker* thread_checker = new WrappedThreadChecker;
+    thread_checker->Check();
+
+    auto it = histograms->find(histogram_name);
+    if (it != histograms->end()) {
+      it->second->Add(static_cast<int32_t>(sample_type));
+    } else {
+      // TODO(crbug.com/424432184): This is messy and leaks information from
+      // LinearHistogram. If the experiment succeeds implement
+      // GetUmaHistogramEnumerationFactory before cleaning up the flag.
+      int32_t max_value =
+          static_cast<int32_t>(FetchKeepAliveRequestMetricType::kMaxValue);
+      base::HistogramBase* histo = base::LinearHistogram::FactoryGet(
+          histogram_name, /*minimum=*/1,
+          /*maximum=*/max_value + 1,
+          /*bucket_count=*/max_value + 2,
+          base::HistogramBase::kUmaTargetedHistogramFlag);
+      histo->Add(static_cast<int32_t>(sample_type));
+
+      (*histograms)[histogram_name] = histo;
+    }
+  } else {
+    base::UmaHistogramEnumeration(histogram_name, sample_type);
+  }
+
   if (bool is_context_detached = !GetInitiator();
       request_state_name == "Started" || request_state_name == "Succeeded") {
     base::UmaHistogramBoolean(

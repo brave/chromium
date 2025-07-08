@@ -7,6 +7,7 @@
 #import "base/feature_list.h"
 #import "components/breadcrumbs/core/breadcrumbs_status.h"
 #import "components/commerce/ios/browser/commerce_tab_helper.h"
+#import "components/data_sharing/public/features.h"
 #import "components/favicon/core/favicon_service.h"
 #import "components/favicon/ios/web_favicon_driver.h"
 #import "components/history/core/browser/top_sites.h"
@@ -64,13 +65,15 @@
 #import "ios/chrome/browser/infobars/model/overlays/infobar_overlay_request_inserter.h"
 #import "ios/chrome/browser/infobars/model/overlays/infobar_overlay_tab_helper.h"
 #import "ios/chrome/browser/infobars/model/overlays/translate_overlay_tab_helper.h"
+#import "ios/chrome/browser/intelligence/bwg/model/bwg_tab_helper.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/itunes_urls/model/itunes_urls_handler_tab_helper.h"
 #import "ios/chrome/browser/lens/model/lens_tab_helper.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
 #import "ios/chrome/browser/lens_overlay/model/lens_overlay_tab_helper.h"
 #import "ios/chrome/browser/link_to_text/model/link_to_text_tab_helper.h"
-#import "ios/chrome/browser/metrics/model/dwa_web_state_observer.h"
 #import "ios/chrome/browser/metrics/model/pageload_foreground_duration_tab_helper.h"
+#import "ios/chrome/browser/mini_map/model/mini_map_tab_helper.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
@@ -86,6 +89,7 @@
 #import "ios/chrome/browser/permissions/model/permissions_tab_helper.h"
 #import "ios/chrome/browser/policy_url_blocking/model/policy_url_blocking_tab_helper.h"
 #import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/offline_page_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
@@ -190,7 +194,6 @@ void AttachTabHelpers(web::WebState* web_state, TabHelperFilter filter_flags) {
   }
 
   LoadTimingTabHelper::CreateForWebState(web_state);
-  DwaWebStateObserver::CreateForWebState(web_state);
   OverscrollActionsTabHelper::CreateForWebState(web_state);
   IOSTaskTabHelper::CreateForWebState(web_state);
   if (!for_lens_overlay &&
@@ -212,8 +215,10 @@ void AttachTabHelpers(web::WebState* web_state, TabHelperFilter filter_flags) {
     AppLauncherTabHelper::CreateForWebState(
         web_state, [[AppLauncherAbuseDetector alloc] init], is_off_the_record);
 
-    ReaderModeTabHelper::CreateForWebState(
-        web_state, DistillerServiceFactory::GetForProfile(profile));
+    if (IsReaderModeAvailable()) {
+      ReaderModeTabHelper::CreateForWebState(
+          web_state, DistillerServiceFactory::GetForProfile(profile));
+    }
   }
   security_interstitials::IOSBlockingPageTabHelper::CreateForWebState(
       web_state);
@@ -304,11 +309,6 @@ void AttachTabHelpers(web::WebState* web_state, TabHelperFilter filter_flags) {
     AutofillBottomSheetTabHelper::CreateForWebState(web_state);
     AutofillTabHelper::CreateForWebState(web_state);
 
-    FormSuggestionTabHelper::CreateForWebState(web_state, @[
-      PasswordTabHelper::FromWebState(web_state)->GetSuggestionProvider(),
-      AutofillTabHelper::FromWebState(web_state)->GetSuggestionProvider(),
-    ]);
-
     if (base::FeatureList::IsEnabled(kIOSPasskeyShim)) {
       PasskeyTabHelper::CreateForWebState(
           web_state, IOSPasskeyModelFactory::GetForProfile(profile));
@@ -372,10 +372,20 @@ void AttachTabHelpers(web::WebState* web_state, TabHelperFilter filter_flags) {
   if (!is_off_the_record && !for_prerender) {
     auto* collaboration_service =
         collaboration::CollaborationServiceFactory::GetForProfile(profile);
-    if (IsSharedTabGroupsJoinEnabled(collaboration_service)) {
+    if (IsSharedTabGroupsJoinEnabled(collaboration_service) &&
+        data_sharing::features::ShouldInterceptUrlForVersioning()) {
       DataSharingTabHelper::CreateForWebState(web_state);
     }
   }
 
   EditMenuTabHelper::CreateForWebState(web_state);
+
+  if (!is_off_the_record &&
+      base::FeatureList::IsEnabled(kIOSMiniMapUniversalLink)) {
+    MiniMapTabHelper::CreateForWebState(web_state);
+  }
+
+  if (!is_off_the_record && !for_prerender && IsPageActionMenuEnabled()) {
+    BwgTabHelper::CreateForWebState(web_state);
+  }
 }

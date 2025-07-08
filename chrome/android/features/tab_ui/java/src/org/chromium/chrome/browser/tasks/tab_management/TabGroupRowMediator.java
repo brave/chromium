@@ -4,18 +4,20 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupRowProperties.DELETE_RUNNABLE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupRowProperties.LEAVE_RUNNABLE;
 
 import android.content.Context;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.Nullable;
 import androidx.core.util.Supplier;
 
 import org.chromium.base.CallbackController;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesConfig;
@@ -47,6 +49,7 @@ import org.chromium.url.GURL;
 import java.util.List;
 
 /** Contains the logic to set the state of the model and react to actions. */
+@NullMarked
 class TabGroupRowMediator {
     private final CallbackController mCallbackController = new CallbackController();
     private final Context mContext;
@@ -62,7 +65,7 @@ class TabGroupRowMediator {
     private final PropertyModel mPropertyModel;
     private final DataSharingTabManager mDataSharingTabManager;
 
-    private SharedImageTilesCoordinator mSharedImageTilesCoordinator;
+    private @Nullable SharedImageTilesCoordinator mSharedImageTilesCoordinator;
 
     /**
      * @param context Used to load resources and create views.
@@ -166,6 +169,7 @@ class TabGroupRowMediator {
             return;
         }
 
+        assumeNonNull(groupData);
         String collaborationId = groupData.groupToken.collaborationId;
         @MemberRole
         int memberRole = mCollaborationService.getCurrentUserRoleForGroup(collaborationId);
@@ -180,10 +184,8 @@ class TabGroupRowMediator {
             mPropertyModel.set(LEAVE_RUNNABLE, () -> processLeaveOrDeleteShareGroup(savedTabGroup));
         }
 
-        if (sharedState == GroupSharedState.COLLABORATION_ONLY) {
-            mPropertyModel.set(TabGroupRowProperties.DISPLAY_AS_SHARED, false);
-            mPropertyModel.set(TabGroupRowProperties.SHARED_IMAGE_TILES_VIEW, null);
-        } else if (sharedState == GroupSharedState.HAS_OTHER_USERS) {
+        if (sharedState == GroupSharedState.HAS_OTHER_USERS
+                || sharedState == GroupSharedState.COLLABORATION_ONLY) {
             mPropertyModel.set(TabGroupRowProperties.DISPLAY_AS_SHARED, true);
             if (mSharedImageTilesCoordinator == null) {
                 final @ColorInt int backgroundColor;
@@ -197,6 +199,7 @@ class TabGroupRowMediator {
                 SharedImageTilesConfig config =
                         new SharedImageTilesConfig.Builder(mContext)
                                 .setBackgroundColor(backgroundColor)
+                                .setTextColor(SemanticColorUtils.getDefaultTextColor(mContext))
                                 .build();
                 mSharedImageTilesCoordinator =
                         new SharedImageTilesCoordinator(
@@ -231,10 +234,19 @@ class TabGroupRowMediator {
             }
         } else if (state == GroupWindowState.HIDDEN) {
             String syncId = savedTabGroup.syncId;
+            assumeNonNull(syncId);
+            boolean isTabGroupArchived = savedTabGroup.archivalTimeMs != null;
             mTabGroupUiActionHandler.openTabGroup(syncId);
+            if (isTabGroupArchived) {
+                RecordUserAction.record("TabGroups.RestoreFromTabGroupPane");
+                RecordHistogram.recordCount1000Histogram(
+                        "TabGroups.RestoreFromTabGroupPane.TabCount",
+                        savedTabGroup.savedTabs.size());
+            }
             savedTabGroup = mTabGroupSyncService.getGroup(syncId);
         }
 
+        assumeNonNull(savedTabGroup);
         if (savedTabGroup.localId == null) {
             RecordHistogram.recordEnumeratedHistogram(
                     "Android.TabGroupSync.WindowStateOnFailedOpen", state, GroupWindowState.COUNT);
@@ -246,6 +258,7 @@ class TabGroupRowMediator {
         mPaneManager.focusPane(PaneId.TAB_SWITCHER);
         TabSwitcherPaneBase tabSwitcherPaneBase =
                 (TabSwitcherPaneBase) mPaneManager.getPaneForId(PaneId.TAB_SWITCHER);
+        assumeNonNull(tabSwitcherPaneBase);
         boolean success = tabSwitcherPaneBase.requestOpenTabGroupDialog(rootId);
         assert success;
     }
@@ -274,6 +287,7 @@ class TabGroupRowMediator {
         if (savedTabGroup.syncId != null) {
             eitherId = EitherGroupId.createSyncId(savedTabGroup.syncId);
         } else {
+            assumeNonNull(savedTabGroup.localId);
             eitherId = EitherGroupId.createLocalId(savedTabGroup.localId);
         }
 
@@ -302,20 +316,23 @@ class TabGroupRowMediator {
             }
             // Because the pending closure might have been hiding or part of a closure containing
             // more tabs we need to forcibly remove the group.
-            mTabGroupSyncService.removeGroup(mSavedTabGroup.syncId);
+            mTabGroupSyncService.removeGroup(assumeNonNull(mSavedTabGroup.syncId));
         } else if (state == GroupWindowState.IN_CURRENT) {
+            assumeNonNull(mSavedTabGroup.localId);
             mTabGroupModelFilter
                     .getTabModel()
                     .getTabRemover()
                     .closeTabs(
-                            TabClosureParams.forCloseTabGroup(
-                                            mTabGroupModelFilter, mSavedTabGroup.localId.tabGroupId)
+                            assumeNonNull(
+                                            TabClosureParams.forCloseTabGroup(
+                                                    mTabGroupModelFilter,
+                                                    mSavedTabGroup.localId.tabGroupId))
                                     .allowUndo(false)
                                     .build(),
                             allowDialog);
         } else {
             assert !allowDialog : "A dialog should have already been shown.";
-            mTabGroupSyncService.removeGroup(mSavedTabGroup.syncId);
+            mTabGroupSyncService.removeGroup(assumeNonNull(mSavedTabGroup.syncId));
         }
     }
 }
