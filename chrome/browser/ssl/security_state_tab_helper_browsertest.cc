@@ -32,7 +32,6 @@
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
-#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #include "chrome/browser/ssl/cert_verifier_browser_test.h"
 #include "chrome/browser/ssl/chrome_security_state_util.h"
 #include "chrome/browser/ssl/https_upgrades_util.h"
@@ -46,13 +45,8 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/content/browser/password_protection/password_protection_request_content.h"
-#include "components/safe_browsing/content/browser/password_protection/password_protection_test_util.h"
-#include "components/safe_browsing/core/browser/password_protection/metrics_util.h"
-#include "components/safe_browsing/core/common/features.h"
-#include "components/safe_browsing/core/common/proto/csd.pb.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/security_interstitials/content/security_interstitial_tab_helper.h"
 #include "components/security_interstitials/content/ssl_blocking_page.h"
 #include "components/security_interstitials/core/pref_names.h"
@@ -106,11 +100,19 @@
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/safe_browsing/content/browser/password_protection/password_protection_test_util.h"
+#include "components/safe_browsing/core/common/proto/csd.pb.h"
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+
 namespace {
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 using password_manager::metrics_util::PasswordType;
 using safe_browsing::LoginReputationClientResponse;
-using safe_browsing::RequestOutcome;
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 
 const char kCreateFilesystemUrlJavascript[] =
     "new Promise(resolve => {"
@@ -849,6 +851,7 @@ IN_PROC_BROWSER_TEST_F(SecurityStateTabHelperTest,
   EXPECT_EQ(content::SSLStatus::NORMAL_CONTENT, entry->GetSSL().content_status);
 }
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 // Tests the security level and malicious content status for sign-in password
 // reuse threat type.
 IN_PROC_BROWSER_TEST_F(
@@ -943,6 +946,7 @@ IN_PROC_BROWSER_TEST_F(
   // Since these are non-Gaia enterprise passwords, Gaia password change won't
   // have any impact here.
 }
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 
 class PKPModelClientTest : public SecurityStateTabHelperTest {
  public:

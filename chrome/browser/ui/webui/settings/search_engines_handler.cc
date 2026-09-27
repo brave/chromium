@@ -23,7 +23,6 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_factory.h"
-#include "chrome/browser/safe_browsing/extension_telemetry/search_hijacking_detector.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
@@ -37,6 +36,7 @@
 #include "components/optimization_guide/core/feature_registry/feature_registration.h"
 #include "components/prefs/pref_service.h"
 #include "components/regional_capabilities/regional_capabilities_service.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engine_settings_data_provider.h"
@@ -53,6 +53,10 @@
 #include "extensions/browser/management_policy.h"
 #include "extensions/common/extension.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if BUILDFLAG(FULL_SAFE_BROWSING)
+#include "chrome/browser/safe_browsing/extension_telemetry/search_hijacking_detector.h"
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/public/cpp/new_window_delegate.h"
@@ -401,6 +405,7 @@ void SearchEnginesHandler::RecordSearchHijackingHeuristicMetric() {
     return;
   }
 
+#if BUILDFLAG(FULL_SAFE_BROWSING)
   // Look for matches in the last 7 days, per the histograms.xml description.
   auto status =
       safe_browsing::SearchHijackingDetector::GetRecentHeuristicResult(
@@ -420,6 +425,7 @@ void SearchEnginesHandler::RecordSearchHijackingHeuristicMetric() {
         status ==
             safe_browsing::SearchHijackingDetector::HeuristicResult::kMatch);
   }
+#endif
 
   has_recorded_hijacking_metric_ = true;
 }

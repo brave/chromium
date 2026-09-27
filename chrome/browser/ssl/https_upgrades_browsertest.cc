@@ -23,7 +23,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
-#include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/ssl/ask_before_http_dialog_controller.h"
 #include "chrome/browser/ssl/chrome_security_blocking_page_factory.h"
 #include "chrome/browser/ssl/chrome_security_state_util.h"
@@ -48,8 +47,7 @@
 #include "components/enterprise/isolated_mode/isolated_mode_features.h"
 #include "components/omnibox/browser/omnibox_client.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/core/browser/db/fake_database_manager.h"
-#include "components/safe_browsing/core/common/threat_enums.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/security_interstitials/content/stateful_ssl_host_state_delegate.h"
 #include "components/security_interstitials/core/features.h"
 #include "components/security_interstitials/core/https_only_mode_metrics.h"
@@ -91,6 +89,12 @@
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING) && !BUILDFLAG(IS_CHROMEOS)
 #include "chrome/test/base/scoped_channel_override.h"
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING) && !BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
+#include "components/safe_browsing/core/browser/db/fake_database_manager.h"
+#include "components/safe_browsing/core/common/threat_enums.h"
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 
 namespace {
 
@@ -5124,6 +5128,7 @@ IN_PROC_BROWSER_TEST_F(HttpsUpgradesSilentFallbackDelayTest,
   EXPECT_EQ(http_url, contents->GetLastCommittedURL());
 }
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 // Fixture for testing interactions between HTTPS-Upgrades and Safe Browsing.
 class HttpsUpgradesSafeBrowsingTest : public InProcessBrowserTest {
  public:
@@ -5228,3 +5233,4 @@ IN_PROC_BROWSER_TEST_F(HttpsUpgradesSafeBrowsingTest,
   // HTTP.
   EXPECT_EQ(https_url, contents->GetVisibleURL());
 }
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)

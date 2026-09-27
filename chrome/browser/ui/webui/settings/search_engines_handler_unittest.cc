@@ -21,7 +21,7 @@
 #include "components/country_codes/country_codes.h"
 #include "components/regional_capabilities/regional_capabilities_service.h"
 #include "components/regional_capabilities/regional_capabilities_switches.h"
-#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engine_type.h"
@@ -37,6 +37,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 #include "ui/events/devices/device_data_manager.h"
+
+#if BUILDFLAG(FULL_SAFE_BROWSING)
+#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#endif
 
 using ::country_codes::CountryId;
 
@@ -427,6 +431,7 @@ TEST_F(SearchEnginesHandlerTest, UpdateSavedGuestSearch_NonEEA) {
             choice_service->GetSavedSearchEngineBetweenGuestSessions());
 }
 
+#if BUILDFLAG(FULL_SAFE_BROWSING)
 TEST_F(SearchEnginesHandlerTest, TrafficHijackingHeuristic_Unknown) {
   ConfigureTestWithRegularProfile();
 
@@ -490,6 +495,7 @@ TEST_F(SearchEnginesHandlerTest, TrafficHijackingHeuristic_Match) {
       "Settings.SearchEngines.SearchHijackingDetector.HeuristicMatch", false,
       0);
 }
+#endif
 
 TEST_F(SearchEnginesHandlerTest, IsRecommendedFromPolicy) {
   ConfigureTestWithRegularProfile();

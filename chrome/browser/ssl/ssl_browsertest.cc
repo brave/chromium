@@ -95,6 +95,7 @@
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/content/bad_clock_blocking_page.h"
@@ -1855,6 +1856,7 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestDisplaysInsecureForm) {
 
 // Verifies that an SSL interstitial generates SafeBrowsing extension api
 // events.
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 IN_PROC_BROWSER_TEST_F(SSLUITest, TestExtensionEvents) {
   class ExtensionEventObserver : public extensions::EventRouter::TestObserver {
    public:
@@ -1908,6 +1910,7 @@ IN_PROC_BROWSER_TEST_F(SSLUITest, TestExtensionEvents) {
   extensions::EventRouter::Get(browser()->GetProfile())
       ->RemoveObserverForTesting(&observer);
 }
+#endif  // BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 
 // Visits a page that runs insecure content and tries to suppress the insecure
 // content warnings by randomizing location.hash.
